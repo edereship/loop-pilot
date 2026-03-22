@@ -26067,10 +26067,10 @@ var require_core = __commonJS({
       (0, command_1.issueCommand)("set-env", { name }, convertedVal);
     }
     exports2.exportVariable = exportVariable;
-    function setSecret(secret) {
+    function setSecret2(secret) {
       (0, command_1.issueCommand)("add-mask", {}, secret);
     }
-    exports2.setSecret = setSecret;
+    exports2.setSecret = setSecret2;
     function addPath(inputPath) {
       const filePath = process.env["GITHUB_PATH"] || "";
       if (filePath) {
@@ -26142,10 +26142,10 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
       (0, command_1.issueCommand)("error", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
     exports2.error = error3;
-    function warning2(message, properties = {}) {
+    function warning3(message, properties = {}) {
       (0, command_1.issueCommand)("warning", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
-    exports2.warning = warning2;
+    exports2.warning = warning3;
     function notice(message, properties = {}) {
       (0, command_1.issueCommand)("notice", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
@@ -29821,7 +29821,7 @@ var { HUMAN_PROMPT, AI_PROMPT } = Anthropic;
 var sdk_default = Anthropic;
 
 // dist/main-loop.js
-var core3 = __toESM(require_core(), 1);
+var core4 = __toESM(require_core(), 1);
 
 // dist/config.js
 var core = __toESM(require_core(), 1);
@@ -29831,11 +29831,18 @@ function loadConfig() {
     anthropicApiKey: requireInput("anthropic-api-key", "ANTHROPIC_API_KEY")
   };
 }
+function loadInitConfig() {
+  return {
+    ...loadBaseConfig(),
+    anthropicApiKey: ""
+  };
+}
 function loadBaseConfig() {
   const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
   const [repoOwner, repoName] = repoFullName.split("/");
-  if (!repoOwner || !repoName) {
-    throw new Error(`github-repository must be in "owner/name" format, got: "${repoFullName}"`);
+  const validRepoSegment = /^[a-zA-Z0-9._-]+$/;
+  if (!repoOwner || !repoName || !validRepoSegment.test(repoOwner) || !validRepoSegment.test(repoName)) {
+    throw new Error(`github-repository must be in "owner/name" format with valid characters, got: "${repoFullName}"`);
   }
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
@@ -29850,7 +29857,7 @@ function loadBaseConfig() {
     githubToken: requireInput("github-token", "GITHUB_TOKEN"),
     repoOwner,
     repoName,
-    prNumber: intInput("pr-number", "PR_NUMBER", 0),
+    prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", "")
@@ -29875,6 +29882,13 @@ function intInput(inputName, envName, defaultValue) {
   }
   return parsed;
 }
+function requirePositiveInt(inputName, envName) {
+  const value = intInput(inputName, envName, 0);
+  if (value <= 0) {
+    throw new Error(`Required input "${inputName}" or env "${envName}" must be a positive integer, got: ${value}`);
+  }
+  return value;
+}
 function requireInput(inputName, envName) {
   const value = input(inputName, envName, "");
   if (value === "") {
@@ -29886,12 +29900,60 @@ function requireInput(inputName, envName) {
 // dist/state-manager.js
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
+
+// dist/gh-env.js
+function buildGhEnv(token) {
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    GH_TOKEN: token,
+    // gh may need these for HTTPS proxy support
+    HTTPS_PROXY: process.env.HTTPS_PROXY,
+    HTTP_PROXY: process.env.HTTP_PROXY,
+    NO_PROXY: process.env.NO_PROXY
+  };
+}
+
+// dist/state-manager.js
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.execFile);
+var MAX_BUFFER = 10 * 1024 * 1024;
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
 var MAX_HISTORY_ENTRIES = 3;
 var MAX_SERIALIZED_BYTES = 65e3;
+var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+function validateState(obj) {
+  if (typeof obj !== "object" || obj === null)
+    return false;
+  const s2 = obj;
+  if (typeof s2.iterationCount !== "number" || s2.iterationCount < 0)
+    return false;
+  if (typeof s2.status !== "string" || !VALID_STATUSES.has(s2.status))
+    return false;
+  if (!Array.isArray(s2.findingsHashHistory))
+    return false;
+  if (s2.lastProcessedReviewId !== null && typeof s2.lastProcessedReviewId !== "number")
+    return false;
+  if (s2.lastClaudeCommitSha !== null && typeof s2.lastClaudeCommitSha !== "string")
+    return false;
+  if (s2.lastCodexRequestCommentId !== null && typeof s2.lastCodexRequestCommentId !== "number")
+    return false;
+  if (s2.lastCodexReviewReceivedAt !== null && typeof s2.lastCodexReviewReceivedAt !== "string")
+    return false;
+  if (s2.lastFindingsHash !== null && typeof s2.lastFindingsHash !== "string")
+    return false;
+  if (s2.stopReason !== null && typeof s2.stopReason !== "string")
+    return false;
+  for (const entry of s2.findingsHashHistory) {
+    if (typeof entry !== "object" || entry === null)
+      return false;
+    const e2 = entry;
+    if (typeof e2.iteration !== "number" || typeof e2.hash !== "string")
+      return false;
+  }
+  return true;
+}
 function serializeState(state) {
   const trimmed = {
     ...state,
@@ -29919,6 +29981,9 @@ function deserializeState(commentBody) {
   }
   try {
     const parsed = JSON.parse(match[1]);
+    if (!validateState(parsed)) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;
@@ -29933,16 +29998,20 @@ async function readState(owner, name, pr2, token) {
     // @json ensures each result is a single-line JSON-encoded string,
     // preventing multi-line jq pretty-printing from breaking split("\n") parsing
     `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
-  ], { env: { ...process.env, GH_TOKEN: token } });
+  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
     return null;
   }
-  const firstLine = trimmed.split("\n")[0];
+  const lines = trimmed.split("\n").filter((l2) => l2.trim());
+  const lastLine = lines[lines.length - 1];
   let parsed;
   try {
-    parsed = JSON.parse(JSON.parse(firstLine));
+    parsed = JSON.parse(JSON.parse(lastLine));
   } catch {
+    return null;
+  }
+  if (typeof parsed?.id !== "number" || typeof parsed?.body !== "string") {
     return null;
   }
   const state = deserializeState(parsed.body);
@@ -29960,12 +30029,13 @@ async function updateStateComment(owner, name, commentId, state, token) {
     `repos/${owner}/${name}/issues/comments/${commentId}`,
     "--field",
     `body=${body}`
-  ], { env: { ...process.env, GH_TOKEN: token } });
+  ], { env: buildGhEnv(token) });
 }
 
 // dist/review-collector.js
 var import_node_child_process2 = require("node:child_process");
 var import_node_util2 = require("node:util");
+var core2 = __toESM(require_core(), 1);
 
 // dist/severity-parser.js
 var CODEX_FOOTER_PATTERN = /\n?Useful\? React with 👍 \/ 👎\.\s*$/;
@@ -30000,6 +30070,7 @@ function parseSeverity(rawBody) {
 
 // dist/review-collector.js
 var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process2.execFile);
+var MAX_BUFFER2 = 10 * 1024 * 1024;
 async function fetchReviewComments(repoOwner, repoName, prNumber, githubToken) {
   const { stdout } = await execFileAsync2("gh", [
     "api",
@@ -30009,10 +30080,17 @@ async function fetchReviewComments(repoOwner, repoName, prNumber, githubToken) {
     // @json ensures each result is a single-line JSON-encoded string,
     // preventing multi-line jq pretty-printing from breaking split("\n") parsing
     ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at} | @json"
-  ], { env: { ...process.env, GH_TOKEN: githubToken } });
+  ], { env: buildGhEnv(githubToken), maxBuffer: MAX_BUFFER2 });
   if (!stdout.trim())
     return [];
-  return stdout.trim().split("\n").filter((line) => line.trim()).map((line) => JSON.parse(JSON.parse(line)));
+  return stdout.trim().split("\n").filter((line) => line.trim()).flatMap((line) => {
+    try {
+      return [JSON.parse(JSON.parse(line))];
+    } catch {
+      core2.warning(`[review-collector] Skipping unparseable comment line: ${line.slice(0, 120)}`);
+      return [];
+    }
+  });
 }
 function filterAndParseComments(comments, botLogin, lastReceivedAt) {
   return comments.filter((comment) => comment.user.login === botLogin).filter((comment) => lastReceivedAt === null || comment.createdAt > lastReceivedAt).flatMap((comment) => {
@@ -30141,14 +30219,17 @@ function parseEditOperations(response) {
     const reason = textBlocks.length > 0 ? textBlocks.map((b2) => b2.text).join("\n").trim() : "Claude did not call edit_file (no explanation provided)";
     return { edits: [], skippedReason: reason };
   }
-  const edits = toolUseBlocks.filter((block) => block.name === "edit_file").map((block) => {
+  const edits = toolUseBlocks.filter((block) => block.name === "edit_file").flatMap((block) => {
     const input2 = block.input;
-    return {
+    if (typeof input2.path !== "string" || typeof input2.old_code !== "string" || typeof input2.new_code !== "string" || typeof input2.explanation !== "string") {
+      return [];
+    }
+    return [{
       path: input2.path,
       oldCode: input2.old_code,
       newCode: input2.new_code,
       explanation: input2.explanation
-    };
+    }];
   });
   return { edits, skippedReason: null };
 }
@@ -30211,34 +30292,36 @@ function findNormalizedMatches(normalizedHaystack, normalizedNeedle) {
 function findActualMatchLength(originalContent, normalizedContent, normalizedStartIndex, normalizedNeedle) {
   const originalLines = originalContent.split("\n");
   const normalizedLines = normalizedContent.split("\n");
+  if (originalLines.length !== normalizedLines.length) {
+    return null;
+  }
   let origOffset = 0;
   let normOffset = 0;
-  const lineMap = [];
-  for (let i2 = 0; i2 < normalizedLines.length; i2++) {
-    lineMap.push({ origStart: origOffset, normStart: normOffset });
-    origOffset += (originalLines[i2] ?? "").length + 1;
-    normOffset += normalizedLines[i2].length + 1;
-  }
   const normalizedEndIndex = normalizedStartIndex + normalizedNeedle.length;
-  let startLineIndex = -1;
-  let endLineIndex = -1;
-  for (let i2 = 0; i2 < lineMap.length; i2++) {
-    if (lineMap[i2].normStart === normalizedStartIndex) {
-      startLineIndex = i2;
+  let originalStart = -1;
+  let originalEnd = -1;
+  for (let i2 = 0; i2 < normalizedLines.length; i2++) {
+    const origLine = originalLines[i2] ?? "";
+    const normLine = normalizedLines[i2];
+    const normLineStart = normOffset;
+    const normLineEnd = normOffset + normLine.length;
+    if (normalizedStartIndex >= normLineStart && normalizedStartIndex <= normLineEnd) {
+      const intraLineOffset = normalizedStartIndex - normLineStart;
+      originalStart = origOffset + Math.min(intraLineOffset, origLine.length);
     }
-    const normLineEnd = lineMap[i2].normStart + normalizedLines[i2].length;
-    if (normLineEnd === normalizedEndIndex) {
-      endLineIndex = i2;
+    if (normalizedEndIndex >= normLineStart && normalizedEndIndex <= normLineEnd) {
+      const intraLineOffset = normalizedEndIndex - normLineStart;
+      originalEnd = origOffset + Math.min(intraLineOffset, origLine.length);
+    }
+    origOffset += origLine.length + 1;
+    normOffset += normLine.length + 1;
+    if (originalStart !== -1 && originalEnd !== -1) {
       break;
     }
   }
-  if (startLineIndex === -1 || endLineIndex === -1) {
+  if (originalStart === -1 || originalEnd === -1 || originalEnd < originalStart) {
     return null;
   }
-  const originalStart = lineMap[startLineIndex].origStart;
-  const origEndLineStart = lineMap[endLineIndex].origStart;
-  const origEndLineContent = originalLines[endLineIndex] ?? "";
-  const originalEnd = origEndLineStart + origEndLineContent.length;
   return {
     originalStart,
     originalLength: originalEnd - originalStart
@@ -30305,12 +30388,15 @@ function applyEdits(content, edits, filePath, lineHints) {
       i2--;
     }
   }
-  if (failedEdits.length > 0) {
+  if (failedEdits.length > 0 && resolved.length === 0) {
     return { success: false, content: null, failedEdits };
   }
   let result = content;
   for (const { edit, originalStart, originalLength } of resolved) {
     result = result.slice(0, originalStart) + edit.newCode + result.slice(originalStart + originalLength);
+  }
+  if (failedEdits.length > 0) {
+    return { success: false, content: result, failedEdits };
   }
   return { success: true, content: result, failedEdits: [] };
 }
@@ -30334,7 +30420,7 @@ function selectNearest(candidates, content, lineHint) {
 // dist/check-runner.js
 var import_node_child_process3 = require("node:child_process");
 var import_node_util3 = require("node:util");
-var core2 = __toESM(require_core(), 1);
+var core3 = __toESM(require_core(), 1);
 var execAsync = (0, import_node_util3.promisify)(import_node_child_process3.exec);
 function removeAnsiSequences(output) {
   return output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
@@ -30367,12 +30453,22 @@ function extractErrorOutput(error3) {
   }
   return ["", "", String(error3)];
 }
-async function runCheckCommand(checkCommand, modifiedFiles, createdFiles) {
+async function runCheckCommand(checkCommand, modifiedFiles) {
+  const safeEnv = { ...process.env };
+  delete safeEnv.ANTHROPIC_API_KEY;
+  delete safeEnv.GITHUB_TOKEN;
+  delete safeEnv.GH_TOKEN;
+  for (const key of Object.keys(safeEnv)) {
+    if (key.startsWith("INPUT_ANTHROPIC") || key.startsWith("INPUT_GITHUB")) {
+      delete safeEnv[key];
+    }
+  }
   try {
     const { stdout, stderr } = await execAsync(checkCommand, {
       timeout: 5 * 60 * 1e3,
       // 5 minutes in milliseconds
-      encoding: "utf-8"
+      encoding: "utf-8",
+      env: safeEnv
     });
     const combinedOutput = stdout + (stderr ? "\n" + stderr : "");
     return {
@@ -30388,15 +30484,8 @@ async function runCheckCommand(checkCommand, modifiedFiles, createdFiles) {
           });
         }
       }
-      if (createdFiles.length > 0) {
-        for (const file of createdFiles) {
-          (0, import_node_child_process3.execFileSync)("rm", ["-f", file], {
-            encoding: "utf-8"
-          });
-        }
-      }
     } catch (rollbackError) {
-      core2.error(`Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      core3.error(`Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
     }
     const [stdout, stderr, errorMessage] = extractErrorOutput(error3);
     const combinedOutput = stdout + (stderr ? "\n" + stderr : "") + (errorMessage ? "\nError: " + errorMessage : "");
@@ -30430,15 +30519,18 @@ async function postComment(owner, name, pr2, body, token) {
     `body=${body}`,
     "--jq",
     ".id"
-  ], { env: { ...process.env, GH_TOKEN: token } });
+  ], { env: buildGhEnv(token) });
   const commentId = parseInt(stdout.trim(), 10);
   if (isNaN(commentId)) {
     throw new Error(`postComment: unexpected response from GitHub API: ${stdout.trim()}`);
   }
   return commentId;
 }
+function escapeMarkdown(text) {
+  return text.replace(/[\r\n]+/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/`{3,}/g, "``").trim();
+}
 async function postFixSummary(owner, name, pr2, iteration, edits, skippedFiles, token) {
-  const editLines = edits.map((edit) => `- \`${edit.path}\`: ${edit.explanation}`).join("\n");
+  const editLines = edits.map((edit) => `- \`${edit.path}\`: ${escapeMarkdown(edit.explanation)}`).join("\n");
   const skippedSection = skippedFiles.length > 0 ? `
 
 **Files requiring manual intervention:**
@@ -30469,10 +30561,11 @@ async function postStopComment(owner, name, pr2, stopReason, reviewId, remaining
   return postComment(owner, name, pr2, body, token);
 }
 async function postTestFailureComment(owner, name, pr2, checkOutput, token) {
+  const safeOutput = checkOutput.replace(/`{3,}/g, "``");
   const body = `**Auto-fix stopped: CHECK_COMMAND failed**
 
 \`\`\`
-${checkOutput}
+${safeOutput}
 \`\`\`
 
 Changes have been rolled back. Manual intervention required.`;
@@ -30514,33 +30607,41 @@ function selectFiles(fileGroups, maxFiles) {
 }
 async function main() {
   const config = loadConfig();
+  core4.setSecret(config.anthropicApiKey);
+  core4.setSecret(config.githubToken);
   const triggerCommentId = config.triggerCommentId;
-  const prHeadRef = config.prHeadRef || "main";
-  core3.info(`[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
+  const prHeadRef = config.prHeadRef;
+  if (!prHeadRef) {
+    throw new Error("[main-loop] pr-head-ref is required but not set. Cannot determine target branch.");
+  }
+  core4.info(`[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
   const stateResult = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   if (!stateResult) {
-    core3.info("[main-loop] No state found. Workflow A has not run. Skipping.");
+    core4.info("[main-loop] No state found. Workflow A has not run. Skipping.");
     return;
   }
   const { state, commentId } = stateResult;
   if (state.status === "initialized") {
-    core3.info("[main-loop] State is 'initialized' \u2014 Workflow A incomplete.");
+    core4.info("[main-loop] State is 'initialized' \u2014 Workflow A incomplete.");
     await postInitIncompleteComment(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
     return;
   }
   if (state.status === "stopped" || state.status === "done") {
-    core3.info(`[main-loop] Status is '${state.status}'. Skipping.`);
+    core4.info(`[main-loop] Status is '${state.status}'. Skipping.`);
     return;
   }
   if (state.status === "fixing") {
     const STALE_THRESHOLD_MS = 30 * 60 * 1e3;
     const fixingStartedAt = state.lastCodexReviewReceivedAt;
+    if (fixingStartedAt === null) {
+      core4.warning("[main-loop] Status is 'fixing' with null timestamp. Treating as stale.");
+    }
     const elapsed = Date.now() - new Date(fixingStartedAt ?? 0).getTime();
-    if (elapsed < STALE_THRESHOLD_MS) {
-      core3.info(`[main-loop] Status is 'fixing' (started ${Math.round(elapsed / 1e3)}s ago). Skipping.`);
+    if (fixingStartedAt !== null && elapsed < STALE_THRESHOLD_MS) {
+      core4.info(`[main-loop] Status is 'fixing' (started ${Math.round(elapsed / 1e3)}s ago). Skipping.`);
       return;
     }
-    core3.warning(`[main-loop] Status stuck in 'fixing' for ${Math.round(elapsed / 6e4)}min. Recovering.`);
+    core4.warning(`[main-loop] Status stuck in 'fixing' for ${Math.round(elapsed / 6e4)}min. Recovering.`);
     const recoveredState = {
       ...state,
       status: "stopped",
@@ -30550,23 +30651,28 @@ async function main() {
     await postStopComment(config.repoOwner, config.repoName, config.prNumber, "state_corrupted", triggerCommentId, 0, "Previous fixing state timed out \u2014 recovered automatically", config.githubToken);
     return;
   }
-  if (triggerCommentId !== 0 && state.lastProcessedReviewId === triggerCommentId) {
-    core3.info(`[main-loop] Trigger comment ${triggerCommentId} already processed. Skipping.`);
+  if (state.status !== "waiting_codex") {
+    core4.warning(`[main-loop] Unexpected status '${state.status}'. Only 'waiting_codex' is processable. Skipping.`);
     return;
   }
-  core3.info(`[main-loop] Debouncing ${config.debounceSeconds}s...`);
+  if (triggerCommentId !== 0 && state.lastProcessedReviewId === triggerCommentId) {
+    core4.info(`[main-loop] Trigger comment ${triggerCommentId} already processed. Skipping.`);
+    return;
+  }
+  core4.info(`[main-loop] Debouncing ${config.debounceSeconds}s...`);
   await sleep3(config.debounceSeconds * 1e3);
-  core3.info("[main-loop] Fetching review comments...");
+  core4.info("[main-loop] Fetching review comments...");
   const rawComments = await fetchReviewComments(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   const findings = filterAndParseComments(rawComments, config.codexBotLogin, state.lastCodexReviewReceivedAt);
-  core3.info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
+  core4.info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
+  const latestCommentTime = rawComments.filter((c2) => c2.user.login === config.codexBotLogin).reduce((max, c2) => c2.createdAt > max ? c2.createdAt : max, state.lastCodexReviewReceivedAt ?? "");
   const updatedStateBase = {
     ...state,
     lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
-    lastCodexReviewReceivedAt: (/* @__PURE__ */ new Date()).toISOString()
+    lastCodexReviewReceivedAt: latestCommentTime || (/* @__PURE__ */ new Date()).toISOString()
   };
   if (findings.length === 0) {
-    core3.info("[main-loop] No findings. Marking done.");
+    core4.info("[main-loop] No findings. Marking done.");
     const doneState = {
       ...updatedStateBase,
       status: "done",
@@ -30577,7 +30683,7 @@ async function main() {
     return;
   }
   if (state.iterationCount >= config.maxReviewIterations) {
-    core3.info(`[main-loop] Iteration count ${state.iterationCount} >= max ${config.maxReviewIterations}. Stopping.`);
+    core4.info(`[main-loop] Iteration count ${state.iterationCount} >= max ${config.maxReviewIterations}. Stopping.`);
     const stoppedState = {
       ...updatedStateBase,
       status: "stopped",
@@ -30588,7 +30694,7 @@ async function main() {
     return;
   }
   if (isLoop(findings, state.findingsHashHistory)) {
-    core3.info("[main-loop] Loop detected. Stopping.");
+    core4.info("[main-loop] Loop detected. Stopping.");
     const stoppedState = {
       ...updatedStateBase,
       status: "stopped",
@@ -30613,15 +30719,15 @@ async function main() {
   };
   await updateStateComment(config.repoOwner, config.repoName, commentId, fixingState, config.githubToken);
   if (prHeadRef) {
-    if (!/^[\w.\-/]+$/.test(prHeadRef)) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$/.test(prHeadRef) || prHeadRef.includes("..")) {
       throw new Error(`[main-loop] Invalid branch name: ${prHeadRef}`);
     }
-    core3.info(`[main-loop] Checking out branch: ${prHeadRef}`);
+    core4.info(`[main-loop] Checking out branch: ${prHeadRef}`);
     (0, import_node_child_process5.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
   const fileGroups = groupByFile(findings);
   const selectedFiles = selectFiles(fileGroups, config.maxFilesPerIteration);
-  core3.info(`[main-loop] Processing ${selectedFiles.length} file(s) out of ${fileGroups.size} total.`);
+  core4.info(`[main-loop] Processing ${selectedFiles.length} file(s) out of ${fileGroups.size} total.`);
   const anthropicClient = new sdk_default({ apiKey: config.anthropicApiKey });
   const prContext = {
     number: config.prNumber,
@@ -30631,12 +30737,11 @@ async function main() {
   const allAppliedEdits = [];
   const skippedFiles = [];
   const modifiedFiles = [];
-  const createdFiles = [];
   const repoRoot = (0, import_node_path.resolve)(".");
   for (const [filePath, fileFindings] of selectedFiles) {
     const resolvedPath = (0, import_node_path.resolve)(filePath);
     if (!resolvedPath.startsWith(repoRoot + import_node_path.sep) && resolvedPath !== repoRoot) {
-      core3.warning(`[main-loop] Path traversal detected: ${filePath}. Skipping.`);
+      core4.warning(`[main-loop] Path traversal detected: ${filePath}. Skipping.`);
       skippedFiles.push(filePath);
       continue;
     }
@@ -30644,38 +30749,37 @@ async function main() {
     try {
       fileContent = (0, import_node_fs2.readFileSync)(filePath, "utf-8");
     } catch {
-      core3.warning(`[main-loop] Cannot read file: ${filePath}. Skipping.`);
+      core4.warning(`[main-loop] Cannot read file: ${filePath}. Skipping.`);
       skippedFiles.push(filePath);
       continue;
     }
     try {
       const estimatedTokens = Math.ceil(fileContent.length / 4);
       if (estimatedTokens > config.maxInputTokensPerFile) {
-        core3.warning(`[main-loop] File ${filePath} estimated ${estimatedTokens} tokens > max ${config.maxInputTokensPerFile}. Skipping.`);
+        core4.warning(`[main-loop] File ${filePath} estimated ${estimatedTokens} tokens > max ${config.maxInputTokensPerFile}. Skipping.`);
         skippedFiles.push(filePath);
         continue;
       }
-      core3.info(`[main-loop] Fixing ${filePath} (${fileFindings.length} findings)...`);
+      core4.info(`[main-loop] Fixing ${filePath} (${fileFindings.length} findings)...`);
       const fixResult = await fixFile(anthropicClient, prContext, filePath, fileContent, fileFindings, fixingState.iterationCount, config.maxReviewIterations);
       if (fixResult.skippedReason) {
-        core3.warning(`[main-loop] Claude skipped ${filePath}: ${fixResult.skippedReason}`);
+        core4.warning(`[main-loop] Claude skipped ${filePath}: ${fixResult.skippedReason}`);
         skippedFiles.push(filePath);
         continue;
       }
       if (fixResult.edits.length === 0) {
-        core3.warning(`[main-loop] No edits returned for ${filePath}. Skipping.`);
+        core4.warning(`[main-loop] No edits returned for ${filePath}. Skipping.`);
         skippedFiles.push(filePath);
         continue;
       }
-      const lineHints = fileFindings.map((f2) => f2.line);
-      let applyResult = applyEdits(fileContent, fixResult.edits, filePath, lineHints);
+      let applyResult = applyEdits(fileContent, fixResult.edits, filePath);
       let successfulEdits = [];
       let failedEdits = [];
       if (!applyResult.success) {
         successfulEdits = fixResult.edits.filter((e2) => !applyResult.failedEdits.includes(e2));
         failedEdits = applyResult.failedEdits;
         for (let retryAttempt = 0; retryAttempt < 2 && failedEdits.length > 0; retryAttempt++) {
-          core3.info(`[main-loop] Retrying ${failedEdits.length} failed edit(s) for ${filePath} (attempt ${retryAttempt + 1}/2)...`);
+          core4.info(`[main-loop] Retrying ${failedEdits.length} failed edit(s) for ${filePath} (attempt ${retryAttempt + 1}/2)...`);
           let intermediateContent = fileContent;
           if (successfulEdits.length > 0) {
             const intermediateResult = applyEdits(fileContent, successfulEdits, filePath);
@@ -30685,11 +30789,11 @@ async function main() {
           }
           const retryResult = await retryFailedEdits(anthropicClient, prContext, filePath, intermediateContent, failedEdits, fixingState.iterationCount, config.maxReviewIterations);
           if (retryResult.skippedReason || retryResult.edits.length === 0) {
-            core3.warning(`[main-loop] Retry produced no edits for ${filePath}. Keeping successful edits.`);
+            core4.warning(`[main-loop] Retry produced no edits for ${filePath}. Keeping successful edits.`);
             break;
           }
           const mergedEdits = [...successfulEdits, ...retryResult.edits];
-          const mergedResult = applyEdits(fileContent, mergedEdits, filePath, lineHints);
+          const mergedResult = applyEdits(fileContent, mergedEdits, filePath);
           if (mergedResult.success) {
             successfulEdits = mergedEdits;
             failedEdits = [];
@@ -30706,12 +30810,12 @@ async function main() {
           if (finalResult.success && finalResult.content !== null) {
             applyResult = finalResult;
           } else {
-            core3.warning(`[main-loop] All edits failed for ${filePath}. Skipping file.`);
+            core4.warning(`[main-loop] All edits failed for ${filePath}. Skipping file.`);
             skippedFiles.push(filePath);
             continue;
           }
         } else {
-          core3.warning(`[main-loop] All edits failed for ${filePath} after retries. Skipping file.`);
+          core4.warning(`[main-loop] All edits failed for ${filePath} after retries. Skipping file.`);
           skippedFiles.push(filePath);
           continue;
         }
@@ -30719,22 +30823,22 @@ async function main() {
         successfulEdits = fixResult.edits;
       }
       if (!applyResult.success || applyResult.content === null) {
-        core3.warning(`[main-loop] Could not apply edits for ${filePath}. Skipping.`);
+        core4.warning(`[main-loop] Could not apply edits for ${filePath}. Skipping.`);
         skippedFiles.push(filePath);
         continue;
       }
       (0, import_node_fs2.writeFileSync)(filePath, applyResult.content, "utf-8");
       allAppliedEdits.push(...successfulEdits);
       modifiedFiles.push(filePath);
-      core3.info(`[main-loop] Applied ${successfulEdits.length} edit(s) to ${filePath}.`);
+      core4.info(`[main-loop] Applied ${successfulEdits.length} edit(s) to ${filePath}.`);
     } catch (fileError) {
-      core3.error(`[main-loop] Error processing ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
+      core4.error(`[main-loop] Error processing ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
       skippedFiles.push(filePath);
       continue;
     }
   }
   if (allAppliedEdits.length === 0) {
-    core3.error("[main-loop] No edits applied. Stopping with claude_api_error.");
+    core4.error("[main-loop] No edits applied. Stopping with claude_api_error.");
     const stoppedState = {
       ...fixingState,
       status: "stopped",
@@ -30744,12 +30848,12 @@ async function main() {
     await postStopComment(config.repoOwner, config.repoName, config.prNumber, "claude_api_error", triggerCommentId, findings.length, "Claude returned no applicable edits for any selected file", config.githubToken);
     return;
   }
-  core3.info(`[main-loop] Running check command: ${config.checkCommand}`);
-  const checkResult = await runCheckCommand(config.checkCommand, modifiedFiles, createdFiles);
+  core4.info(`[main-loop] Running check command: ${config.checkCommand}`);
+  const checkResult = await runCheckCommand(config.checkCommand, modifiedFiles);
   if (!checkResult.success) {
-    core3.error("[main-loop] Check command failed. Rolling back and stopping.");
+    core4.error("[main-loop] Check command failed. Rolling back and stopping.");
     const stoppedState = {
-      ...fixingState,
+      ...updatedStateBase,
       status: "stopped",
       stopReason: "test_failure"
     };
@@ -30757,38 +30861,52 @@ async function main() {
     await postTestFailureComment(config.repoOwner, config.repoName, config.prNumber, checkResult.output, config.githubToken);
     return;
   }
-  core3.info("[main-loop] Check command passed. Committing changes...");
+  core4.info("[main-loop] Check command passed. Committing changes...");
   (0, import_node_child_process5.execFileSync)("git", ["add", ...modifiedFiles], { stdio: "inherit" });
-  const commitBody = allAppliedEdits.map((e2) => `- ${e2.explanation}`).join("\n");
-  (0, import_node_child_process5.execFileSync)("git", [
-    "commit",
-    "-m",
-    `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})
+  try {
+    (0, import_node_child_process5.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
+    core4.warning("[main-loop] No staged changes after edits. Skipping commit.");
+  } catch {
+    const sanitize = (s2) => s2.replace(/[\r\n]+/g, " ").trim();
+    const commitBody = allAppliedEdits.map((e2) => `- ${sanitize(e2.explanation)}`).join("\n");
+    (0, import_node_child_process5.execFileSync)("git", [
+      "commit",
+      "-m",
+      `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})
 
 ${commitBody}`
-  ], { stdio: "inherit" });
-  (0, import_node_child_process5.execFileSync)("git", ["push"], { stdio: "inherit" });
-  const commitSha = (0, import_node_child_process5.execSync)("git rev-parse HEAD", { encoding: "utf-8" }).trim();
-  core3.info(`[main-loop] Committed: ${commitSha}`);
+    ], { stdio: "inherit" });
+    (0, import_node_child_process5.execFileSync)("git", ["push"], { stdio: "inherit" });
+  }
+  const commitSha = (0, import_node_child_process5.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+  core4.info(`[main-loop] Committed: ${commitSha}`);
   await postFixSummary(config.repoOwner, config.repoName, config.prNumber, fixingState.iterationCount, allAppliedEdits, skippedFiles, config.githubToken);
-  core3.info("[main-loop] Posting @codex review request...");
-  const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   const waitingState = {
     ...fixingState,
     status: "waiting_codex",
-    lastClaudeCommitSha: commitSha,
-    lastCodexRequestCommentId: reviewRequestId
+    lastClaudeCommitSha: commitSha
   };
   await updateStateComment(config.repoOwner, config.repoName, commentId, waitingState, config.githubToken);
-  core3.info(`[main-loop] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`);
+  core4.info("[main-loop] Posting @codex review request...");
+  try {
+    const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+    const updatedWaitingState = {
+      ...waitingState,
+      lastCodexRequestCommentId: reviewRequestId
+    };
+    await updateStateComment(config.repoOwner, config.repoName, commentId, updatedWaitingState, config.githubToken);
+    core4.info(`[main-loop] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`);
+  } catch (phase4Error) {
+    core4.error(`[main-loop] Failed to post Codex review request: ${phase4Error instanceof Error ? phase4Error.message : String(phase4Error)}. State is waiting_codex. Manual '@codex review' comment may be needed.`);
+  }
 }
 main().catch(async (error3) => {
-  core3.setFailed(error3 instanceof Error ? error3.message : String(error3));
+  core4.setFailed(error3 instanceof Error ? error3.message : String(error3));
   try {
-    const crashConfig = loadConfig();
+    const crashConfig = loadInitConfig();
     const stateResult = await readState(crashConfig.repoOwner, crashConfig.repoName, crashConfig.prNumber, crashConfig.githubToken);
     if (stateResult && stateResult.state.status === "fixing") {
-      core3.warning("[main-loop] Crash recovery: resetting fixing \u2192 stopped (state_corrupted)");
+      core4.warning("[main-loop] Crash recovery: resetting fixing \u2192 stopped (state_corrupted)");
       const recoveredState = {
         ...stateResult.state,
         status: "stopped",
@@ -30797,7 +30915,7 @@ main().catch(async (error3) => {
       await updateStateComment(crashConfig.repoOwner, crashConfig.repoName, stateResult.commentId, recoveredState, crashConfig.githubToken);
     }
   } catch (recoveryError) {
-    core3.error(`[main-loop] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+    core4.error(`[main-loop] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
   }
 });
 /*! Bundled license information:

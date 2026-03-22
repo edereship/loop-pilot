@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import * as core from "@actions/core";
 import { parseSeverity } from "./severity-parser.js";
 import { buildGhEnv } from "./gh-env.js";
 import type { Finding, RawReviewComment } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB — default 1 MB is insufficient for large PRs
 
 /**
  * Fetches PR inline review comments from GitHub API using the gh CLI.
@@ -30,7 +32,7 @@ export async function fetchReviewComments(
       // preventing multi-line jq pretty-printing from breaking split("\n") parsing
       ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at} | @json",
     ],
-    { env: buildGhEnv(githubToken) }
+    { env: buildGhEnv(githubToken), maxBuffer: MAX_BUFFER }
   );
 
   if (!stdout.trim()) return [];
@@ -38,7 +40,14 @@ export async function fetchReviewComments(
     .trim()
     .split("\n")
     .filter((line) => line.trim())
-    .map((line) => JSON.parse(JSON.parse(line)));
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(JSON.parse(line)) as RawReviewComment];
+      } catch {
+        core.warning(`[review-collector] Skipping unparseable comment line: ${line.slice(0, 120)}`);
+        return [];
+      }
+    });
 }
 
 /**

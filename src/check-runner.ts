@@ -88,12 +88,16 @@ export async function runCheckCommand(
   checkCommand: string,
   modifiedFiles: string[]
 ): Promise<CheckResult> {
-  // Strip sensitive env vars to prevent exfiltration via malicious check commands
+  // Strip sensitive env vars to prevent exfiltration via malicious check commands.
+  // Use denylist approach: remove all known secret-bearing keys.
+  // GITHUB_TOKEN / GH_TOKEN carry contents:write scope and must not leak.
   const safeEnv = { ...process.env };
   delete safeEnv.ANTHROPIC_API_KEY;
+  delete safeEnv.GITHUB_TOKEN;
+  delete safeEnv.GH_TOKEN;
   // GitHub Actions passes action inputs as INPUT_<NAME> env vars
   for (const key of Object.keys(safeEnv)) {
-    if (key.startsWith("INPUT_ANTHROPIC")) {
+    if (key.startsWith("INPUT_ANTHROPIC") || key.startsWith("INPUT_GITHUB")) {
       delete safeEnv[key];
     }
   }

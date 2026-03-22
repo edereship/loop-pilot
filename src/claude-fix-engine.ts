@@ -152,19 +152,23 @@ function parseEditOperations(
 
   const edits: EditOperation[] = toolUseBlocks
     .filter((block) => block.name === "edit_file")
-    .map((block) => {
-      const input = block.input as {
-        path: string;
-        old_code: string;
-        new_code: string;
-        explanation: string;
-      };
-      return {
+    .flatMap((block) => {
+      const input = block.input as Record<string, unknown>;
+      // Validate all required fields are strings — Claude may omit or mistype fields
+      if (
+        typeof input.path !== "string" ||
+        typeof input.old_code !== "string" ||
+        typeof input.new_code !== "string" ||
+        typeof input.explanation !== "string"
+      ) {
+        return [];
+      }
+      return [{
         path: input.path,
         oldCode: input.old_code,
         newCode: input.new_code,
         explanation: input.explanation,
-      };
+      }];
     });
 
   return { edits, skippedReason: null };

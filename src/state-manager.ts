@@ -4,6 +4,7 @@ import { buildGhEnv } from "./gh-env.js";
 import type { ReviewState } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB
 
 const STATE_MARKER = "auto-review-state";
 const STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
@@ -15,6 +16,9 @@ const VALID_STATUSES = new Set(["initialized", "waiting_codex", "fixing", "done"
 /**
  * Runtime validation for deserialized state to prevent state tampering
  * via maliciously crafted PR comment bodies.
+ *
+ * All fields consumed downstream are validated to their expected types.
+ * Nullable fields must be either the correct type or null.
  */
 function validateState(obj: unknown): obj is ReviewState {
   if (typeof obj !== "object" || obj === null) return false;
@@ -23,6 +27,21 @@ function validateState(obj: unknown): obj is ReviewState {
   if (typeof s.iterationCount !== "number" || s.iterationCount < 0) return false;
   if (typeof s.status !== "string" || !VALID_STATUSES.has(s.status)) return false;
   if (!Array.isArray(s.findingsHashHistory)) return false;
+
+  // Validate nullable fields used in downstream comparisons and Date parsing
+  if (s.lastProcessedReviewId !== null && typeof s.lastProcessedReviewId !== "number") return false;
+  if (s.lastClaudeCommitSha !== null && typeof s.lastClaudeCommitSha !== "string") return false;
+  if (s.lastCodexRequestCommentId !== null && typeof s.lastCodexRequestCommentId !== "number") return false;
+  if (s.lastCodexReviewReceivedAt !== null && typeof s.lastCodexReviewReceivedAt !== "string") return false;
+  if (s.lastFindingsHash !== null && typeof s.lastFindingsHash !== "string") return false;
+  if (s.stopReason !== null && typeof s.stopReason !== "string") return false;
+
+  // Validate each hash history entry shape
+  for (const entry of s.findingsHashHistory) {
+    if (typeof entry !== "object" || entry === null) return false;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.iteration !== "number" || typeof e.hash !== "string") return false;
+  }
 
   return true;
 }
@@ -125,7 +144,7 @@ export async function readState(
       // preventing multi-line jq pretty-printing from breaking split("\n") parsing
       `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`,
     ],
-    { env: buildGhEnv(token) },
+    { env: buildGhEnv(token), maxBuffer: MAX_BUFFER },
   );
 
   const trimmed = stdout.trim();
@@ -133,12 +152,19 @@ export async function readState(
     return null;
   }
 
-  // @json wraps each result as a JSON-encoded string on its own line; double-decode to get the object
-  const firstLine = trimmed.split("\n")[0];
+  // @json wraps each result as a JSON-encoded string on its own line; double-decode to get the object.
+  // Take the LAST line: if duplicate state comments exist, the most recent (highest ID) is last
+  // because GitHub API returns issue comments in ascending chronological order.
+  const lines = trimmed.split("\n").filter((l) => l.trim());
+  const lastLine = lines[lines.length - 1];
   let parsed: { id: number; body: string };
   try {
-    parsed = JSON.parse(JSON.parse(firstLine)) as { id: number; body: string };
+    parsed = JSON.parse(JSON.parse(lastLine)) as { id: number; body: string };
   } catch {
+    return null;
+  }
+
+  if (typeof parsed?.id !== "number" || typeof parsed?.body !== "string") {
     return null;
   }
 

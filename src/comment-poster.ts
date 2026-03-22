@@ -49,6 +49,18 @@ async function postComment(
 }
 
 /**
+ * Escape a user/AI-generated string for safe embedding in Markdown.
+ * Strips Markdown link syntax and backtick sequences to prevent injection.
+ */
+function escapeMarkdown(text: string): string {
+  return text
+    .replace(/[\r\n]+/g, " ")        // collapse newlines
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")  // strip [text](url) → text
+    .replace(/`{3,}/g, "``")          // prevent code fence breakout
+    .trim();
+}
+
+/**
  * Posts a summary comment after an auto-fix iteration is applied.
  *
  * @param edits - List of edit operations applied in this iteration
@@ -64,7 +76,7 @@ export async function postFixSummary(
   token: string,
 ): Promise<number> {
   const editLines = edits
-    .map((edit) => `- \`${edit.path}\`: ${edit.explanation}`)
+    .map((edit) => `- \`${edit.path}\`: ${escapeMarkdown(edit.explanation)}`)
     .join("\n");
 
   const skippedSection =
@@ -138,7 +150,9 @@ export async function postTestFailureComment(
   checkOutput: string,
   token: string,
 ): Promise<number> {
-  const body = `**Auto-fix stopped: CHECK_COMMAND failed**\n\n\`\`\`\n${checkOutput}\n\`\`\`\n\nChanges have been rolled back. Manual intervention required.`;
+  // Escape triple-backtick sequences in output to prevent Markdown code fence breakout
+  const safeOutput = checkOutput.replace(/`{3,}/g, "``");
+  const body = `**Auto-fix stopped: CHECK_COMMAND failed**\n\n\`\`\`\n${safeOutput}\n\`\`\`\n\nChanges have been rolled back. Manual intervention required.`;
 
   return postComment(owner, name, pr, body, token);
 }

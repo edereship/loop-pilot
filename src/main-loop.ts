@@ -83,7 +83,10 @@ async function main(): Promise<void> {
   core.setSecret(config.githubToken);
 
   const triggerCommentId = config.triggerCommentId;
-  const prHeadRef = config.prHeadRef || "main";
+  const prHeadRef = config.prHeadRef;
+  if (!prHeadRef) {
+    throw new Error("[main-loop] pr-head-ref is required but not set. Cannot determine target branch.");
+  }
 
   core.info(
     `[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`
@@ -586,8 +589,12 @@ async function main(): Promise<void> {
 
   if (!checkResult.success) {
     core.error("[main-loop] Check command failed. Rolling back and stopping.");
+    // Use updatedStateBase (pre-increment) so that:
+    // 1. iterationCount is not consumed by a failed attempt
+    // 2. findingsHashHistory does not contain the failed iteration's hash,
+    //    preventing false loop detection on retry
     const stoppedState: ReviewState = {
-      ...fixingState,
+      ...updatedStateBase,
       status: "stopped",
       stopReason: "test_failure",
     };
@@ -612,17 +619,29 @@ async function main(): Promise<void> {
 
   // git add individual files using execFileSync to avoid shell injection
   execFileSync("git", ["add", ...modifiedFiles], { stdio: "inherit" });
-  const commitBody = allAppliedEdits.map((e) => `- ${e.explanation}`).join("\n");
-  execFileSync(
-    "git",
-    [
-      "commit",
-      "-m",
-      `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})\n\n${commitBody}`,
-    ],
-    { stdio: "inherit" }
-  );
-  execFileSync("git", ["push"], { stdio: "inherit" });
+
+  // Guard: skip commit if all edits resulted in no actual file changes
+  try {
+    execFileSync("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
+    // Exit code 0 means no staged changes — nothing to commit
+    core.warning("[main-loop] No staged changes after edits. Skipping commit.");
+  } catch {
+    // Exit code 1 means there are staged changes — proceed with commit
+
+    // Sanitize explanations: strip newlines to prevent Git trailer injection
+    const sanitize = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
+    const commitBody = allAppliedEdits.map((e) => `- ${sanitize(e.explanation)}`).join("\n");
+    execFileSync(
+      "git",
+      [
+        "commit",
+        "-m",
+        `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})\n\n${commitBody}`,
+      ],
+      { stdio: "inherit" }
+    );
+    execFileSync("git", ["push"], { stdio: "inherit" });
+  }
 
   // Capture commit SHA for state
   const commitSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();

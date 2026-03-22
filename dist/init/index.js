@@ -19822,8 +19822,9 @@ function loadInitConfig() {
 function loadBaseConfig() {
   const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
   const [repoOwner, repoName] = repoFullName.split("/");
-  if (!repoOwner || !repoName) {
-    throw new Error(`github-repository must be in "owner/name" format, got: "${repoFullName}"`);
+  const validRepoSegment = /^[a-zA-Z0-9._-]+$/;
+  if (!repoOwner || !repoName || !validRepoSegment.test(repoOwner) || !validRepoSegment.test(repoName)) {
+    throw new Error(`github-repository must be in "owner/name" format with valid characters, got: "${repoFullName}"`);
   }
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
@@ -19838,7 +19839,7 @@ function loadBaseConfig() {
     githubToken: requireInput("github-token", "GITHUB_TOKEN"),
     repoOwner,
     repoName,
-    prNumber: intInput("pr-number", "PR_NUMBER", 0),
+    prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", "")
@@ -19863,6 +19864,13 @@ function intInput(inputName, envName, defaultValue) {
   }
   return parsed;
 }
+function requirePositiveInt(inputName, envName) {
+  const value = intInput(inputName, envName, 0);
+  if (value <= 0) {
+    throw new Error(`Required input "${inputName}" or env "${envName}" must be a positive integer, got: ${value}`);
+  }
+  return value;
+}
 function requireInput(inputName, envName) {
   const value = input(inputName, envName, "");
   if (value === "") {
@@ -19874,12 +19882,60 @@ function requireInput(inputName, envName) {
 // dist/state-manager.js
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
+
+// dist/gh-env.js
+function buildGhEnv(token) {
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    GH_TOKEN: token,
+    // gh may need these for HTTPS proxy support
+    HTTPS_PROXY: process.env.HTTPS_PROXY,
+    HTTP_PROXY: process.env.HTTP_PROXY,
+    NO_PROXY: process.env.NO_PROXY
+  };
+}
+
+// dist/state-manager.js
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.execFile);
+var MAX_BUFFER = 10 * 1024 * 1024;
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
 var MAX_HISTORY_ENTRIES = 3;
 var MAX_SERIALIZED_BYTES = 65e3;
+var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+function validateState(obj) {
+  if (typeof obj !== "object" || obj === null)
+    return false;
+  const s = obj;
+  if (typeof s.iterationCount !== "number" || s.iterationCount < 0)
+    return false;
+  if (typeof s.status !== "string" || !VALID_STATUSES.has(s.status))
+    return false;
+  if (!Array.isArray(s.findingsHashHistory))
+    return false;
+  if (s.lastProcessedReviewId !== null && typeof s.lastProcessedReviewId !== "number")
+    return false;
+  if (s.lastClaudeCommitSha !== null && typeof s.lastClaudeCommitSha !== "string")
+    return false;
+  if (s.lastCodexRequestCommentId !== null && typeof s.lastCodexRequestCommentId !== "number")
+    return false;
+  if (s.lastCodexReviewReceivedAt !== null && typeof s.lastCodexReviewReceivedAt !== "string")
+    return false;
+  if (s.lastFindingsHash !== null && typeof s.lastFindingsHash !== "string")
+    return false;
+  if (s.stopReason !== null && typeof s.stopReason !== "string")
+    return false;
+  for (const entry of s.findingsHashHistory) {
+    if (typeof entry !== "object" || entry === null)
+      return false;
+    const e = entry;
+    if (typeof e.iteration !== "number" || typeof e.hash !== "string")
+      return false;
+  }
+  return true;
+}
 function createInitialState() {
   return {
     iterationCount: 0,
@@ -19920,6 +19976,9 @@ function deserializeState(commentBody) {
   }
   try {
     const parsed = JSON.parse(match[1]);
+    if (!validateState(parsed)) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;
@@ -19934,16 +19993,20 @@ async function readState(owner, name, pr, token) {
     // @json ensures each result is a single-line JSON-encoded string,
     // preventing multi-line jq pretty-printing from breaking split("\n") parsing
     `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
-  ], { env: { ...process.env, GH_TOKEN: token } });
+  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
     return null;
   }
-  const firstLine = trimmed.split("\n")[0];
+  const lines = trimmed.split("\n").filter((l) => l.trim());
+  const lastLine = lines[lines.length - 1];
   let parsed;
   try {
-    parsed = JSON.parse(JSON.parse(firstLine));
+    parsed = JSON.parse(JSON.parse(lastLine));
   } catch {
+    return null;
+  }
+  if (typeof parsed?.id !== "number" || typeof parsed?.body !== "string") {
     return null;
   }
   const state = deserializeState(parsed.body);
@@ -19963,7 +20026,7 @@ async function createStateComment(owner, name, pr, state, token) {
     `body=${body}`,
     "--jq",
     ".id"
-  ], { env: { ...process.env, GH_TOKEN: token } });
+  ], { env: buildGhEnv(token) });
   const commentId = parseInt(stdout.trim(), 10);
   if (isNaN(commentId)) {
     throw new Error(`createStateComment: unexpected response from GitHub API: ${stdout.trim()}`);
@@ -19979,7 +20042,7 @@ async function updateStateComment(owner, name, commentId, state, token) {
     `repos/${owner}/${name}/issues/comments/${commentId}`,
     "--field",
     `body=${body}`
-  ], { env: { ...process.env, GH_TOKEN: token } });
+  ], { env: buildGhEnv(token) });
 }
 
 // dist/comment-poster.js
@@ -19996,7 +20059,7 @@ async function postComment(owner, name, pr, body, token) {
     `body=${body}`,
     "--jq",
     ".id"
-  ], { env: { ...process.env, GH_TOKEN: token } });
+  ], { env: buildGhEnv(token) });
   const commentId = parseInt(stdout.trim(), 10);
   if (isNaN(commentId)) {
     throw new Error(`postComment: unexpected response from GitHub API: ${stdout.trim()}`);
