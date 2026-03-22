@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import Anthropic from "@anthropic-ai/sdk";
+import * as core from "@actions/core";
 import { loadConfig } from "./config.js";
 import { readState, updateStateComment } from "./state-manager.js";
 import {
@@ -75,10 +76,10 @@ function selectFiles(
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const triggerCommentId = parseInt(process.env.TRIGGER_COMMENT_ID ?? "0", 10);
-  const prHeadRef = process.env.PR_HEAD_REF ?? "";
+  const triggerCommentId = config.triggerCommentId;
+  const prHeadRef = config.prHeadRef || "main";
 
-  console.log(
+  core.info(
     `[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`
   );
 
@@ -93,7 +94,7 @@ async function main(): Promise<void> {
 
   // Guard: no state means Workflow A hasn't run yet — skip silently
   if (!stateResult) {
-    console.log("[main-loop] No state found. Workflow A has not run. Skipping.");
+    core.info("[main-loop] No state found. Workflow A has not run. Skipping.");
     return;
   }
 
@@ -101,7 +102,7 @@ async function main(): Promise<void> {
 
   // Guard: status === "initialized" means Workflow A never posted the review request
   if (state.status === "initialized") {
-    console.log("[main-loop] State is 'initialized' — Workflow A incomplete.");
+    core.info("[main-loop] State is 'initialized' — Workflow A incomplete.");
     await postInitIncompleteComment(
       config.repoOwner,
       config.repoName,
@@ -117,7 +118,7 @@ async function main(): Promise<void> {
     state.status === "stopped" ||
     state.status === "done"
   ) {
-    console.log(`[main-loop] Status is '${state.status}'. Skipping.`);
+    core.info(`[main-loop] Status is '${state.status}'. Skipping.`);
     return;
   }
 
@@ -126,14 +127,14 @@ async function main(): Promise<void> {
     triggerCommentId !== 0 &&
     state.lastProcessedReviewId === triggerCommentId
   ) {
-    console.log(
+    core.info(
       `[main-loop] Trigger comment ${triggerCommentId} already processed. Skipping.`
     );
     return;
   }
 
   // ─── Debounce ─────────────────────────────────────────────────────────────
-  console.log(`[main-loop] Debouncing ${config.debounceSeconds}s...`);
+  core.info(`[main-loop] Debouncing ${config.debounceSeconds}s...`);
   await sleep(config.debounceSeconds * 1000);
 
   // TODO(phase:PoC, reason:stabilize safeguard not implemented — would poll review comments
@@ -142,7 +143,7 @@ async function main(): Promise<void> {
   // due:MVP): implement comment stabilization check
 
   // ─── Collect Findings ────────────────────────────────────────────────────
-  console.log("[main-loop] Fetching review comments...");
+  core.info("[main-loop] Fetching review comments...");
   const rawComments = await fetchReviewComments(
     config.repoOwner,
     config.repoName,
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
     state.lastCodexReviewReceivedAt
   );
 
-  console.log(`[main-loop] Found ${findings.length} P0/P1 findings.`);
+  core.info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
 
   // ─── Phase 2: Judge ───────────────────────────────────────────────────────
 
@@ -171,7 +172,7 @@ async function main(): Promise<void> {
 
   // 2a: No findings → done
   if (findings.length === 0) {
-    console.log("[main-loop] No findings. Marking done.");
+    core.info("[main-loop] No findings. Marking done.");
     const doneState: ReviewState = {
       ...updatedStateBase,
       status: "done",
@@ -196,7 +197,7 @@ async function main(): Promise<void> {
 
   // 2b: Max iterations reached → stopped
   if (state.iterationCount >= config.maxReviewIterations) {
-    console.log(
+    core.info(
       `[main-loop] Iteration count ${state.iterationCount} >= max ${config.maxReviewIterations}. Stopping.`
     );
     const stoppedState: ReviewState = {
@@ -226,7 +227,7 @@ async function main(): Promise<void> {
 
   // 2c: Loop detected → stopped
   if (isLoop(findings, state.findingsHashHistory)) {
-    console.log("[main-loop] Loop detected. Stopping.");
+    core.info("[main-loop] Loop detected. Stopping.");
     const stoppedState: ReviewState = {
       ...updatedStateBase,
       status: "stopped",
@@ -280,7 +281,7 @@ async function main(): Promise<void> {
 
   // Checkout PR branch using execFileSync to avoid shell injection
   if (prHeadRef) {
-    console.log(`[main-loop] Checking out branch: ${prHeadRef}`);
+    core.info(`[main-loop] Checking out branch: ${prHeadRef}`);
     execFileSync("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
 
@@ -288,7 +289,7 @@ async function main(): Promise<void> {
   const fileGroups = groupByFile(findings);
   const selectedFiles = selectFiles(fileGroups, config.maxFilesPerIteration);
 
-  console.log(
+  core.info(
     `[main-loop] Processing ${selectedFiles.length} file(s) out of ${fileGroups.size} total.`
   );
 
@@ -296,7 +297,7 @@ async function main(): Promise<void> {
 
   const prContext: PrContext = {
     number: config.prNumber,
-    title: process.env.PR_TITLE ?? "",
+    title: config.prTitle,
     branch: prHeadRef,
   };
 
@@ -312,7 +313,7 @@ async function main(): Promise<void> {
     try {
       fileContent = readFileSync(filePath, "utf-8");
     } catch {
-      console.warn(`[main-loop] Cannot read file: ${filePath}. Skipping.`);
+      core.warning(`[main-loop] Cannot read file: ${filePath}. Skipping.`);
       skippedFiles.push(filePath);
       continue;
     }
@@ -325,14 +326,14 @@ async function main(): Promise<void> {
       // TODO(phase:PoC, reason:chunking large files not implemented — files exceeding
       // maxInputTokensPerFile are skipped entirely instead of being processed in chunks,
       // due:MVP): implement chunked processing for large files
-      console.warn(
+      core.warning(
         `[main-loop] File ${filePath} estimated ${estimatedTokens} tokens > max ${config.maxInputTokensPerFile}. Skipping.`
       );
       skippedFiles.push(filePath);
       continue;
     }
 
-    console.log(`[main-loop] Fixing ${filePath} (${fileFindings.length} findings)...`);
+    core.info(`[main-loop] Fixing ${filePath} (${fileFindings.length} findings)...`);
 
     const fixResult = await fixFile(
       anthropicClient,
@@ -345,7 +346,7 @@ async function main(): Promise<void> {
     );
 
     if (fixResult.skippedReason) {
-      console.warn(
+      core.warning(
         `[main-loop] Claude skipped ${filePath}: ${fixResult.skippedReason}`
       );
       skippedFiles.push(filePath);
@@ -353,7 +354,7 @@ async function main(): Promise<void> {
     }
 
     if (fixResult.edits.length === 0) {
-      console.warn(`[main-loop] No edits returned for ${filePath}. Skipping.`);
+      core.warning(`[main-loop] No edits returned for ${filePath}. Skipping.`);
       skippedFiles.push(filePath);
       continue;
     }
@@ -374,7 +375,7 @@ async function main(): Promise<void> {
 
       // Retry up to 2 times
       for (let retryAttempt = 0; retryAttempt < 2 && failedEdits.length > 0; retryAttempt++) {
-        console.log(
+        core.info(
           `[main-loop] Retrying ${failedEdits.length} failed edit(s) for ${filePath} (attempt ${retryAttempt + 1}/2)...`
         );
 
@@ -403,7 +404,7 @@ async function main(): Promise<void> {
         );
 
         if (retryResult.skippedReason || retryResult.edits.length === 0) {
-          console.warn(
+          core.warning(
             `[main-loop] Retry produced no edits for ${filePath}. Keeping successful edits.`
           );
           break;
@@ -434,12 +435,12 @@ async function main(): Promise<void> {
         if (finalResult.success && finalResult.content !== null) {
           applyResult = finalResult;
         } else {
-          console.warn(`[main-loop] All edits failed for ${filePath}. Skipping file.`);
+          core.warning(`[main-loop] All edits failed for ${filePath}. Skipping file.`);
           skippedFiles.push(filePath);
           continue;
         }
       } else {
-        console.warn(`[main-loop] All edits failed for ${filePath} after retries. Skipping file.`);
+        core.warning(`[main-loop] All edits failed for ${filePath} after retries. Skipping file.`);
         skippedFiles.push(filePath);
         continue;
       }
@@ -448,7 +449,7 @@ async function main(): Promise<void> {
     }
 
     if (!applyResult.success || applyResult.content === null) {
-      console.warn(`[main-loop] Could not apply edits for ${filePath}. Skipping.`);
+      core.warning(`[main-loop] Could not apply edits for ${filePath}. Skipping.`);
       skippedFiles.push(filePath);
       continue;
     }
@@ -458,14 +459,14 @@ async function main(): Promise<void> {
     allAppliedEdits.push(...successfulEdits);
     modifiedFiles.push(filePath);
 
-    console.log(
+    core.info(
       `[main-loop] Applied ${successfulEdits.length} edit(s) to ${filePath}.`
     );
 
     } catch (fileError: unknown) {
       // Catch unrecoverable errors (e.g., 400 Bad Request from Claude API)
       // to prevent leaving state stuck in "fixing"
-      console.error(`[main-loop] Error processing ${filePath}:`, fileError);
+      core.error(`[main-loop] Error processing ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
       skippedFiles.push(filePath);
       continue;
     }
@@ -473,7 +474,7 @@ async function main(): Promise<void> {
 
   // If no edits were applied across all files → stop with claude_api_error
   if (allAppliedEdits.length === 0) {
-    console.error("[main-loop] No edits applied. Stopping with claude_api_error.");
+    core.error("[main-loop] No edits applied. Stopping with claude_api_error.");
     const stoppedState: ReviewState = {
       ...fixingState,
       status: "stopped",
@@ -500,7 +501,7 @@ async function main(): Promise<void> {
   }
 
   // Run check command
-  console.log(`[main-loop] Running check command: ${config.checkCommand}`);
+  core.info(`[main-loop] Running check command: ${config.checkCommand}`);
   const checkResult = await runCheckCommand(
     config.checkCommand,
     modifiedFiles,
@@ -508,7 +509,7 @@ async function main(): Promise<void> {
   );
 
   if (!checkResult.success) {
-    console.error("[main-loop] Check command failed. Rolling back and stopping.");
+    core.error("[main-loop] Check command failed. Rolling back and stopping.");
     const stoppedState: ReviewState = {
       ...fixingState,
       status: "stopped",
@@ -531,7 +532,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log("[main-loop] Check command passed. Committing changes...");
+  core.info("[main-loop] Check command passed. Committing changes...");
 
   // git add individual files using execFileSync to avoid shell injection
   execFileSync("git", ["add", ...modifiedFiles], { stdio: "inherit" });
@@ -549,7 +550,7 @@ async function main(): Promise<void> {
 
   // Capture commit SHA for state
   const commitSha = execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim();
-  console.log(`[main-loop] Committed: ${commitSha}`);
+  core.info(`[main-loop] Committed: ${commitSha}`);
 
   // Post fix summary
   await postFixSummary(
@@ -564,7 +565,7 @@ async function main(): Promise<void> {
 
   // ─── Phase 4: Re-review ───────────────────────────────────────────────────
 
-  console.log("[main-loop] Posting @codex review request...");
+  core.info("[main-loop] Posting @codex review request...");
   const reviewRequestId = await postCodexReviewRequest(
     config.repoOwner,
     config.repoName,
@@ -586,12 +587,11 @@ async function main(): Promise<void> {
     config.githubToken
   );
 
-  console.log(
+  core.info(
     `[main-loop] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`
   );
 }
 
 main().catch((error) => {
-  console.error("[main-loop] Workflow B failed:", error);
-  process.exit(1);
+  core.setFailed(error instanceof Error ? error.message : String(error));
 });

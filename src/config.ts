@@ -1,3 +1,5 @@
+import * as core from "@actions/core";
+
 export interface Config {
   maxReviewIterations: number;
   debounceSeconds: number;
@@ -13,12 +15,16 @@ export interface Config {
   repoOwner: string;
   repoName: string;
   prNumber: number;
+  // New: moved from inline process.env reads in main-loop.ts
+  triggerCommentId: number;
+  prHeadRef: string;
+  prTitle: string;
 }
 
 export function loadConfig(): Config {
   return {
     ...loadBaseConfig(),
-    anthropicApiKey: requireEnv("ANTHROPIC_API_KEY"),
+    anthropicApiKey: requireInput("anthropic-api-key", "ANTHROPIC_API_KEY"),
   };
 }
 
@@ -30,46 +36,55 @@ export function loadInitConfig(): Config {
 }
 
 function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
-  const repoFullName = requireEnv("GITHUB_REPOSITORY");
+  const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
   const [repoOwner, repoName] = repoFullName.split("/");
 
   return {
-    maxReviewIterations: intEnv("MAX_REVIEW_ITERATIONS", 20),
-    debounceSeconds: intEnv("DEBOUNCE_SECONDS", 90),
-    checkCommand: env("CHECK_COMMAND", "npm run check"),
-    maxFilesPerIteration: intEnv("MAX_FILES_PER_ITERATION", 10),
-    maxInputTokensPerFile: intEnv("MAX_INPUT_TOKENS_PER_FILE", 30000),
-    codexBotLogin: env("CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
-    stabilizeIntervalSeconds: intEnv("STABILIZE_INTERVAL_SECONDS", 10),
-    stabilizeCount: intEnv("STABILIZE_COUNT", 3),
-    codexReviewMarker: env("CODEX_REVIEW_MARKER", "Codex Review"),
-    githubToken: requireEnv("GITHUB_TOKEN"),
+    maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
+    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
+    checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
+    maxFilesPerIteration: intInput("max-files-per-iteration", "MAX_FILES_PER_ITERATION", 10),
+    maxInputTokensPerFile: intInput("max-input-tokens-per-file", "MAX_INPUT_TOKENS_PER_FILE", 30000),
+    codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
+    stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
+    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
+    codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
+    githubToken: requireInput("github-token", "GITHUB_TOKEN"),
     repoOwner,
     repoName,
-    prNumber: intEnv("PR_NUMBER", 0),
+    prNumber: intInput("pr-number", "PR_NUMBER", 0),
+    triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
+    prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
+    prTitle: input("pr-title", "PR_TITLE", ""),
   };
 }
 
-function env(key: string, defaultValue: string): string {
-  const value = process.env[key];
-  if (value === undefined || value === "") return defaultValue;
-  return value;
+/**
+ * Read a value from @actions/core input first, then process.env fallback.
+ * Outside GitHub Actions, core.getInput() returns "" (reads INPUT_* env vars which are absent).
+ */
+function input(inputName: string, envName: string, defaultValue: string): string {
+  const fromInput = core.getInput(inputName);
+  if (fromInput !== "") return fromInput;
+  const fromEnv = process.env[envName];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  return defaultValue;
 }
 
-function intEnv(key: string, defaultValue: number): number {
-  const value = process.env[key];
-  if (value === undefined || value === "") return defaultValue;
-  const parsed = parseInt(value, 10);
+function intInput(inputName: string, envName: string, defaultValue: number): number {
+  const raw = input(inputName, envName, "");
+  if (raw === "") return defaultValue;
+  const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) {
-    throw new Error(`Environment variable ${key} must be an integer, got: ${value}`);
+    throw new Error(`Input ${inputName} / env ${envName} must be an integer, got: ${raw}`);
   }
   return parsed;
 }
 
-function requireEnv(key: string): string {
-  const value = process.env[key];
-  if (value === undefined || value === "") {
-    throw new Error(`Required environment variable ${key} is not set`);
+function requireInput(inputName: string, envName: string): string {
+  const value = input(inputName, envName, "");
+  if (value === "") {
+    throw new Error(`Required input "${inputName}" or env "${envName}" is not set`);
   }
   return value;
 }

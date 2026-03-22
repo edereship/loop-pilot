@@ -9,13 +9,18 @@
     "test:watch": "vitest",
     "check": "tsc --noEmit && vitest run",
     "init": "node --import tsx src/main-init.ts",
-    "loop": "node --import tsx src/main-loop.ts"
+    "loop": "node --import tsx src/main-loop.ts",
+    "bundle:init": "esbuild dist/main-init.js --bundle --platform=node --target=node20 --format=cjs --outfile=dist/init/index.js --sourcemap",
+    "bundle:loop": "esbuild dist/main-loop.js --bundle --platform=node --target=node20 --format=cjs --outfile=dist/loop/index.js --sourcemap",
+    "bundle": "npm run build && npm run bundle:init && npm run bundle:loop"
   },
   "dependencies": {
+    "@actions/core": "^1.11.0",
     "@anthropic-ai/sdk": "^0.39.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
+    "esbuild": "^0.25.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

@@ -1,3 +1,4 @@
+import * as core from "@actions/core";
 import { loadInitConfig } from "./config.js";
 import {
   createInitialState,
@@ -7,9 +8,9 @@ import {
 } from "./state-manager.js";
 import { postCodexReviewRequest } from "./comment-poster.js";
 
-async function main(): Promise<void> {
+async function run(): Promise<void> {
   const config = loadInitConfig();
-  console.log(`Initializing auto-review for PR #${config.prNumber}`);
+  core.info(`Initializing auto-review for PR #${config.prNumber}`);
 
   // Check for existing hidden comment (re-run support)
   const existing = await readState(
@@ -20,26 +21,26 @@ async function main(): Promise<void> {
   let state = createInitialState();
 
   if (existing) {
-    console.log("Found existing state comment, resetting to initialized");
+    core.info("Found existing state comment, resetting to initialized");
     commentId = existing.commentId;
     await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
   } else {
     commentId = await createStateComment(config.repoOwner, config.repoName, config.prNumber, state, config.githubToken);
-    console.log(`Created state comment: ${commentId}`);
+    core.info(`Created state comment: ${commentId}`);
   }
 
   // Post @codex review
   const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
-  console.log(`Posted @codex review: comment ${reviewRequestId}`);
+  core.info(`Posted @codex review: comment ${reviewRequestId}`);
 
   // Update status to waiting_codex
   state = { ...state, status: "waiting_codex", lastCodexRequestCommentId: reviewRequestId };
   await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
 
-  console.log("Workflow A completed: status = waiting_codex");
+  core.info("Workflow A completed: status = waiting_codex");
+  core.setOutput("comment-id", String(commentId));
 }
 
-main().catch((error) => {
-  console.error("Workflow A failed:", error);
-  process.exit(1);
+run().catch((error) => {
+  core.setFailed(error instanceof Error ? error.message : String(error));
 });
