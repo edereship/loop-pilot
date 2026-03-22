@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { buildGhEnv } from "./gh-env.js";
 import type { EditOperation, StopReason } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -36,9 +37,15 @@ async function postComment(
       "--jq",
       ".id",
     ],
-    { env: { ...process.env, GH_TOKEN: token } },
+    { env: buildGhEnv(token) },
   );
-  return parseInt(stdout.trim(), 10);
+  const commentId = parseInt(stdout.trim(), 10);
+  if (isNaN(commentId)) {
+    throw new Error(
+      `postComment: unexpected response from GitHub API: ${stdout.trim()}`
+    );
+  }
+  return commentId;
 }
 
 /**

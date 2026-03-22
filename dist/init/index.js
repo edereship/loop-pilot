@@ -19822,6 +19822,9 @@ function loadInitConfig() {
 function loadBaseConfig() {
   const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
   const [repoOwner, repoName] = repoFullName.split("/");
+  if (!repoOwner || !repoName) {
+    throw new Error(`github-repository must be in "owner/name" format, got: "${repoFullName}"`);
+  }
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
@@ -19928,7 +19931,9 @@ async function readState(owner, name, pr, token) {
     `repos/${owner}/${name}/issues/${pr}/comments`,
     "--paginate",
     "--jq",
-    `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body}`
+    // @json ensures each result is a single-line JSON-encoded string,
+    // preventing multi-line jq pretty-printing from breaking split("\n") parsing
+    `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
   ], { env: { ...process.env, GH_TOKEN: token } });
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -19937,7 +19942,7 @@ async function readState(owner, name, pr, token) {
   const firstLine = trimmed.split("\n")[0];
   let parsed;
   try {
-    parsed = JSON.parse(firstLine);
+    parsed = JSON.parse(JSON.parse(firstLine));
   } catch {
     return null;
   }
@@ -19992,7 +19997,11 @@ async function postComment(owner, name, pr, body, token) {
     "--jq",
     ".id"
   ], { env: { ...process.env, GH_TOKEN: token } });
-  return parseInt(stdout.trim(), 10);
+  const commentId = parseInt(stdout.trim(), 10);
+  if (isNaN(commentId)) {
+    throw new Error(`postComment: unexpected response from GitHub API: ${stdout.trim()}`);
+  }
+  return commentId;
 }
 async function postCodexReviewRequest(owner, name, pr, token) {
   return postComment(owner, name, pr, "@codex review", token);

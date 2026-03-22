@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { execFileSync, execSync } from "node:child_process";
+import { resolve, sep } from "node:path";
+import { execFileSync } from "node:child_process";
 import Anthropic from "@anthropic-ai/sdk";
 import * as core from "@actions/core";
-import { loadConfig } from "./config.js";
+import { loadConfig, loadInitConfig } from "./config.js";
 import { readState, updateStateComment } from "./state-manager.js";
 import {
   fetchReviewComments,
@@ -76,6 +77,11 @@ function selectFiles(
 
 async function main(): Promise<void> {
   const config = loadConfig();
+
+  // Mask sensitive values to prevent accidental log exposure
+  core.setSecret(config.anthropicApiKey);
+  core.setSecret(config.githubToken);
+
   const triggerCommentId = config.triggerCommentId;
   const prHeadRef = config.prHeadRef || "main";
 
@@ -112,13 +118,66 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Guard: already in a terminal or active state that should not be re-entered
-  if (
-    state.status === "fixing" ||
-    state.status === "stopped" ||
-    state.status === "done"
-  ) {
+  // Guard: already in a terminal state
+  if (state.status === "stopped" || state.status === "done") {
     core.info(`[main-loop] Status is '${state.status}'. Skipping.`);
+    return;
+  }
+
+  // Guard: fixing state — recover if stale (>30min), otherwise skip
+  if (state.status === "fixing") {
+    const STALE_THRESHOLD_MS = 30 * 60 * 1000;
+    const fixingStartedAt = state.lastCodexReviewReceivedAt;
+
+    // Null timestamp means fixing state was entered abnormally — treat as stale immediately
+    if (fixingStartedAt === null) {
+      core.warning(
+        "[main-loop] Status is 'fixing' with null timestamp. Treating as stale."
+      );
+    }
+
+    const elapsed = Date.now() - new Date(fixingStartedAt ?? 0).getTime();
+
+    if (fixingStartedAt !== null && elapsed < STALE_THRESHOLD_MS) {
+      core.info(
+        `[main-loop] Status is 'fixing' (started ${Math.round(elapsed / 1000)}s ago). Skipping.`
+      );
+      return;
+    }
+
+    core.warning(
+      `[main-loop] Status stuck in 'fixing' for ${Math.round(elapsed / 60000)}min. Recovering.`
+    );
+    const recoveredState: ReviewState = {
+      ...state,
+      status: "stopped",
+      stopReason: "state_corrupted",
+    };
+    await updateStateComment(
+      config.repoOwner,
+      config.repoName,
+      commentId,
+      recoveredState,
+      config.githubToken
+    );
+    await postStopComment(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      "state_corrupted",
+      triggerCommentId,
+      0,
+      "Previous fixing state timed out — recovered automatically",
+      config.githubToken
+    );
+    return;
+  }
+
+  // Guard: unexpected state — only waiting_codex should proceed
+  if (state.status !== "waiting_codex") {
+    core.warning(
+      `[main-loop] Unexpected status '${state.status}'. Only 'waiting_codex' is processable. Skipping.`
+    );
     return;
   }
 
@@ -164,10 +223,16 @@ async function main(): Promise<void> {
   // Note: iterationCount is NOT incremented here.
   // It is incremented only after a successful Claude fix (Phase 3).
   // Spec: "If the initial review has 0 P0/P1, iterationCount is 0."
+  // Use the latest Codex comment timestamp rather than processing start time,
+  // so the next iteration's time filter does not skip comments posted during processing
+  const latestCommentTime = rawComments
+    .filter((c) => c.user.login === config.codexBotLogin)
+    .reduce((max, c) => (c.createdAt > max ? c.createdAt : max), state.lastCodexReviewReceivedAt ?? "");
+
   const updatedStateBase: ReviewState = {
     ...state,
     lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
-    lastCodexReviewReceivedAt: new Date().toISOString(),
+    lastCodexReviewReceivedAt: latestCommentTime || new Date().toISOString(),
   };
 
   // 2a: No findings → done
@@ -176,7 +241,7 @@ async function main(): Promise<void> {
     const doneState: ReviewState = {
       ...updatedStateBase,
       status: "done",
-      stopReason: null,
+      stopReason: "no_findings",
     };
     await updateStateComment(
       config.repoOwner,
@@ -281,6 +346,9 @@ async function main(): Promise<void> {
 
   // Checkout PR branch using execFileSync to avoid shell injection
   if (prHeadRef) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$/.test(prHeadRef) || prHeadRef.includes("..")) {
+      throw new Error(`[main-loop] Invalid branch name: ${prHeadRef}`);
+    }
     core.info(`[main-loop] Checking out branch: ${prHeadRef}`);
     execFileSync("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
@@ -304,11 +372,20 @@ async function main(): Promise<void> {
   const allAppliedEdits: EditOperation[] = [];
   const skippedFiles: string[] = [];
 
-  // Track files for rollback if check fails
+  // Track modified files for rollback if check fails
   const modifiedFiles: string[] = [];
-  const createdFiles: string[] = [];
+
+  const repoRoot = resolve(".");
 
   for (const [filePath, fileFindings] of selectedFiles) {
+    // Path traversal guard: reject paths outside repository root
+    const resolvedPath = resolve(filePath);
+    if (!resolvedPath.startsWith(repoRoot + sep) && resolvedPath !== repoRoot) {
+      core.warning(`[main-loop] Path traversal detected: ${filePath}. Skipping.`);
+      skippedFiles.push(filePath);
+      continue;
+    }
+
     let fileContent: string;
     try {
       fileContent = readFileSync(filePath, "utf-8");
@@ -359,9 +436,9 @@ async function main(): Promise<void> {
       continue;
     }
 
-    // Apply edits with retry logic
-    const lineHints = fileFindings.map((f) => f.line);
-    let applyResult = applyEdits(fileContent, fixResult.edits, filePath, lineHints);
+    // Apply edits (lineHints intentionally omitted: edits array does not
+    // correspond 1:1 to findings, so index-based hint lookup would be wrong)
+    let applyResult = applyEdits(fileContent, fixResult.edits, filePath);
 
     let successfulEdits: EditOperation[] = [];
     let failedEdits: EditOperation[] = [];
@@ -412,7 +489,7 @@ async function main(): Promise<void> {
 
         // Merge: apply successful + retry edits to ORIGINAL content
         const mergedEdits = [...successfulEdits, ...retryResult.edits];
-        const mergedResult = applyEdits(fileContent, mergedEdits, filePath, lineHints);
+        const mergedResult = applyEdits(fileContent, mergedEdits, filePath);
 
         if (mergedResult.success) {
           // All edits applied — update successful set and clear failed
@@ -504,8 +581,7 @@ async function main(): Promise<void> {
   core.info(`[main-loop] Running check command: ${config.checkCommand}`);
   const checkResult = await runCheckCommand(
     config.checkCommand,
-    modifiedFiles,
-    createdFiles
+    modifiedFiles
   );
 
   if (!checkResult.success) {
@@ -549,7 +625,7 @@ async function main(): Promise<void> {
   execFileSync("git", ["push"], { stdio: "inherit" });
 
   // Capture commit SHA for state
-  const commitSha = execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim();
+  const commitSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
   core.info(`[main-loop] Committed: ${commitSha}`);
 
   // Post fix summary
@@ -564,20 +640,15 @@ async function main(): Promise<void> {
   );
 
   // ─── Phase 4: Re-review ───────────────────────────────────────────────────
-
-  core.info("[main-loop] Posting @codex review request...");
-  const reviewRequestId = await postCodexReviewRequest(
-    config.repoOwner,
-    config.repoName,
-    config.prNumber,
-    config.githubToken
-  );
+  // Transition state before posting the review request so that a failure
+  // in postCodexReviewRequest does not leave state stuck in "fixing".
+  // If the review request fails, the commit is already pushed, and the next
+  // workflow trigger (or manual retry) can still proceed.
 
   const waitingState: ReviewState = {
     ...fixingState,
     status: "waiting_codex",
     lastClaudeCommitSha: commitSha,
-    lastCodexRequestCommentId: reviewRequestId,
   };
   await updateStateComment(
     config.repoOwner,
@@ -587,11 +658,72 @@ async function main(): Promise<void> {
     config.githubToken
   );
 
-  core.info(
-    `[main-loop] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`
-  );
+  core.info("[main-loop] Posting @codex review request...");
+  try {
+    const reviewRequestId = await postCodexReviewRequest(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      config.githubToken
+    );
+
+    // Update state with the review request comment ID
+    const updatedWaitingState: ReviewState = {
+      ...waitingState,
+      lastCodexRequestCommentId: reviewRequestId,
+    };
+    await updateStateComment(
+      config.repoOwner,
+      config.repoName,
+      commentId,
+      updatedWaitingState,
+      config.githubToken
+    );
+
+    core.info(
+      `[main-loop] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`
+    );
+  } catch (phase4Error: unknown) {
+    core.error(
+      `[main-loop] Failed to post Codex review request: ${phase4Error instanceof Error ? phase4Error.message : String(phase4Error)}. ` +
+      `State is waiting_codex. Manual '@codex review' comment may be needed.`
+    );
+  }
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   core.setFailed(error instanceof Error ? error.message : String(error));
+
+  // Attempt to recover from fixing state on unhandled crash
+  try {
+    // Use loadInitConfig to avoid requiring ANTHROPIC_API_KEY for recovery
+    const crashConfig = loadInitConfig();
+    const stateResult = await readState(
+      crashConfig.repoOwner,
+      crashConfig.repoName,
+      crashConfig.prNumber,
+      crashConfig.githubToken
+    );
+    if (stateResult && stateResult.state.status === "fixing") {
+      core.warning(
+        "[main-loop] Crash recovery: resetting fixing → stopped (state_corrupted)"
+      );
+      const recoveredState: ReviewState = {
+        ...stateResult.state,
+        status: "stopped",
+        stopReason: "state_corrupted",
+      };
+      await updateStateComment(
+        crashConfig.repoOwner,
+        crashConfig.repoName,
+        stateResult.commentId,
+        recoveredState,
+        crashConfig.githubToken
+      );
+    }
+  } catch (recoveryError) {
+    core.error(
+      `[main-loop] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`
+    );
+  }
 });

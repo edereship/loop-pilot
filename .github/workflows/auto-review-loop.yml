@@ -38,18 +38,36 @@ jobs:
       - name: Get PR info
         id: pr
         run: |
-          PR_DATA=$(gh api "/repos/${{ github.repository }}/pulls/${{ github.event.issue.number }}")
-          echo "head_ref=$(echo "$PR_DATA" | jq -r '.head.ref')" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> "$GITHUB_OUTPUT"
-          echo "title=$(echo "$PR_DATA" | jq -r '.title')" >> "$GITHUB_OUTPUT"
-          echo "fork=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> "$GITHUB_OUTPUT"
+          PR_DATA=$(gh api "/repos/${REPO}/pulls/${PR_NUM}")
+
+          DELIM="EOF_$(openssl rand -hex 8)"
+
+          echo "head_ref<<$DELIM" >> "$GITHUB_OUTPUT"
+          echo "$PR_DATA" | jq -r '.head.ref' >> "$GITHUB_OUTPUT"
+          echo "$DELIM" >> "$GITHUB_OUTPUT"
+
+          echo "head_sha<<$DELIM" >> "$GITHUB_OUTPUT"
+          echo "$PR_DATA" | jq -r '.head.sha' >> "$GITHUB_OUTPUT"
+          echo "$DELIM" >> "$GITHUB_OUTPUT"
+
+          echo "title<<$DELIM" >> "$GITHUB_OUTPUT"
+          echo "$PR_DATA" | jq -r '.title' >> "$GITHUB_OUTPUT"
+          echo "$DELIM" >> "$GITHUB_OUTPUT"
+
+          # .head.repo can be null for deleted fork repos — default to empty
+          FORK_NAME=$(echo "$PR_DATA" | jq -r '.head.repo.full_name // empty')
+          echo "fork<<$DELIM" >> "$GITHUB_OUTPUT"
+          echo "$FORK_NAME" >> "$GITHUB_OUTPUT"
+          echo "$DELIM" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.issue.number }}
 
       - name: Check fork PR (security guard)
-        if: steps.pr.outputs.fork != github.repository
+        if: steps.pr.outputs.fork == '' || steps.pr.outputs.fork != github.repository
         run: |
-          echo "::error::Fork PR detected. Auto-review is disabled for fork PRs."
+          echo "::error::Fork PR detected or source repo unknown. Auto-review is disabled for fork PRs."
           exit 1
 
       - uses: actions/checkout@v4

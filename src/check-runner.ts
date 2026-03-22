@@ -1,5 +1,6 @@
-import { execSync, exec } from "node:child_process";
+import { execFileSync, exec } from "node:child_process";
 import { promisify } from "node:util";
+import * as core from "@actions/core";
 
 const execAsync = promisify(exec);
 
@@ -78,24 +79,30 @@ function extractErrorOutput(
  *
  * Behavior:
  * - Runs checkCommand via shell with 5min timeout
+ * - Sensitive env vars (ANTHROPIC_API_KEY, INPUT_ANTHROPIC*) are stripped
  * - On success: returns sanitized stdout + stderr
- * - On failure: rolls back files (git checkout + rm) then returns sanitized error output
- *
- * Rollback strategy:
- * - Modified files: `git checkout -- <file>`
- * - Created files: `rm -f <file>` (no `git clean -fd`)
- *
- * Security note: Files are quoted during rollback to prevent shell injection.
+ * - On failure: rolls back modified files via `git checkout -- <file>`,
+ *   then returns sanitized error output
  */
 export async function runCheckCommand(
   checkCommand: string,
-  modifiedFiles: string[],
-  createdFiles: string[]
+  modifiedFiles: string[]
 ): Promise<CheckResult> {
+  // Strip sensitive env vars to prevent exfiltration via malicious check commands
+  const safeEnv = { ...process.env };
+  delete safeEnv.ANTHROPIC_API_KEY;
+  // GitHub Actions passes action inputs as INPUT_<NAME> env vars
+  for (const key of Object.keys(safeEnv)) {
+    if (key.startsWith("INPUT_ANTHROPIC")) {
+      delete safeEnv[key];
+    }
+  }
+
   try {
     const { stdout, stderr } = await execAsync(checkCommand, {
       timeout: 5 * 60 * 1000, // 5 minutes in milliseconds
       encoding: "utf-8",
+      env: safeEnv,
     });
 
     const combinedOutput = stdout + (stderr ? "\n" + stderr : "");
@@ -106,26 +113,17 @@ export async function runCheckCommand(
   } catch (error) {
     // Rollback on failure
     try {
-      // Rollback modified files using git checkout with quoted paths
+      // Rollback modified files using execFileSync to prevent shell injection
       if (modifiedFiles.length > 0) {
         for (const file of modifiedFiles) {
-          execSync(`git checkout -- "${file.replace(/"/g, '\\"')}"`, {
+          execFileSync("git", ["checkout", "--", file], {
             encoding: "utf-8",
           });
         }
       }
 
-      // Remove created files with quoted paths
-      if (createdFiles.length > 0) {
-        for (const file of createdFiles) {
-          execSync(`rm -f "${file.replace(/"/g, '\\"')}"`, {
-            encoding: "utf-8",
-          });
-        }
-      }
     } catch (rollbackError) {
-      // Log rollback failure but continue with error reporting
-      console.error("Rollback failed:", rollbackError);
+      core.error(`Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
     }
 
     // Extract error details

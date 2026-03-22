@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { buildGhEnv } from "./gh-env.js";
 import type { ReviewState } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -9,6 +10,22 @@ const STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 const STATE_COMMENT_CLOSE = "-->";
 const MAX_HISTORY_ENTRIES = 3;
 const MAX_SERIALIZED_BYTES = 65000;
+const VALID_STATUSES = new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+
+/**
+ * Runtime validation for deserialized state to prevent state tampering
+ * via maliciously crafted PR comment bodies.
+ */
+function validateState(obj: unknown): obj is ReviewState {
+  if (typeof obj !== "object" || obj === null) return false;
+  const s = obj as Record<string, unknown>;
+
+  if (typeof s.iterationCount !== "number" || s.iterationCount < 0) return false;
+  if (typeof s.status !== "string" || !VALID_STATUSES.has(s.status)) return false;
+  if (!Array.isArray(s.findingsHashHistory)) return false;
+
+  return true;
+}
 
 export function createInitialState(): ReviewState {
   return {
@@ -76,8 +93,11 @@ export function deserializeState(commentBody: string): ReviewState | null {
   }
 
   try {
-    const parsed = JSON.parse(match[1]) as ReviewState;
-    return parsed;
+    const parsed = JSON.parse(match[1]);
+    if (!validateState(parsed)) {
+      return null;
+    }
+    return parsed as ReviewState;
   } catch {
     return null;
   }
@@ -101,9 +121,11 @@ export async function readState(
       `repos/${owner}/${name}/issues/${pr}/comments`,
       "--paginate",
       "--jq",
-      `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body}`,
+      // @json ensures each result is a single-line JSON-encoded string,
+      // preventing multi-line jq pretty-printing from breaking split("\n") parsing
+      `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`,
     ],
-    { env: { ...process.env, GH_TOKEN: token } },
+    { env: buildGhEnv(token) },
   );
 
   const trimmed = stdout.trim();
@@ -111,11 +133,11 @@ export async function readState(
     return null;
   }
 
-  // --paginate with --jq emits one JSON object per line; take the first match
+  // @json wraps each result as a JSON-encoded string on its own line; double-decode to get the object
   const firstLine = trimmed.split("\n")[0];
   let parsed: { id: number; body: string };
   try {
-    parsed = JSON.parse(firstLine) as { id: number; body: string };
+    parsed = JSON.parse(JSON.parse(firstLine)) as { id: number; body: string };
   } catch {
     return null;
   }
@@ -152,7 +174,7 @@ export async function createStateComment(
       "--jq",
       ".id",
     ],
-    { env: { ...process.env, GH_TOKEN: token } },
+    { env: buildGhEnv(token) },
   );
 
   const commentId = parseInt(stdout.trim(), 10);
@@ -185,6 +207,6 @@ export async function updateStateComment(
       "--field",
       `body=${body}`,
     ],
-    { env: { ...process.env, GH_TOKEN: token } },
+    { env: buildGhEnv(token) },
   );
 }

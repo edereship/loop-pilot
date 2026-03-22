@@ -48,8 +48,9 @@ function findNormalizedMatches(
  * Given a start index into the normalized haystack, compute how many characters
  * in the ORIGINAL content correspond to the match region.
  *
- * The mapping is built by iterating original lines alongside normalized lines,
- * tracking cumulative byte offsets in both strings.
+ * Uses a character-level offset map so that matches starting mid-line (not at
+ * a line boundary) are correctly resolved — the previous line-boundary-only
+ * approach returned null for partial-line edits.
  */
 function findActualMatchLength(
   originalContent: string,
@@ -60,47 +61,52 @@ function findActualMatchLength(
   const originalLines = originalContent.split("\n");
   const normalizedLines = normalizedContent.split("\n");
 
-  // Build a mapping: normalizedOffset[i] → originalOffset[i] for line starts
-  let origOffset = 0;
-  let normOffset = 0;
-  const lineMap: Array<{ origStart: number; normStart: number }> = [];
-
-  for (let i = 0; i < normalizedLines.length; i++) {
-    lineMap.push({ origStart: origOffset, normStart: normOffset });
-    origOffset += (originalLines[i] ?? "").length + 1; // +1 for \n
-    normOffset += normalizedLines[i].length + 1; // +1 for \n
+  if (originalLines.length !== normalizedLines.length) {
+    return null;
   }
 
-  // Find which normalized line the match starts at
+  // Build character-level offset map from normalized → original positions
+  // by iterating line-by-line and tracking cumulative offsets.
+  let origOffset = 0;
+  let normOffset = 0;
+
   const normalizedEndIndex = normalizedStartIndex + normalizedNeedle.length;
 
-  let startLineIndex = -1;
-  let endLineIndex = -1;
+  let originalStart = -1;
+  let originalEnd = -1;
 
-  for (let i = 0; i < lineMap.length; i++) {
-    if (lineMap[i].normStart === normalizedStartIndex) {
-      startLineIndex = i;
+  for (let i = 0; i < normalizedLines.length; i++) {
+    const origLine = originalLines[i] ?? "";
+    const normLine = normalizedLines[i];
+    const normLineStart = normOffset;
+    const normLineEnd = normOffset + normLine.length;
+
+    // Check if this line overlaps with the match region
+    if (normalizedStartIndex >= normLineStart && normalizedStartIndex <= normLineEnd) {
+      // Match starts within this line
+      const intraLineOffset = normalizedStartIndex - normLineStart;
+      // Map to same intra-line offset in the original (whitespace-normalized
+      // only trims trailing, so leading content is positionally equivalent)
+      originalStart = origOffset + Math.min(intraLineOffset, origLine.length);
     }
-    // End is exclusive — find the line where the match ends (before the trailing \n)
-    const normLineEnd =
-      lineMap[i].normStart + normalizedLines[i].length;
-    if (normLineEnd === normalizedEndIndex) {
-      endLineIndex = i;
+
+    if (normalizedEndIndex >= normLineStart && normalizedEndIndex <= normLineEnd) {
+      // Match ends within this line
+      const intraLineOffset = normalizedEndIndex - normLineStart;
+      originalEnd = origOffset + Math.min(intraLineOffset, origLine.length);
+    }
+
+    origOffset += origLine.length + 1; // +1 for \n
+    normOffset += normLine.length + 1; // +1 for \n
+
+    if (originalStart !== -1 && originalEnd !== -1) {
       break;
     }
   }
 
-  if (startLineIndex === -1 || endLineIndex === -1) {
+  if (originalStart === -1 || originalEnd === -1 || originalEnd < originalStart) {
     return null;
   }
-
-  const originalStart = lineMap[startLineIndex].origStart;
-  // Original end = start of next line (consuming the \n) — but we don't consume
-  // the trailing \n of the last matched line; we only replace the matched text itself.
-  // The original region covers from startLine.origStart to end of endLine (without trailing \n).
-  const origEndLineStart = lineMap[endLineIndex].origStart;
-  const origEndLineContent = originalLines[endLineIndex] ?? "";
-  const originalEnd = origEndLineStart + origEndLineContent.length;
 
   return {
     originalStart,
@@ -149,7 +155,6 @@ export function applyEdits(
 
     // Try exact match first
     let matchIndices = findAllOccurrences(content, edit.oldCode);
-    let useNormalized = false;
 
     if (matchIndices.length === 0) {
       // Fall back to normalized match
@@ -191,7 +196,6 @@ export function applyEdits(
       // Select by lineHint if available
       const chosen = selectNearest(candidates, content, lineHint);
       resolved.push(chosen);
-      useNormalized = true;
     } else {
       // Convert exact match indices to ResolvedEdit entries
       const candidates: ResolvedEdit[] = matchIndices.map((idx) => ({
@@ -212,6 +216,23 @@ export function applyEdits(
   // Step 2: Sort resolved edits by originalStart descending (bottom-first)
   resolved.sort((a, b) => b.originalStart - a.originalStart);
 
+  // Step 2.5: Detect overlapping edit ranges (sorted descending, so check next.end > current.start)
+  for (let i = 0; i < resolved.length - 1; i++) {
+    const current = resolved[i]; // higher start (later in file)
+    const next = resolved[i + 1]; // lower start (earlier in file)
+    const nextEnd = next.originalStart + next.originalLength;
+    if (nextEnd > current.originalStart) {
+      failedEdits.push(current.edit);
+      resolved.splice(i, 1);
+      i--;
+    }
+  }
+
+  // Partial failure: apply non-overlapping edits, report overlapping ones as failed
+  if (failedEdits.length > 0 && resolved.length === 0) {
+    return { success: false, content: null, failedEdits };
+  }
+
   // Step 3: Apply replacements from bottom to top
   let result = content;
   for (const { edit, originalStart, originalLength } of resolved) {
@@ -219,6 +240,11 @@ export function applyEdits(
       result.slice(0, originalStart) +
       edit.newCode +
       result.slice(originalStart + originalLength);
+  }
+
+  // Partial success: some edits applied, some overlapping ones failed
+  if (failedEdits.length > 0) {
+    return { success: false, content: result, failedEdits };
   }
 
   return { success: true, content: result, failedEdits: [] };

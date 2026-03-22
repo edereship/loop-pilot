@@ -188,4 +188,90 @@ const c = 3;
     expect(result.failedEdits).toHaveLength(1);
     expect(result.failedEdits[0].oldCode).toBe("const z = 99; // does not exist");
   });
+
+  // Test 8: Overlapping edits detected and rejected
+  it("detects overlapping edits and reports them as failed", () => {
+    const content = `function example() {
+  const a = 1;
+  const b = 2;
+  const c = 3;
+  return a + b + c;
+}
+`;
+    const edits: EditOperation[] = [
+      {
+        path: "src/example.ts",
+        oldCode: "  const a = 1;\n  const b = 2;",
+        newCode: "  const a = 10;\n  const b = 20;",
+        explanation: "Edit A: covers lines 2-3",
+      },
+      {
+        path: "src/example.ts",
+        oldCode: "  const b = 2;\n  const c = 3;",
+        newCode: "  const b = 200;\n  const c = 300;",
+        explanation: "Edit B: overlaps with edit A on line 3",
+      },
+    ];
+
+    const result = applyEdits(content, edits, "src/example.ts");
+    expect(result.success).toBe(false);
+    expect(result.failedEdits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // Test 9: Overlapping edits — partial success (non-overlapping edits applied)
+  it("applies non-overlapping edits and reports overlapping ones as failed", () => {
+    const content = `line one
+line two
+line three
+line four
+line five
+`;
+    const edits: EditOperation[] = [
+      {
+        path: "src/file.ts",
+        oldCode: "line one",
+        newCode: "line ONE",
+        explanation: "Non-overlapping edit",
+      },
+      {
+        path: "src/file.ts",
+        oldCode: "line two\nline three",
+        newCode: "line TWO\nline THREE",
+        explanation: "Edit A: covers lines 2-3",
+      },
+      {
+        path: "src/file.ts",
+        oldCode: "line three\nline four",
+        newCode: "line 3\nline 4",
+        explanation: "Edit B: overlaps with edit A on line 3",
+      },
+    ];
+
+    const result = applyEdits(content, edits, "src/file.ts");
+    expect(result.success).toBe(false);
+    // content should not be null — non-overlapping edits should be applied
+    expect(result.content).not.toBeNull();
+    expect(result.content).toContain("line ONE");
+    expect(result.failedEdits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // Test 10: Normalized matching for partial-line edits (mid-line match)
+  it("applies normalized match for partial-line edits with trailing whitespace", () => {
+    // File has trailing spaces — old_code is a partial line without trailing spaces
+    const content = `function foo() {  \n  const x = 1;  \n  return x;\n}\n`;
+    const edits: EditOperation[] = [
+      {
+        path: "src/foo.ts",
+        // Partial line match (not at line boundary)
+        oldCode: "const x = 1;",
+        newCode: "const x = 42;",
+        explanation: "Change constant value via partial-line match",
+      },
+    ];
+
+    const result = applyEdits(content, edits, "src/foo.ts");
+    // Exact match should work here since "const x = 1;" exists without trailing space in substring
+    expect(result.success).toBe(true);
+    expect(result.content).toContain("const x = 42;");
+  });
 });

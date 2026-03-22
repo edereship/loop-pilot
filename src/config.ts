@@ -38,6 +38,12 @@ export function loadInitConfig(): Config {
 function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
   const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
   const [repoOwner, repoName] = repoFullName.split("/");
+  const validRepoSegment = /^[a-zA-Z0-9._-]+$/;
+  if (!repoOwner || !repoName || !validRepoSegment.test(repoOwner) || !validRepoSegment.test(repoName)) {
+    throw new Error(
+      `github-repository must be in "owner/name" format with valid characters, got: "${repoFullName}"`
+    );
+  }
 
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
@@ -52,7 +58,7 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     githubToken: requireInput("github-token", "GITHUB_TOKEN"),
     repoOwner,
     repoName,
-    prNumber: intInput("pr-number", "PR_NUMBER", 0),
+    prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
@@ -79,6 +85,14 @@ function intInput(inputName: string, envName: string, defaultValue: number): num
     throw new Error(`Input ${inputName} / env ${envName} must be an integer, got: ${raw}`);
   }
   return parsed;
+}
+
+function requirePositiveInt(inputName: string, envName: string): number {
+  const value = intInput(inputName, envName, 0);
+  if (value <= 0) {
+    throw new Error(`Required input "${inputName}" or env "${envName}" must be a positive integer, got: ${value}`);
+  }
+  return value;
 }
 
 function requireInput(inputName: string, envName: string): string {

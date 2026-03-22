@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parseSeverity } from "./severity-parser.js";
+import { buildGhEnv } from "./gh-env.js";
 import type { Finding, RawReviewComment } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -25,9 +26,11 @@ export async function fetchReviewComments(
       `repos/${repoOwner}/${repoName}/pulls/${prNumber}/comments`,
       "--paginate",
       "--jq",
-      ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at}",
+      // @json ensures each result is a single-line JSON-encoded string,
+      // preventing multi-line jq pretty-printing from breaking split("\n") parsing
+      ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at} | @json",
     ],
-    { env: { ...process.env, GH_TOKEN: githubToken } }
+    { env: buildGhEnv(githubToken) }
   );
 
   if (!stdout.trim()) return [];
@@ -35,7 +38,7 @@ export async function fetchReviewComments(
     .trim()
     .split("\n")
     .filter((line) => line.trim())
-    .map((line) => JSON.parse(line));
+    .map((line) => JSON.parse(JSON.parse(line)));
 }
 
 /**
