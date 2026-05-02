@@ -15,7 +15,8 @@
 - [ ] hidden comment による状態管理 → [状態管理](../architecture/flow-and-state.md#状態管理)
 - [ ] `MAX_REVIEW_ITERATIONS` による停止制御 → [停止条件](../operations/stop-and-recovery.md#停止条件)
 - [ ] 同一指摘ループ検知 → [ループ検知](../specs/loop-detection.md)
-- [ ] Fork PR からの起動防止 → [セキュリティ](../operations/security.md#fork-pr-からの起動防止)
+- [x] Fork PR からの起動防止 → [セキュリティ](../operations/security.md#fork-pr-からの起動防止)
+- [x] Repository variables 未設定時も空文字 `contains()` で Workflow B が誤起動しない trigger guard → [イベント設計](../architecture/event-design.md#workflow-b-codex-レビュー受信--claude-修正auto-review-loopyml)
 
 ---
 
@@ -47,7 +48,8 @@
 **Workflow 動作:**
 - [ ] `issue_comment` トリガーで PR ブランチの checkout・push が正常に動作することを確認する
 - [ ] `concurrency` 制御が期待通りに動作することを確認する
-- [ ] Repository variables（`CODEX_BOT_LOGIN`, `CODEX_REVIEW_MARKER`）のデフォルト値が設定されていることを確認する
+- [x] Repository variables（`CODEX_BOT_LOGIN`, `CODEX_REVIEW_MARKER`）未設定時も fallback 条件だけで安全に判定されることを確認する
+- [ ] Repository variables（`CODEX_BOT_LOGIN`, `CODEX_REVIEW_MARKER`）の推奨値が設定されていることを実環境で確認する
 
 ---
 

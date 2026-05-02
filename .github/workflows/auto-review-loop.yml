@@ -29,8 +29,14 @@ jobs:
   auto-fix:
     if: >
       github.event.issue.pull_request &&
-      (github.event.comment.user.login == vars.CODEX_BOT_LOGIN || github.event.comment.user.login == 'chatgpt-codex-connector[bot]') &&
-      (contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER) || contains(github.event.comment.body, 'Codex Review'))
+      (
+        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
+        (vars.CODEX_BOT_LOGIN != '' && github.event.comment.user.login == vars.CODEX_BOT_LOGIN)
+      ) &&
+      (
+        contains(github.event.comment.body, 'Codex Review') ||
+        (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

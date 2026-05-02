@@ -22,11 +22,12 @@ on:
 
 前提条件（job の `if`）:
 ```yaml
-if: github.event.pull_request.draft == false
+if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
 ```
 
 - draft PR では自動レビューを起動しない。作成途中のコードに対して Codex レビュー → Claude 修正が走ることを防ぐ
 - `ready_for_review` イベントは draft → ready 変換時に発火するため、draft 解除後に初回レビューが起動する
+- fork PR では自動レビューを起動しない。外部コードに対して token を持つ auto-fix loop を開始しないため
 
 役割:
 - hidden comment で状態を初期化（`status: initialized`, `iteration_count: 0`）
@@ -51,20 +52,32 @@ on:
 ```yaml
 if: >
   github.event.issue.pull_request &&
-  (github.event.comment.user.login == vars.CODEX_BOT_LOGIN || github.event.comment.user.login == 'chatgpt-codex-connector[bot]') &&
-  (contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER) || contains(github.event.comment.body, 'Codex Review'))
+  (
+    github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
+    (vars.CODEX_BOT_LOGIN != '' && github.event.comment.user.login == vars.CODEX_BOT_LOGIN)
+  ) &&
+  (
+    contains(github.event.comment.body, 'Codex Review') ||
+    (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER))
+  )
 ```
 
 > **注意: 演算子の優先度と空文字列について:**
 > - `&&` は `||` より優先度が高いため、bot 名の `||` フォールバックは必ず括弧で囲むこと。括弧がない場合、意図しない条件で workflow が起動する
 > - `contains()` の第2引数に `||` を含む式（例: `vars.X || 'default'`）を渡すと、GitHub Actions の expression evaluator での評価結果が不定。**`contains()` を2つに分けて `||` で繋ぐこと**
-> - **空文字列の危険:** `vars.CODEX_BOT_LOGIN` / `vars.CODEX_REVIEW_MARKER` が未設定の場合、空文字列との比較・`contains()` になる。`contains(any_string, '')` は **常に true** を返すため、全コメントで workflow が起動する。**Repository variables にデフォルト値を必ず設定すること**（`CODEX_BOT_LOGIN`: `chatgpt-codex-connector[bot]`, `CODEX_REVIEW_MARKER`: `Codex Review`）
+> - **空文字列の危険:** `contains(any_string, '')` は **常に true** を返す。`vars.CODEX_REVIEW_MARKER` は `vars.CODEX_REVIEW_MARKER != ''` を確認してから `contains()` に渡すこと。bot 名も `vars.CODEX_BOT_LOGIN != ''` を確認してから比較すること
+> - Repository variables 未設定時も fallback の `chatgpt-codex-connector[bot]` と `Codex Review` だけで判定する。設定時は fallback と設定値のどちらも許可する
 
 - PR に紐づく issue comment であること
 - Codex bot のコメントであること（`CODEX_BOT_LOGIN` Repository variable で制御）
 - 総評コメント（`CODEX_REVIEW_MARKER` Repository variable の文言を含む）であること
 
-> **注意:** bot 名・検知文言は OpenAI 側のアップデートで変更される可能性がある。Repository variables（`CODEX_BOT_LOGIN`, `CODEX_REVIEW_MARKER`）で外部化しているため、変更時は variables を更新するだけで workflow の修正は不要。
+推奨 Repository variables:
+
+- `CODEX_BOT_LOGIN=chatgpt-codex-connector[bot]`
+- `CODEX_REVIEW_MARKER=Codex Review`
+
+> **注意:** bot 名・検知文言は OpenAI 側のアップデートで変更される可能性がある。Repository variables（`CODEX_BOT_LOGIN`, `CODEX_REVIEW_MARKER`）で外部化しているため、変更時は variables を更新するだけで workflow の修正は不要。未設定または空文字の場合でも fallback 条件だけで評価され、空文字 `contains()` は実行されない。
 
 ### `issue_comment` トリガー特有の注意点
 
@@ -86,6 +99,8 @@ if: >
 ```
 
 > **注意:** `github.event.issue.pull_request` にはブランチ情報が含まれないため、GitHub API で PR 情報を別途取得する必要がある。
+
+Workflow B は GitHub API で取得した `.head.repo.full_name` が空または `github.repository` と異なる場合、fork PR または source repo 不明として `Run auto-fix loop` より前に停止する。`pr-head-ref` は action input として渡した後、action 側で ref 名の危険文字を検査してから checkout する。
 
 > **注意: push 権限について:** `issue_comment` トリガーで発行される `GITHUB_TOKEN` は、デフォルトブランチのコンテキストで生成される。PR ブランチにブランチ保護ルール（required reviews, status checks 等）が設定されている場合、`GITHUB_TOKEN` による push がブロックされる可能性がある。この場合、以下のいずれかで対処する:
 > - ブランチ保護ルールで **"Allow specified actors to bypass required pull requests"** に GitHub Actions bot を追加する
@@ -167,8 +182,8 @@ concurrency:
 #### 3. actor フィルタ
 - **`chatgpt-codex-connector[bot]`** のコメントのみ対象
 - Claude bot（GitHub Actions bot）のコメントや push では起動しない
-- 判定: `github.event.comment.user.login == 'chatgpt-codex-connector[bot]'`
-- 総評コメントであることを `contains(github.event.comment.body, 'Codex Review')` で確認
+- 判定: `github.event.comment.user.login == 'chatgpt-codex-connector[bot]'` または、非空の `vars.CODEX_BOT_LOGIN` と一致
+- 総評コメントであることを `contains(github.event.comment.body, 'Codex Review')` または、非空の `vars.CODEX_REVIEW_MARKER` で確認
 
 #### 4. workflow の責務分離
 - **Workflow A:** PR 初期化 + 初回 `@codex review`
