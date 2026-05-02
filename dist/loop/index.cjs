@@ -29137,6 +29137,7 @@ function loadBaseConfig() {
     repoName,
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
+    triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", "")
   };
@@ -29397,6 +29398,56 @@ function filterAndParseComments(comments, botLogin, lastReceivedAt) {
     };
     return [finding];
   });
+}
+function shouldStabilizeReviewComments(comments, botLogin, lastReceivedAt, triggerSummaryBody) {
+  return countRelevantBotComments(comments, botLogin, lastReceivedAt) === 0 && summaryMayContainFindings(triggerSummaryBody);
+}
+async function stabilizeReviewComments(initialComments, options) {
+  const stablePolls = Math.max(1, options.stablePolls);
+  const intervalMs = Math.max(1, options.intervalMs);
+  const maxWaitMs = Math.max(intervalMs * stablePolls, options.maxWaitMs);
+  if (!shouldStabilizeReviewComments(initialComments, options.botLogin, options.lastReceivedAt, options.triggerSummaryBody)) {
+    return initialComments;
+  }
+  let latestComments = initialComments;
+  let lastCount = countRelevantBotComments(latestComments, options.botLogin, options.lastReceivedAt);
+  let stableCount = 0;
+  let waitedMs = 0;
+  options.log?.(`[review-collector] No Codex inline comments yet; waiting for count to stabilize (${stablePolls} polls).`);
+  while (stableCount < stablePolls && waitedMs < maxWaitMs) {
+    await options.sleep(intervalMs);
+    waitedMs += intervalMs;
+    const nextComments = await options.fetchComments();
+    const nextCount = countRelevantBotComments(nextComments, options.botLogin, options.lastReceivedAt);
+    if (nextCount === lastCount) {
+      stableCount += 1;
+    } else {
+      options.log?.(`[review-collector] Codex inline comment count changed ${lastCount} -> ${nextCount}; resetting stabilization count.`);
+      stableCount = 0;
+      lastCount = nextCount;
+    }
+    latestComments = nextComments;
+  }
+  options.log?.(`[review-collector] Stabilization finished after ${waitedMs}ms with ${lastCount} Codex inline comment(s).`);
+  return latestComments;
+}
+function countRelevantBotComments(comments, botLogin, lastReceivedAt) {
+  return comments.filter((comment) => comment.user.login === botLogin && (lastReceivedAt === null || comment.createdAt > lastReceivedAt)).length;
+}
+function summaryMayContainFindings(body) {
+  const normalized = body.toLowerCase();
+  const noFindingsPatterns = [
+    /\bno\s+p0\s*\/\s*p1\s+findings?\b/i,
+    /\bno\s+findings?\b/i,
+    /\b0\s+findings?\b/i,
+    /\bno\s+issues?\b/i,
+    /指摘なし/,
+    /問題なし/
+  ];
+  if (noFindingsPatterns.some((pattern) => pattern.test(body))) {
+    return false;
+  }
+  return /\bp0\b/i.test(body) || /\bp1\b/i.test(body) || /\bfindings?\b/.test(normalized) || /\bissues?\b/.test(normalized) || /指摘|問題|検出/.test(body);
 }
 
 // dist/findings-hash.js
@@ -29970,7 +30021,18 @@ async function main() {
   info(`[main-loop] Debouncing ${config.debounceSeconds}s...`);
   await sleep3(config.debounceSeconds * 1e3);
   info("[main-loop] Fetching review comments...");
-  const rawComments = await fetchReviewComments(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  const fetchedComments = await fetchReviewComments(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  const rawComments = await stabilizeReviewComments(fetchedComments, {
+    botLogin: config.codexBotLogin,
+    lastReceivedAt: state.lastCodexReviewReceivedAt,
+    triggerSummaryBody: config.triggerCommentBody,
+    intervalMs: config.stabilizeIntervalSeconds * 1e3,
+    stablePolls: config.stabilizeCount,
+    maxWaitMs: config.debounceSeconds * 1e3,
+    fetchComments: () => fetchReviewComments(config.repoOwner, config.repoName, config.prNumber, config.githubToken),
+    sleep: sleep3,
+    log: (message) => info(message)
+  });
   const findings = filterAndParseComments(rawComments, config.codexBotLogin, state.lastCodexReviewReceivedAt);
   info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
   const latestCommentTime = rawComments.filter((c2) => c2.user.login === config.codexBotLogin).reduce((max, c2) => c2.createdAt > max ? c2.createdAt : max, state.lastCodexReviewReceivedAt ?? "");

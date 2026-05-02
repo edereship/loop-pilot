@@ -282,6 +282,11 @@ sequenceDiagram
         WB->>WB: ガード: status ∉ {fixing, stopped, done}, review_id 冪等チェック
         Note over WB: sleep DEBOUNCE_SECONDS
         WB->>GH: GET /pulls/{number}/comments
+        opt inline comment 0 件かつ総評本文が指摘ありを示す
+            WB->>GH: STABILIZE_INTERVAL_SECONDS ごとに再取得
+            WB->>WB: 件数変化で安定カウントをリセット
+            WB->>WB: STABILIZE_COUNT 回連続で同数なら安定
+        end
         WB->>WB: フィルタ: bot + created_at > last_received_at
         WB->>WB: P0/P1 抽出 + ループ検知 + iteration チェック
 
@@ -311,6 +316,18 @@ sequenceDiagram
         end
     end
 ```
+
+### Codex inline comment 件数安定化
+
+Codex の総評コメント（`issue_comment`）が inline comment より先に到着すると、Workflow B が「P0/P1 なし」と誤判定する可能性がある。PoC では以下の条件を満たす場合だけ、追加 polling で inline comment の件数安定を待つ。
+
+- debounce 後に取得した Codex bot の inline comment 件数が 0 件
+- trigger summary body に `P0` / `P1` / `finding` / `issue` / `指摘` / `問題` など、指摘ありを示す可能性がある文言が含まれる
+- `No P0/P1 findings` / `no findings` / `0 findings` / `指摘なし` / `問題なし` のように指摘なしを示す文言では polling しない
+
+polling は `STABILIZE_INTERVAL_SECONDS` ごとに行い、Codex bot の inline comment 件数が `STABILIZE_COUNT` 回連続で同じになったら安定とみなす。件数が変化した場合は安定カウントを 0 に戻し、最新の comment 一式を保持する。
+
+最大待機時間は `DEBOUNCE_SECONDS` 相当を上限にする。ただし `DEBOUNCE_SECONDS=0` などで必要な安定確認回数を満たせない場合は、`STABILIZE_INTERVAL_SECONDS * STABILIZE_COUNT` を最低上限として使う。0 件のまま安定した場合は既存フローどおり P0/P1 なしとして処理する。
 
 ### 状態遷移図
 

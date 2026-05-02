@@ -17,6 +17,7 @@ export interface Config {
   prNumber: number;
   // New: moved from inline process.env reads in main-loop.ts
   triggerCommentId: number;
+  triggerCommentBody: string;
   prHeadRef: string;
   prTitle: string;
 }
@@ -60,6 +61,7 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     repoName,
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
+    triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
   };

@@ -19152,6 +19152,7 @@ function loadBaseConfig() {
     repoName,
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
+    triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", "")
   };

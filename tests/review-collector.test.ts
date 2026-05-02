@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { filterAndParseComments } from "../src/review-collector";
+import {
+  filterAndParseComments,
+  shouldStabilizeReviewComments,
+  stabilizeReviewComments,
+} from "../src/review-collector";
 import type { RawReviewComment } from "../src/types";
 
 const BOT_LOGIN = "openai-codex[bot]";
@@ -109,5 +113,107 @@ describe("filterAndParseComments", () => {
 
     expect(findings).toHaveLength(1);
     expect(findings[0].line).toBe(0);
+  });
+});
+
+describe("shouldStabilizeReviewComments", () => {
+  it("starts stabilization when no bot inline comments exist and summary suggests findings", () => {
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review found P1 issues that should be fixed."
+      )
+    ).toBe(true);
+  });
+
+  it("skips stabilization when comments already exist", () => {
+    expect(
+      shouldStabilizeReviewComments(
+        [makeComment({ id: 1, body: "P1 Existing issue" })],
+        BOT_LOGIN,
+        null,
+        "Codex Review found P1 issues that should be fixed."
+      )
+    ).toBe(false);
+  });
+
+  it("skips stabilization when summary says there are no findings", () => {
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review completed. No P0/P1 findings."
+      )
+    ).toBe(false);
+  });
+});
+
+describe("stabilizeReviewComments", () => {
+  it("waits until comment count increases and then stabilizes", async () => {
+    const first = [] as RawReviewComment[];
+    const second = [makeComment({ id: 2, body: "P1 New issue" })];
+    const fetches = [second, second, second];
+    const sleepCalls: number[] = [];
+
+    const result = await stabilizeReviewComments(first, {
+      botLogin: BOT_LOGIN,
+      lastReceivedAt: null,
+      triggerSummaryBody: "Codex Review found P1 issues.",
+      intervalMs: 10,
+      stablePolls: 2,
+      maxWaitMs: 100,
+      fetchComments: async () => fetches.shift() ?? second,
+      sleep: async (ms) => {
+        sleepCalls.push(ms);
+      },
+    });
+
+    expect(result).toEqual(second);
+    expect(sleepCalls).toEqual([10, 10, 10]);
+  });
+
+  it("returns zero comments after zero count is stable", async () => {
+    const sleepCalls: number[] = [];
+
+    const result = await stabilizeReviewComments([], {
+      botLogin: BOT_LOGIN,
+      lastReceivedAt: null,
+      triggerSummaryBody: "Codex Review found P1 issues.",
+      intervalMs: 5,
+      stablePolls: 2,
+      maxWaitMs: 100,
+      fetchComments: async () => [],
+      sleep: async (ms) => {
+        sleepCalls.push(ms);
+      },
+    });
+
+    expect(result).toEqual([]);
+    expect(sleepCalls).toEqual([5, 5]);
+  });
+
+  it("does not poll when stabilization is not needed", async () => {
+    let fetchCount = 0;
+    const initial = [makeComment({ id: 1, body: "P1 Existing issue" })];
+
+    const result = await stabilizeReviewComments(initial, {
+      botLogin: BOT_LOGIN,
+      lastReceivedAt: null,
+      triggerSummaryBody: "Codex Review found P1 issues.",
+      intervalMs: 5,
+      stablePolls: 2,
+      maxWaitMs: 100,
+      fetchComments: async () => {
+        fetchCount += 1;
+        return [];
+      },
+      sleep: async () => {},
+    });
+
+    expect(result).toEqual(initial);
+    expect(fetchCount).toBe(0);
   });
 });

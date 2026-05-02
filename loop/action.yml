@@ -22,6 +22,10 @@ inputs:
     description: "ID of the Codex summary comment that triggered this run"
     required: false
     default: "0"
+  trigger-comment-body:
+    description: "Body of the Codex summary comment that triggered this run"
+    required: false
+    default: ""
   max-review-iterations:
     description: "Maximum number of review-fix iterations"
     required: false

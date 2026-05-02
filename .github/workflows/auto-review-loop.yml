@@ -10,6 +10,7 @@
 #       pr-head-ref: ${{ steps.pr.outputs.head_ref }}
 #       pr-title: ${{ steps.pr.outputs.title }}
 #       trigger-comment-id: ${{ github.event.comment.id }}
+#       trigger-comment-body: ${{ github.event.comment.body }}
 name: Auto Review Loop
 
 on:
@@ -95,6 +96,7 @@ jobs:
           pr-head-ref: ${{ steps.pr.outputs.head_ref }}
           pr-title: ${{ steps.pr.outputs.title }}
           trigger-comment-id: ${{ github.event.comment.id }}
+          trigger-comment-body: ${{ github.event.comment.body }}
           max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           debounce-seconds: ${{ vars.DEBOUNCE_SECONDS || '90' }}
           check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}
@@ -102,6 +104,8 @@ jobs:
           max-input-tokens-per-file: ${{ vars.MAX_INPUT_TOKENS_PER_FILE || '30000' }}
           codex-bot-login: ${{ vars.CODEX_BOT_LOGIN || 'chatgpt-codex-connector[bot]' }}
           codex-review-marker: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
+          stabilize-interval-seconds: ${{ vars.STABILIZE_INTERVAL_SECONDS || '10' }}
+          stabilize-count: ${{ vars.STABILIZE_COUNT || '3' }}
 
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact
