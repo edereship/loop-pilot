@@ -15,4 +15,4 @@ inputs:
 
 runs:
   using: "node20"
-  main: "../dist/init/index.js"
+  main: "../dist/init/index.cjs"
