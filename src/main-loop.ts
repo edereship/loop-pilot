@@ -8,6 +8,7 @@ import { createInitialState, readState, updateStateComment } from "./state-manag
 import {
   fetchReviewComments,
   filterAndParseComments,
+  stabilizeReviewComments,
 } from "./review-collector.js";
 import { computeFindingsHash } from "./findings-hash.js";
 import { isLoop } from "./loop-detector.js";
@@ -234,19 +235,31 @@ async function main(): Promise<void> {
   core.info(`[main-loop] Debouncing ${config.debounceSeconds}s...`);
   await sleep(config.debounceSeconds * 1000);
 
-  // TODO(phase:PoC, reason:stabilize safeguard not implemented — would poll review comments
-  // until the count stabilizes over STABILIZE_COUNT polling intervals of STABILIZE_INTERVAL_SECONDS,
-  // ensuring Codex has finished posting all inline comments before we process them,
-  // due:MVP): implement comment stabilization check
-
   // ─── Collect Findings ────────────────────────────────────────────────────
   core.info("[main-loop] Fetching review comments...");
-  const rawComments = await fetchReviewComments(
+  const fetchedComments = await fetchReviewComments(
     config.repoOwner,
     config.repoName,
     config.prNumber,
     config.githubToken
   );
+  const rawComments = await stabilizeReviewComments(fetchedComments, {
+    botLogin: config.codexBotLogin,
+    lastReceivedAt: state.lastCodexReviewReceivedAt,
+    triggerSummaryBody: config.triggerCommentBody,
+    intervalMs: config.stabilizeIntervalSeconds * 1000,
+    stablePolls: config.stabilizeCount,
+    maxWaitMs: config.debounceSeconds * 1000,
+    fetchComments: () =>
+      fetchReviewComments(
+        config.repoOwner,
+        config.repoName,
+        config.prNumber,
+        config.githubToken
+      ),
+    sleep,
+    log: (message) => core.info(message),
+  });
 
   const findings = filterAndParseComments(
     rawComments,

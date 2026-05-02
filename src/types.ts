@@ -72,3 +72,6 @@ export interface RawReviewComment {
   line: number | null;
   createdAt: string;
 }
+
+export type FetchReviewCommentsFn = () => Promise<RawReviewComment[]>;
+export type SleepFn = (ms: number) => Promise<void>;
