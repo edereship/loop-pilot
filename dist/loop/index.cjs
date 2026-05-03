@@ -29202,6 +29202,7 @@ var MAX_BUFFER = 10 * 1024 * 1024;
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
+var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 3;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
@@ -29255,7 +29256,7 @@ function serializeState(state) {
     findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
   const json = JSON.stringify(trimmed, null, 2);
-  const candidate = STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
+  const candidate = STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
   if (candidate.length <= MAX_SERIALIZED_BYTES) {
     return candidate;
   }
@@ -29264,7 +29265,7 @@ function serializeState(state) {
     findingsHashHistory: state.findingsHashHistory.slice(-1)
   };
   const minimalJson = JSON.stringify(minimal, null, 2);
-  return STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
+  return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
 }
 function deserializeState(commentBody) {
   const escapedOpen = STATE_COMMENT_OPEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

@@ -181,6 +181,8 @@ initialized → waiting_codex → fixing → waiting_codex → ... → done / st
 例:
 
 ```html
+Auto-review state is stored in this comment.
+
 <!-- auto-review-state
 {
   "iteration_count": 3,
@@ -213,6 +215,7 @@ gh api "/repos/{owner}/{repo}/issues/{pr_number}/comments" --paginate \
 - Workflow B は毎回このコメントを取得し、JSON をパースして状態を読む
 - 状態更新時は同じコメントを `PATCH` で上書きする（`gh api -X PATCH`）
 - コメントが見つからない場合は、Workflow A が未実行とみなし処理をスキップする
+- GitHub UI 上で空コメントに見えないよう、hidden JSON の前に短い可視テキストを置く
 
 ### hidden comment の競合書き込みリスク
 
