@@ -5,6 +5,7 @@
 #   - uses: your-org/auto-review-action/init@v1
 #     with:
 #       github-token: ${{ secrets.GITHUB_TOKEN }}
+#       codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 #       pr-number: ${{ github.event.pull_request.number }}
 name: Auto Review Init
 
@@ -36,4 +37,5 @@ jobs:
         uses: ./init
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
           pr-number: ${{ github.event.pull_request.number }}

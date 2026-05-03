@@ -19091,6 +19091,9 @@ var ExitCode;
   ExitCode2[ExitCode2["Success"] = 0] = "Success";
   ExitCode2[ExitCode2["Failure"] = 1] = "Failure";
 })(ExitCode || (ExitCode = {}));
+function setSecret(secret) {
+  issueCommand("add-mask", {}, secret);
+}
 function getInput(name, options) {
   const val = process.env[`INPUT_${name.replace(/ /g, "_").toUpperCase()}`] || "";
   if (options && options.required && !val) {
@@ -19137,6 +19140,8 @@ function loadBaseConfig() {
   if (!repoOwner || !repoName || !validRepoSegment.test(repoOwner) || !validRepoSegment.test(repoName)) {
     throw new Error(`github-repository must be in "owner/name" format with valid characters, got: "${repoFullName}"`);
   }
+  const githubToken = requireInput("github-token", "GITHUB_TOKEN");
+  const codexReviewRequestToken = input("codex-review-request-token", "CODEX_REVIEW_REQUEST_TOKEN", githubToken);
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
@@ -19147,7 +19152,8 @@ function loadBaseConfig() {
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
-    githubToken: requireInput("github-token", "GITHUB_TOKEN"),
+    githubToken,
+    codexReviewRequestToken,
     repoOwner,
     repoName,
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
@@ -19385,6 +19391,8 @@ async function postCodexReviewRequest(owner, name, pr, token) {
 // dist/main-init.js
 async function run() {
   const config = loadInitConfig();
+  setSecret(config.githubToken);
+  setSecret(config.codexReviewRequestToken);
   info(`Initializing auto-review for PR #${config.prNumber}`);
   const existing = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   let commentId;
@@ -19401,7 +19409,7 @@ async function run() {
     commentId = await createStateComment(config.repoOwner, config.repoName, config.prNumber, state, config.githubToken);
     info(`Created state comment: ${commentId}`);
   }
-  const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
   info(`Posted @codex review: comment ${reviewRequestId}`);
   state = { ...state, status: "waiting_codex", lastCodexRequestCommentId: reviewRequestId };
   await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);

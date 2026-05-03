@@ -5,6 +5,10 @@ inputs:
   github-token:
     description: "GitHub token with contents:read, pull-requests:write, issues:write"
     required: true
+  codex-review-request-token:
+    description: "Optional token from a Codex-connected user for posting @codex review"
+    required: false
+    default: ""
   pr-number:
     description: "Pull request number"
     required: true

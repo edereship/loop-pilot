@@ -29122,6 +29122,8 @@ function loadBaseConfig() {
   if (!repoOwner || !repoName || !validRepoSegment.test(repoOwner) || !validRepoSegment.test(repoName)) {
     throw new Error(`github-repository must be in "owner/name" format with valid characters, got: "${repoFullName}"`);
   }
+  const githubToken = requireInput("github-token", "GITHUB_TOKEN");
+  const codexReviewRequestToken = input("codex-review-request-token", "CODEX_REVIEW_REQUEST_TOKEN", githubToken);
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
@@ -29132,7 +29134,8 @@ function loadBaseConfig() {
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
-    githubToken: requireInput("github-token", "GITHUB_TOKEN"),
+    githubToken,
+    codexReviewRequestToken,
     repoOwner,
     repoName,
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
@@ -29959,6 +29962,7 @@ async function main() {
   const config = loadConfig();
   setSecret(config.anthropicApiKey);
   setSecret(config.githubToken);
+  setSecret(config.codexReviewRequestToken);
   const triggerCommentId = config.triggerCommentId;
   const prHeadRef = config.prHeadRef;
   if (!prHeadRef) {
@@ -30266,7 +30270,7 @@ ${commitBody}`
   await updateStateComment(config.repoOwner, config.repoName, commentId, waitingState, config.githubToken);
   info("[main-loop] Posting @codex review request...");
   try {
-    const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+    const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
     const updatedWaitingState = {
       ...waitingState,
       lastCodexRequestCommentId: reviewRequestId

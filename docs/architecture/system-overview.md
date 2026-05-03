@@ -51,6 +51,7 @@ Pull Request に対して、以下の自動ループを実現する。
 | `STABILIZE_INTERVAL_SECONDS` | セーフガードのポーリング間隔（秒） | `10` | `10` |
 | `STABILIZE_COUNT` | コメント数安定と判定する連続一致回数 | `3` | `3` |
 | `CODEX_REVIEW_MARKER` | Codex 総評レビュー/コメントの検知文言 | `Codex Review` | `Codex Review` |
+| `CODEX_REVIEW_REQUEST_TOKEN` | `@codex review` 投稿専用の接続済みユーザー PAT。未設定時は `GITHUB_TOKEN` に fallback | なし | 接続済みユーザーの Fine-grained PAT |
 
 GitHub Actions workflow の `env` または Repository variables で設定する。
 
@@ -66,6 +67,8 @@ env:
   STABILIZE_COUNT: ${{ vars.STABILIZE_COUNT || '3' }}
   CODEX_REVIEW_MARKER: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
 ```
+
+`CODEX_REVIEW_REQUEST_TOKEN` は GitHub Actions の Repository secrets に設定し、Workflow A/B の action input `codex-review-request-token` として渡す。この token は `@codex review` の投稿だけに使い、hidden comment の状態管理、PR ブランチへの push、Artifact 収集など既存の GitHub 操作は `GITHUB_TOKEN` を使い続ける。
 
 ---
 
@@ -96,7 +99,7 @@ env:
 - **インラインコメント（`pull_request_review_comment`）を GitHub API で一括取得し、P0/P1 を抽出**
 - **Claude にはファイル単位で `edit_file` ツール呼び出しによる構造化 edit を返させる**
 - **レビュー受信後に `DEBOUNCE_SECONDS` 秒待機してから集約する（最適値は PoC で検証）**
-- **Claude 修正後に `gh pr comment` で `@codex review` を再実行**
+- **Claude 修正後に `@codex review` を再実行（`CODEX_REVIEW_REQUEST_TOKEN` 設定時は接続済みユーザー PAT で投稿）**
 - **P0 / P1 がなくなるか `MAX_REVIEW_ITERATIONS` 回到達で終了**
 - **状態は PR の hidden comment で管理（status の遷移は [状態遷移図](flow-and-state.md#状態遷移図) を参照）**
 - **PoC は Workflow 2本構成（A: 初期化、B: レビュー受信+修正）**

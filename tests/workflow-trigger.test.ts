@@ -8,6 +8,11 @@ describe("Workflow A trigger guard", () => {
   it("does not start auto-review for fork PRs", () => {
     expect(initWorkflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
   });
+
+  it("passes the optional Codex review request token to init", () => {
+    expect(initWorkflow).toContain("codex-review-request-token:");
+    expect(initWorkflow).toContain("secrets.CODEX_REVIEW_REQUEST_TOKEN");
+  });
 });
 
 describe("Workflow B trigger guard", () => {
@@ -21,6 +26,11 @@ describe("Workflow B trigger guard", () => {
 
   it("uses the PR number from either issue_comment or pull_request_review events", () => {
     expect(loopWorkflow).toContain("github.event.issue.number || github.event.pull_request.number");
+  });
+
+  it("passes the optional Codex review request token to loop", () => {
+    expect(loopWorkflow).toContain("codex-review-request-token:");
+    expect(loopWorkflow).toContain("secrets.CODEX_REVIEW_REQUEST_TOKEN");
   });
 
   it("does not compare CODEX_BOT_LOGIN unless the variable is non-empty", () => {

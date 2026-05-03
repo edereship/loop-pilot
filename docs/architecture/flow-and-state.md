@@ -8,7 +8,9 @@ PR が作成されたら、GitHub Actions が起動する。
 処理:
 - iteration_count を 0 で初期化
 - PR 用の状態情報を作成
-- `gh pr comment <PR番号> --body "@codex review"` で Codex の初回レビューを起動
+- `@codex review` を投稿して Codex の初回レビューを起動
+  - `CODEX_REVIEW_REQUEST_TOKEN` 設定時は接続済みユーザー PAT で投稿する
+  - 未設定時は `GITHUB_TOKEN` に fallback する
 - `status` を `initialized` に設定
 
 ---
@@ -88,7 +90,9 @@ GitHub Actions 内で `sleep $DEBOUNCE_SECONDS` を使う場合、**ランナー
 Claude 修正後、CI 成功時のみ `@codex review` を再度投稿する。
 
 処理:
-- `gh pr comment <PR番号> --body "@codex review"` で再レビュー依頼
+- `@codex review` を投稿して再レビュー依頼
+  - `CODEX_REVIEW_REQUEST_TOKEN` 設定時は接続済みユーザー PAT で投稿する
+  - 未設定時は `GITHUB_TOKEN` に fallback する
 - `status` を `waiting_codex` に更新
 - 次のレビューを待つ（Workflow B が再度トリガーされる）
 

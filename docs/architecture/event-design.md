@@ -32,6 +32,7 @@ if: github.event.pull_request.draft == false && github.event.pull_request.head.r
 役割:
 - hidden comment で状態を初期化（`status: initialized`, `iteration_count: 0`）
 - `gh pr comment` で `@codex review` を投稿
+- `CODEX_REVIEW_REQUEST_TOKEN` が設定されている場合、`@codex review` の投稿だけ接続済みユーザー PAT を使用する。未設定時は `GITHUB_TOKEN` に fallback する
 
 ---
 
@@ -96,6 +97,29 @@ if: >
 - `CODEX_REVIEW_MARKER=Codex Review`
 
 > **注意:** bot 名・検知文言は OpenAI 側のアップデートで変更される可能性がある。Repository variables（`CODEX_BOT_LOGIN`, `CODEX_REVIEW_MARKER`）で外部化しているため、変更時は variables を更新するだけで workflow の修正は不要。未設定または空文字の場合でも fallback 条件だけで評価され、空文字 `contains()` は実行されない。
+
+### Codex review request token
+
+Codex が GitHub 連携済みユーザーのメンションとして `@codex review` を認識できるように、Workflow A/B は action input `codex-review-request-token` を受け取る。
+
+```yaml
+- uses: ./init
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
+```
+
+```yaml
+- uses: ./loop
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
+```
+
+- `CODEX_REVIEW_REQUEST_TOKEN` は Repository secrets に登録する
+- 設定する token は Codex と GitHub を接続済みのユーザーが発行した Fine-grained PAT とする
+- この token は `@codex review` 投稿専用であり、hidden comment、checkout/push、Artifact 収集、review comment 取得などは従来通り `GITHUB_TOKEN` を使う
+- secret 未設定時は `GITHUB_TOKEN` に fallback し、既存 workflow との互換性を保つ
 
 ### review / issue_comment トリガー特有の注意点
 
@@ -168,7 +192,7 @@ Workflow B は GitHub API で取得した `.head.repo.full_name` が空または
 - 失敗 → `status: stopped` で終了
 
 **Phase 4: 再レビュー依頼**
-- `gh pr comment` で `@codex review` を投稿
+- `@codex review` を投稿する。`CODEX_REVIEW_REQUEST_TOKEN` が設定されている場合は接続済みユーザー PAT を使い、未設定時は `GITHUB_TOKEN` に fallback する
 - `status: waiting_codex` に更新
 
 ---

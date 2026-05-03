@@ -10,6 +10,7 @@ export interface Config {
   stabilizeIntervalSeconds: number;
   stabilizeCount: number;
   codexReviewMarker: string;
+  codexReviewRequestToken: string;
   anthropicApiKey: string;
   githubToken: string;
   repoOwner: string;
@@ -46,6 +47,13 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     );
   }
 
+  const githubToken = requireInput("github-token", "GITHUB_TOKEN");
+  const codexReviewRequestToken = input(
+    "codex-review-request-token",
+    "CODEX_REVIEW_REQUEST_TOKEN",
+    githubToken
+  );
+
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
@@ -56,7 +64,8 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
-    githubToken: requireInput("github-token", "GITHUB_TOKEN"),
+    githubToken,
+    codexReviewRequestToken,
     repoOwner,
     repoName,
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
