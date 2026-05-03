@@ -82,6 +82,7 @@ async function main(): Promise<void> {
   // Mask sensitive values to prevent accidental log exposure
   core.setSecret(config.anthropicApiKey);
   core.setSecret(config.githubToken);
+  core.setSecret(config.codexReviewRequestToken);
 
   const triggerCommentId = config.triggerCommentId;
   const prHeadRef = config.prHeadRef;
@@ -731,7 +732,7 @@ async function main(): Promise<void> {
       config.repoOwner,
       config.repoName,
       config.prNumber,
-      config.githubToken
+      config.codexReviewRequestToken
     );
 
     // Update state with the review request comment ID

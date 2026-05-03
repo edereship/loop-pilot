@@ -29122,6 +29122,8 @@ function loadBaseConfig() {
   if (!repoOwner || !repoName || !validRepoSegment.test(repoOwner) || !validRepoSegment.test(repoName)) {
     throw new Error(`github-repository must be in "owner/name" format with valid characters, got: "${repoFullName}"`);
   }
+  const githubToken = requireInput("github-token", "GITHUB_TOKEN");
+  const codexReviewRequestToken = input("codex-review-request-token", "CODEX_REVIEW_REQUEST_TOKEN", githubToken);
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
@@ -29132,7 +29134,8 @@ function loadBaseConfig() {
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
-    githubToken: requireInput("github-token", "GITHUB_TOKEN"),
+    githubToken,
+    codexReviewRequestToken,
     repoOwner,
     repoName,
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
@@ -29199,6 +29202,7 @@ var MAX_BUFFER = 10 * 1024 * 1024;
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
+var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 3;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
@@ -29252,7 +29256,7 @@ function serializeState(state) {
     findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
   const json = JSON.stringify(trimmed, null, 2);
-  const candidate = STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
+  const candidate = STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
   if (candidate.length <= MAX_SERIALIZED_BYTES) {
     return candidate;
   }
@@ -29261,7 +29265,7 @@ function serializeState(state) {
     findingsHashHistory: state.findingsHashHistory.slice(-1)
   };
   const minimalJson = JSON.stringify(minimal, null, 2);
-  return STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
+  return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
 }
 function deserializeState(commentBody) {
   const escapedOpen = STATE_COMMENT_OPEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29959,6 +29963,7 @@ async function main() {
   const config = loadConfig();
   setSecret(config.anthropicApiKey);
   setSecret(config.githubToken);
+  setSecret(config.codexReviewRequestToken);
   const triggerCommentId = config.triggerCommentId;
   const prHeadRef = config.prHeadRef;
   if (!prHeadRef) {
@@ -30266,7 +30271,7 @@ ${commitBody}`
   await updateStateComment(config.repoOwner, config.repoName, commentId, waitingState, config.githubToken);
   info("[main-loop] Posting @codex review request...");
   try {
-    const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+    const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
     const updatedWaitingState = {
       ...waitingState,
       lastCodexRequestCommentId: reviewRequestId

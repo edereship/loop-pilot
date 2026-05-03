@@ -9,6 +9,7 @@
 - [ ] Workflow A: PR 作成時に hidden comment 作成 + `@codex review` 投稿 → [Workflow A](../architecture/event-design.md#workflow-a-pr-作成時auto-review-inityml)
 - [ ] Workflow B: Codex レビュー受信 + デバウンス待機 + Claude 修正 + 再レビュー依頼 → [Workflow B](../architecture/event-design.md#workflow-b-codex-レビュー受信--claude-修正auto-review-loopyml)
 - [x] Severity パーサー（P0/P1 抽出の正規表現） → [Severity の抽出ルール](../specs/severity-parser.md#severity-の抽出ルール)
+- [x] `@codex review` 投稿専用の接続済みユーザー PAT（`CODEX_REVIEW_REQUEST_TOKEN`）を Workflow A/B で使用し、未設定時は `GITHUB_TOKEN` に fallback → [Codex review request token](../architecture/event-design.md#codex-review-request-token)
 - [ ] Claude API 呼び出し（`edit_file` tool use） → [Claude 修正エンジン](../specs/claude-fix-engine.md)
 - [ ] `edit_file` 適用ロジック（逆順適用・空白正規化・複数マッチ・再試行） → [edit 適用ロジック](../specs/claude-fix-engine.md#edit-適用ロジック)
 - [ ] `CHECK_COMMAND` 実行 + 失敗時ロールバック → [検証コマンドとロールバック](../operations/check-and-rollback.md)
@@ -23,6 +24,7 @@
 ## PoC 検証事項
 
 - [ ] `@codex review` メンション形式で Codex が起動するか確認
+- [ ] `CODEX_REVIEW_REQUEST_TOKEN` 経由で投稿された `@codex review` で Codex がレビューを開始することを実 PR で確認
 - [ ] 総評コメント / インラインコメントの投稿順序を確認
 - [x] Codex インラインコメントの原文を Artifact として保存する step を追加し、匿名化 fixture でパーサーのテストケースにする
 - [ ] `pull_request_review` / `issue_comment` トリガーでの `GITHUB_TOKEN` 権限を確認

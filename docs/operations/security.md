@@ -69,6 +69,35 @@ env:
 
 ---
 
+## Codex review request token
+
+Codex が `@codex review` を GitHub 連携済みユーザーからの依頼として扱えるように、Repository secret `CODEX_REVIEW_REQUEST_TOKEN` を任意で設定する。
+
+**用途:**
+- Workflow A の初回 `@codex review` 投稿
+- Workflow B の再レビュー依頼 `@codex review` 投稿
+
+**使わない用途:**
+- hidden comment の読み書き
+- PR ブランチの checkout / commit / push
+- review comment や issue comment の取得
+- Artifact 収集
+
+上記の既存 GitHub 操作は `GITHUB_TOKEN` を使い続ける。`CODEX_REVIEW_REQUEST_TOKEN` が未設定の場合、`@codex review` 投稿も `GITHUB_TOKEN` に fallback する。
+
+**推奨 token:**
+- Codex と GitHub を接続済みのユーザーが発行した Fine-grained PAT
+- 対象リポジトリのみに限定する
+- 権限は `Pull requests: Read and write` と `Issues: Read and write` を付与する
+- 必要に応じて `Contents: Read-only` を付与する
+
+**注意事項:**
+- ログ出力前に GitHub Actions secret としてマスクされるよう、必ず Repository secrets に保存する
+- Personal PAT は個人に紐づくため、本番移植時は専用 machine user または GitHub App token への置き換えを検討する
+- token は `@codex review` 投稿専用に閉じ、push 権限を持たせない
+
+---
+
 ## 関連ドキュメント
 
 - [イベント設計](../architecture/event-design.md) — push 権限の注意点

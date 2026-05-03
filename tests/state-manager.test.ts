@@ -16,6 +16,13 @@ function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
 }
 
 describe("serializeState", () => {
+  it("includes visible text so GitHub does not render it as an empty comment", () => {
+    const state = makeState();
+    const serialized = serializeState(state);
+
+    expect(serialized.startsWith("Auto-review state is stored in this comment.")).toBe(true);
+  });
+
   it("serializes to hidden comment format (contains marker + JSON + closing)", () => {
     const state = makeState();
     const serialized = serializeState(state);

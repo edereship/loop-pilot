@@ -10,6 +10,8 @@ import { postCodexReviewRequest } from "./comment-poster.js";
 
 async function run(): Promise<void> {
   const config = loadInitConfig();
+  core.setSecret(config.githubToken);
+  core.setSecret(config.codexReviewRequestToken);
   core.info(`Initializing auto-review for PR #${config.prNumber}`);
 
   // Check for existing hidden comment (re-run support)
@@ -34,7 +36,12 @@ async function run(): Promise<void> {
   }
 
   // Post @codex review
-  const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  const reviewRequestId = await postCodexReviewRequest(
+    config.repoOwner,
+    config.repoName,
+    config.prNumber,
+    config.codexReviewRequestToken
+  );
   core.info(`Posted @codex review: comment ${reviewRequestId}`);
 
   // Update status to waiting_codex

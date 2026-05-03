@@ -9,6 +9,7 @@ const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB
 const STATE_MARKER = "auto-review-state";
 const STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 const STATE_COMMENT_CLOSE = "-->";
+const STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 const MAX_HISTORY_ENTRIES = 3;
 const MAX_SERIALIZED_BYTES = 65000;
 const VALID_STATUSES = new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
@@ -73,7 +74,7 @@ export function serializeState(state: ReviewState): string {
 
   const json = JSON.stringify(trimmed, null, 2);
   const candidate =
-    STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
+    STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
 
   if (candidate.length <= MAX_SERIALIZED_BYTES) {
     return candidate;
@@ -85,7 +86,7 @@ export function serializeState(state: ReviewState): string {
     findingsHashHistory: state.findingsHashHistory.slice(-1),
   };
   const minimalJson = JSON.stringify(minimal, null, 2);
-  return STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
+  return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
 }
 
 /**
