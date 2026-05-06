@@ -17240,7 +17240,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify5 } = require("node:util");
+    var { promisify: promisify6 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -17280,7 +17280,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify5(this[kOriginalClose])();
+        await promisify6(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -17293,7 +17293,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify5 } = require("node:util");
+    var { promisify: promisify6 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -17333,7 +17333,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify5(this[kOriginalClose])();
+        await promisify6(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -25038,7 +25038,7 @@ var require_undici = __commonJS({
 // dist/main-loop.js
 var import_node_fs2 = require("node:fs");
 var import_node_path = require("node:path");
-var import_node_child_process5 = require("node:child_process");
+var import_node_child_process6 = require("node:child_process");
 
 // node_modules/@anthropic-ai/sdk/version.mjs
 var VERSION = "0.39.0";
@@ -29142,7 +29142,8 @@ function loadBaseConfig() {
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
-    prTitle: input("pr-title", "PR_TITLE", "")
+    prTitle: input("pr-title", "PR_TITLE", ""),
+    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", "")
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -29522,7 +29523,7 @@ function isLoop(currentFindings, findingsHashHistory) {
 }
 
 // dist/claude-fix-engine.js
-var DEFAULT_CLAUDE_MODEL = "claude-opus-4-7";
+var DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101";
 var EDIT_FILE_TOOL = {
   name: "edit_file",
   description: "Replace a specific code section in a file",
@@ -30002,6 +30003,27 @@ async function postCodexReviewRequest(owner, name, pr2, token) {
   return postComment(owner, name, pr2, "@codex review", token);
 }
 
+// dist/pr-labels.js
+var import_node_child_process5 = require("node:child_process");
+var import_node_util5 = require("node:util");
+var execFileAsync4 = (0, import_node_util5.promisify)(import_node_child_process5.execFile);
+var fetchPrLabels = async (owner, name, pr2, token) => {
+  const { stdout } = await execFileAsync4("gh", [
+    "api",
+    `repos/${owner}/${name}/issues/${pr2}/labels`,
+    "--paginate",
+    "--jq",
+    ".[].name"
+  ], { env: buildGhEnv(token) });
+  return stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+};
+function isAutoReviewAllowed(requiredLabel, currentLabels) {
+  if (requiredLabel === "")
+    return true;
+  const normalized = requiredLabel.toLowerCase();
+  return currentLabels.some((label) => label.toLowerCase() === normalized);
+}
+
 // dist/main-loop.js
 function sleep3(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
@@ -30039,6 +30061,13 @@ async function main() {
     throw new Error("[main-loop] pr-head-ref is required but not set. Cannot determine target branch.");
   }
   info(`[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
+  if (config.autoReviewLabel !== "") {
+    const labels = await fetchPrLabels(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+    if (!isAutoReviewAllowed(config.autoReviewLabel, labels)) {
+      info(`[main-loop] Required label '${config.autoReviewLabel}' is not present on PR #${config.prNumber}. Skipping (no state mutation, no fix).`);
+      return;
+    }
+  }
   const stateResult = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   if (!stateResult.found && !stateResult.corrupted) {
     info("[main-loop] No state found. Workflow A has not run. Skipping.");
@@ -30174,7 +30203,7 @@ async function main() {
       throw new Error(`[main-loop] Invalid branch name: ${prHeadRef}`);
     }
     info(`[main-loop] Checking out branch: ${prHeadRef}`);
-    (0, import_node_child_process5.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
+    (0, import_node_child_process6.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
   const fileGroups = groupByFile(findings);
   const selectedFiles = selectFiles(fileGroups, config.maxFilesPerIteration);
@@ -30316,23 +30345,23 @@ async function main() {
     return;
   }
   info("[main-loop] Check command passed. Committing changes...");
-  (0, import_node_child_process5.execFileSync)("git", ["add", ...modifiedFiles], { stdio: "inherit" });
+  (0, import_node_child_process6.execFileSync)("git", ["add", ...modifiedFiles], { stdio: "inherit" });
   try {
-    (0, import_node_child_process5.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
+    (0, import_node_child_process6.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
     warning("[main-loop] No staged changes after edits. Skipping commit.");
   } catch {
     const sanitize = (s2) => s2.replace(/[\r\n]+/g, " ").trim();
     const commitBody = allAppliedEdits.map((e2) => `- ${sanitize(e2.explanation)}`).join("\n");
-    (0, import_node_child_process5.execFileSync)("git", [
+    (0, import_node_child_process6.execFileSync)("git", [
       "commit",
       "-m",
       `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})
 
 ${commitBody}`
     ], { stdio: "inherit" });
-    (0, import_node_child_process5.execFileSync)("git", ["push"], { stdio: "inherit" });
+    (0, import_node_child_process6.execFileSync)("git", ["push"], { stdio: "inherit" });
   }
-  const commitSha = (0, import_node_child_process5.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+  const commitSha = (0, import_node_child_process6.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
   info(`[main-loop] Committed: ${commitSha}`);
   await postFixSummary(config.repoOwner, config.repoName, config.prNumber, fixingState.iterationCount, allAppliedEdits, skippedFiles, config.githubToken);
   const waitingState = {

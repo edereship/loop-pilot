@@ -19,9 +19,10 @@ describe("isAutoReviewAllowed", () => {
     expect(isAutoReviewAllowed("auto-review", ["bug", "P1"])).toBe(false);
   });
 
-  it("matches labels case-sensitively to align with GitHub semantics", () => {
-    expect(isAutoReviewAllowed("auto-review", ["Auto-Review"])).toBe(false);
-    expect(isAutoReviewAllowed("Auto-Review", ["auto-review"])).toBe(false);
+  it("matches labels case-insensitively to align with workflow YAML contains()", () => {
+    expect(isAutoReviewAllowed("auto-review", ["Auto-Review"])).toBe(true);
+    expect(isAutoReviewAllowed("Auto-Review", ["auto-review"])).toBe(true);
+    expect(isAutoReviewAllowed("AUTO-REVIEW", ["auto-review"])).toBe(true);
   });
 
   it("does not match a partial label name", () => {

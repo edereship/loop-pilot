@@ -45,12 +45,14 @@ export const fetchPrLabels: FetchPrLabelsFn = async (
  *
  * - When `requiredLabel` is empty, gating is disabled (preserves PoC behavior).
  * - When `requiredLabel` is set, the PR must currently carry that label.
- *   Labels are matched case-sensitively to align with GitHub's label semantics.
+ *   Matching is case-insensitive to align with the workflow YAML `contains()` check
+ *   and avoid a state where the workflow triggers but the runtime gate skips fixes.
  */
 export function isAutoReviewAllowed(
   requiredLabel: string,
   currentLabels: readonly string[],
 ): boolean {
   if (requiredLabel === "") return true;
-  return currentLabels.includes(requiredLabel);
+  const normalized = requiredLabel.toLowerCase();
+  return currentLabels.some((label) => label.toLowerCase() === normalized);
 }
