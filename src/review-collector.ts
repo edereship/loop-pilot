@@ -53,13 +53,48 @@ export async function fetchReviewComments(
     .split("\n")
     .filter((line) => line.trim())
     .flatMap((line) => {
-      try {
-        return [JSON.parse(JSON.parse(line)) as RawReviewComment];
-      } catch {
+      const parsed = parseReviewCommentRecord(line);
+      if (!parsed) {
         core.warning(`[review-collector] Skipping unparseable comment line: ${line.slice(0, 120)}`);
         return [];
       }
+      return [parsed];
     });
+}
+
+export function parseReviewCommentRecord(line: string): RawReviewComment | null {
+  function isRecord(value: unknown): value is RawReviewComment {
+    if (typeof value !== "object" || value === null) return false;
+    const record = value as Record<string, unknown>;
+    const user = record.user as Record<string, unknown> | null;
+    return (
+      typeof record.id === "number" &&
+      typeof user === "object" &&
+      user !== null &&
+      typeof user.login === "string" &&
+      typeof record.body === "string" &&
+      typeof record.path === "string" &&
+      (typeof record.line === "number" || record.line === null) &&
+      typeof record.createdAt === "string"
+    );
+  }
+
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    if (isRecord(parsed)) {
+      return parsed;
+    }
+    if (typeof parsed === "string") {
+      const nested = JSON.parse(parsed) as unknown;
+      if (isRecord(nested)) {
+        return nested;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 /**

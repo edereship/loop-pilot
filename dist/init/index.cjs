@@ -19303,6 +19303,26 @@ function deserializeState(commentBody) {
     return null;
   }
 }
+function parseStateCommentRecord(line) {
+  function isRecord(value) {
+    return typeof value === "object" && value !== null && typeof value.id === "number" && typeof value.body === "string";
+  }
+  try {
+    const parsed = JSON.parse(line);
+    if (isRecord(parsed)) {
+      return parsed;
+    }
+    if (typeof parsed === "string") {
+      const nested = JSON.parse(parsed);
+      if (isRecord(nested)) {
+        return nested;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 async function readState(owner, name, pr, token) {
   const { stdout } = await execFileAsync("gh", [
     "api",
@@ -19319,13 +19339,8 @@ async function readState(owner, name, pr, token) {
   }
   const lines = trimmed.split("\n").filter((l) => l.trim());
   const lastLine = lines[lines.length - 1];
-  let parsed;
-  try {
-    parsed = JSON.parse(JSON.parse(lastLine));
-  } catch {
-    return { found: false, corrupted: true, commentId: null };
-  }
-  if (typeof parsed?.id !== "number" || typeof parsed?.body !== "string") {
+  const parsed = parseStateCommentRecord(lastLine);
+  if (!parsed) {
     return { found: false, corrupted: true, commentId: null };
   }
   const state = deserializeState(parsed.body);

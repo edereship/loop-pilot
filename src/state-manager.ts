@@ -128,6 +128,34 @@ export type ReadStateResult =
   | { found: false; corrupted: false; commentId: null }
   | { found: false; corrupted: true; commentId: number | null };
 
+export function parseStateCommentRecord(line: string): { id: number; body: string } | null {
+  function isRecord(value: unknown): value is { id: number; body: string } {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as Record<string, unknown>).id === "number" &&
+      typeof (value as Record<string, unknown>).body === "string"
+    );
+  }
+
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    if (isRecord(parsed)) {
+      return parsed;
+    }
+    if (typeof parsed === "string") {
+      const nested = JSON.parse(parsed) as unknown;
+      if (isRecord(nested)) {
+        return nested;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 /**
  * Reads state from GitHub PR issue comments by scanning for the hidden state marker.
  * Uses gh api with --paginate to handle PRs with many comments.
@@ -167,14 +195,8 @@ export async function readState(
   // because GitHub API returns issue comments in ascending chronological order.
   const lines = trimmed.split("\n").filter((l) => l.trim());
   const lastLine = lines[lines.length - 1];
-  let parsed: { id: number; body: string };
-  try {
-    parsed = JSON.parse(JSON.parse(lastLine)) as { id: number; body: string };
-  } catch {
-    return { found: false, corrupted: true, commentId: null };
-  }
-
-  if (typeof parsed?.id !== "number" || typeof parsed?.body !== "string") {
+  const parsed = parseStateCommentRecord(lastLine);
+  if (!parsed) {
     return { found: false, corrupted: true, commentId: null };
   }
 

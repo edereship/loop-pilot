@@ -29285,6 +29285,26 @@ function deserializeState(commentBody) {
     return null;
   }
 }
+function parseStateCommentRecord(line) {
+  function isRecord(value) {
+    return typeof value === "object" && value !== null && typeof value.id === "number" && typeof value.body === "string";
+  }
+  try {
+    const parsed = JSON.parse(line);
+    if (isRecord(parsed)) {
+      return parsed;
+    }
+    if (typeof parsed === "string") {
+      const nested = JSON.parse(parsed);
+      if (isRecord(nested)) {
+        return nested;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 async function readState(owner, name, pr2, token) {
   const { stdout } = await execFileAsync("gh", [
     "api",
@@ -29301,13 +29321,8 @@ async function readState(owner, name, pr2, token) {
   }
   const lines = trimmed.split("\n").filter((l2) => l2.trim());
   const lastLine = lines[lines.length - 1];
-  let parsed;
-  try {
-    parsed = JSON.parse(JSON.parse(lastLine));
-  } catch {
-    return { found: false, corrupted: true, commentId: null };
-  }
-  if (typeof parsed?.id !== "number" || typeof parsed?.body !== "string") {
+  const parsed = parseStateCommentRecord(lastLine);
+  if (!parsed) {
     return { found: false, corrupted: true, commentId: null };
   }
   const state = deserializeState(parsed.body);
@@ -29386,13 +29401,37 @@ async function fetchReviewComments(repoOwner, repoName, prNumber, githubToken) {
   if (!stdout.trim())
     return [];
   return stdout.trim().split("\n").filter((line) => line.trim()).flatMap((line) => {
-    try {
-      return [JSON.parse(JSON.parse(line))];
-    } catch {
+    const parsed = parseReviewCommentRecord(line);
+    if (!parsed) {
       warning(`[review-collector] Skipping unparseable comment line: ${line.slice(0, 120)}`);
       return [];
     }
+    return [parsed];
   });
+}
+function parseReviewCommentRecord(line) {
+  function isRecord(value) {
+    if (typeof value !== "object" || value === null)
+      return false;
+    const record = value;
+    const user = record.user;
+    return typeof record.id === "number" && typeof user === "object" && user !== null && typeof user.login === "string" && typeof record.body === "string" && typeof record.path === "string" && (typeof record.line === "number" || record.line === null) && typeof record.createdAt === "string";
+  }
+  try {
+    const parsed = JSON.parse(line);
+    if (isRecord(parsed)) {
+      return parsed;
+    }
+    if (typeof parsed === "string") {
+      const nested = JSON.parse(parsed);
+      if (isRecord(nested)) {
+        return nested;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 function filterAndParseComments(comments, botLogin, lastReceivedAt) {
   return comments.filter((comment) => comment.user.login === botLogin).filter((comment) => lastReceivedAt === null || comment.createdAt > lastReceivedAt).flatMap((comment) => {
@@ -29483,7 +29522,7 @@ function isLoop(currentFindings, findingsHashHistory) {
 }
 
 // dist/claude-fix-engine.js
-var MODEL = "claude-opus-4-0-20250514";
+var DEFAULT_CLAUDE_MODEL = "claude-opus-4-7";
 var EDIT_FILE_TOOL = {
   name: "edit_file",
   description: "Replace a specific code section in a file",
@@ -29499,7 +29538,7 @@ var EDIT_FILE_TOOL = {
   }
 };
 function buildSystemPrompt(iteration, maxIterations) {
-  const remainingIterations = maxIterations - iteration;
+  const remainingIterations = Math.max(1, maxIterations - iteration + 1);
   const conservativeNote = remainingIterations < 3 ? `
 IMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1 when iteration budget is limited.` : "";
   return `You are a senior software engineer fixing code review findings on a pull request.
@@ -29512,6 +29551,7 @@ Rules:
 - Do not change public APIs unless strictly necessary to fix a finding.
 - Preserve existing behavior outside the scope of each finding.
 - Each edit_file call must include an explanation of why the change fixes the finding.
+- If a minimal safe fix is possible, call edit_file. Do not answer with text only for fixable findings.
 - If a finding cannot be fixed safely without risking breakage, do NOT edit the file.
   Instead, respond with a text message explaining why the fix is unsafe.
 - You will be told the current iteration number and max iterations.${conservativeNote}`;
@@ -29534,6 +29574,21 @@ ${fileContent}
 ${findingsJson}
 
 Fix each finding above using the edit_file tool.`;
+}
+function buildClaudeRequest(prContext, filePath, fileContent, findings, iteration, maxIterations) {
+  return {
+    model: DEFAULT_CLAUDE_MODEL,
+    max_tokens: 8192,
+    system: buildSystemPrompt(iteration, maxIterations),
+    messages: [
+      {
+        role: "user",
+        content: buildUserPrompt(prContext, filePath, fileContent, findings, iteration, maxIterations)
+      }
+    ],
+    tools: [EDIT_FILE_TOOL],
+    tool_choice: { type: "auto" }
+  };
 }
 function getRetryDecision(error2, attempt) {
   if (error2 instanceof sdk_default.RateLimitError) {
@@ -29586,23 +29641,20 @@ function parseEditOperations(response) {
       explanation: input2.explanation
     }];
   });
+  if (edits.length === 0) {
+    return {
+      edits: [],
+      skippedReason: "Claude called edit_file, but all tool inputs were invalid."
+    };
+  }
   return { edits, skippedReason: null };
 }
 async function fixFile(client, prContext, filePath, fileContent, findings, iteration, maxIterations) {
-  const systemPrompt = buildSystemPrompt(iteration, maxIterations);
-  const userPrompt = buildUserPrompt(prContext, filePath, fileContent, findings, iteration, maxIterations);
   let attempt = 0;
   while (true) {
     attempt++;
     try {
-      const response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 8192,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-        tools: [EDIT_FILE_TOOL],
-        tool_choice: { type: "auto" }
-      });
+      const response = await client.messages.create(buildClaudeRequest(prContext, filePath, fileContent, findings, iteration, maxIterations));
       return parseEditOperations(response);
     } catch (error2) {
       const decision = getRetryDecision(error2, attempt);
@@ -29848,6 +29900,23 @@ async function runCheckCommand(checkCommand, modifiedFiles) {
       output: sanitizeOutput(combinedOutput)
     };
   }
+}
+
+// dist/stop-detail.js
+var NO_APPLICABLE_EDITS_DETAIL = "Claude returned no applicable edits for any selected file";
+function sanitizeDetail(text) {
+  return text.replace(/[\r\n]+/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/`{3,}/g, "``").trim();
+}
+function formatFileSkipReason(filePath, reason) {
+  const text = reason instanceof Error ? reason.message : String(reason);
+  return { filePath, reason: sanitizeDetail(text) };
+}
+function buildNoApplicableEditsDetail(skipReasons) {
+  if (skipReasons.length === 0) {
+    return NO_APPLICABLE_EDITS_DETAIL;
+  }
+  const reasons = skipReasons.slice(0, 3).map(({ filePath, reason }) => `${filePath}: ${sanitizeDetail(reason)}`).join("; ");
+  return `${NO_APPLICABLE_EDITS_DETAIL}. Reasons: ${reasons}`;
 }
 
 // dist/comment-poster.js
@@ -30118,6 +30187,7 @@ async function main() {
   };
   const allAppliedEdits = [];
   const skippedFiles = [];
+  const skipReasons = [];
   const modifiedFiles = [];
   const repoRoot = (0, import_node_path.resolve)(".");
   for (const [filePath, fileFindings] of selectedFiles) {
@@ -30147,6 +30217,7 @@ async function main() {
       if (fixResult.skippedReason) {
         warning(`[main-loop] Claude skipped ${filePath}: ${fixResult.skippedReason}`);
         skippedFiles.push(filePath);
+        skipReasons.push({ filePath, reason: fixResult.skippedReason });
         continue;
       }
       if (fixResult.edits.length === 0) {
@@ -30216,18 +30287,19 @@ async function main() {
     } catch (fileError) {
       error(`[main-loop] Error processing ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
       skippedFiles.push(filePath);
+      skipReasons.push(formatFileSkipReason(filePath, fileError));
       continue;
     }
   }
   if (allAppliedEdits.length === 0) {
     error("[main-loop] No edits applied. Stopping with claude_api_error.");
     const stoppedState = {
-      ...fixingState,
+      ...updatedStateBase,
       status: "stopped",
       stopReason: "claude_api_error"
     };
     await updateStateComment(config.repoOwner, config.repoName, commentId, stoppedState, config.githubToken);
-    await postStopComment(config.repoOwner, config.repoName, config.prNumber, "claude_api_error", triggerCommentId, findings.length, "Claude returned no applicable edits for any selected file", config.githubToken);
+    await postStopComment(config.repoOwner, config.repoName, config.prNumber, "claude_api_error", triggerCommentId, findings.length, buildNoApplicableEditsDetail(skipReasons), config.githubToken);
     return;
   }
   info(`[main-loop] Running check command: ${config.checkCommand}`);

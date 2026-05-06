@@ -105,6 +105,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Install dependencies for check command
+        if: hashFiles('package-lock.json') != ''
+        run: npm ci
+
       - name: Run auto-fix loop
         uses: ./loop
         with:

@@ -6,7 +6,7 @@ export interface FixFileResult {
   skippedReason: string | null;
 }
 
-const MODEL = "claude-opus-4-0-20250514";
+export const DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101";
 
 const EDIT_FILE_TOOL: Anthropic.Tool = {
   name: "edit_file",
@@ -23,8 +23,8 @@ const EDIT_FILE_TOOL: Anthropic.Tool = {
   },
 };
 
-function buildSystemPrompt(iteration: number, maxIterations: number): string {
-  const remainingIterations = maxIterations - iteration;
+export function buildSystemPrompt(iteration: number, maxIterations: number): string {
+  const remainingIterations = Math.max(1, maxIterations - iteration + 1);
   const conservativeNote =
     remainingIterations < 3
       ? `\nIMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1 when iteration budget is limited.`
@@ -40,6 +40,7 @@ Rules:
 - Do not change public APIs unless strictly necessary to fix a finding.
 - Preserve existing behavior outside the scope of each finding.
 - Each edit_file call must include an explanation of why the change fixes the finding.
+- If a minimal safe fix is possible, call edit_file. Do not answer with text only for fixable findings.
 - If a finding cannot be fixed safely without risking breakage, do NOT edit the file.
   Instead, respond with a text message explaining why the fix is unsafe.
 - You will be told the current iteration number and max iterations.${conservativeNote}`;
@@ -75,6 +76,36 @@ ${fileContent}
 ${findingsJson}
 
 Fix each finding above using the edit_file tool.`;
+}
+
+export function buildClaudeRequest(
+  prContext: PrContext,
+  filePath: string,
+  fileContent: string,
+  findings: Finding[],
+  iteration: number,
+  maxIterations: number
+): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model: DEFAULT_CLAUDE_MODEL,
+    max_tokens: 8192,
+    system: buildSystemPrompt(iteration, maxIterations),
+    messages: [
+      {
+        role: "user",
+        content: buildUserPrompt(
+          prContext,
+          filePath,
+          fileContent,
+          findings,
+          iteration,
+          maxIterations
+        ),
+      },
+    ],
+    tools: [EDIT_FILE_TOOL],
+    tool_choice: { type: "auto" },
+  };
 }
 
 /**
@@ -140,7 +171,7 @@ function sleep(ms: number): Promise<void> {
  * Parse tool_use blocks from a Claude API response into EditOperation[].
  * Returns null if no tool calls were made (treat as skipped).
  */
-function parseEditOperations(
+export function parseEditOperations(
   response: Anthropic.Message
 ): { edits: EditOperation[]; skippedReason: string | null } {
   const toolUseBlocks = response.content.filter(
@@ -180,6 +211,13 @@ function parseEditOperations(
       }];
     });
 
+  if (edits.length === 0) {
+    return {
+      edits: [],
+      skippedReason: "Claude called edit_file, but all tool inputs were invalid.",
+    };
+  }
+
   return { edits, skippedReason: null };
 }
 
@@ -196,23 +234,22 @@ export async function fixFile(
   iteration: number,
   maxIterations: number
 ): Promise<FixFileResult> {
-  const systemPrompt = buildSystemPrompt(iteration, maxIterations);
-  const userPrompt = buildUserPrompt(prContext, filePath, fileContent, findings, iteration, maxIterations);
-
   let attempt = 0;
 
   while (true) {
     attempt++;
 
     try {
-      const response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 8192,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-        tools: [EDIT_FILE_TOOL],
-        tool_choice: { type: "auto" },
-      });
+      const response = await client.messages.create(
+        buildClaudeRequest(
+          prContext,
+          filePath,
+          fileContent,
+          findings,
+          iteration,
+          maxIterations
+        )
+      );
 
       return parseEditOperations(response);
     } catch (error) {

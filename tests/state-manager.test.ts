@@ -3,6 +3,7 @@ import {
   createInitialState,
   serializeState,
   deserializeState,
+  parseStateCommentRecord,
 } from "../src/state-manager.js";
 import type { ReviewState, FindingsHashEntry } from "../src/types.js";
 
@@ -100,6 +101,26 @@ describe("deserializeState", () => {
   it("returns null for a comment body with corrupted JSON", () => {
     const corruptedBody = `<!-- auto-review-state\n{not valid json\n-->`;
     expect(deserializeState(corruptedBody)).toBeNull();
+  });
+});
+
+describe("parseStateCommentRecord", () => {
+  it("parses a single JSON object line emitted by gh --jq", () => {
+    const body = serializeState(makeState({ status: "waiting_codex" }));
+    const line = JSON.stringify({ id: 123, body });
+
+    const parsed = parseStateCommentRecord(line);
+
+    expect(parsed).toEqual({ id: 123, body });
+  });
+
+  it("parses a JSON-encoded string line for compatibility", () => {
+    const body = serializeState(makeState({ status: "waiting_codex" }));
+    const line = JSON.stringify(JSON.stringify({ id: 456, body }));
+
+    const parsed = parseStateCommentRecord(line);
+
+    expect(parsed).toEqual({ id: 456, body });
   });
 });
 

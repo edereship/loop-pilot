@@ -16,6 +16,10 @@ import { fixFile, retryFailedEdits } from "./claude-fix-engine.js";
 import { applyEdits } from "./edit-applier.js";
 import { runCheckCommand } from "./check-runner.js";
 import {
+  buildNoApplicableEditsDetail,
+  formatFileSkipReason,
+} from "./stop-detail.js";
+import {
   postFixSummary,
   postCompletionComment,
   postStopComment,
@@ -423,6 +427,7 @@ async function main(): Promise<void> {
 
   const allAppliedEdits: EditOperation[] = [];
   const skippedFiles: string[] = [];
+  const skipReasons: { filePath: string; reason: string }[] = [];
 
   // Track modified files for rollback if check fails
   const modifiedFiles: string[] = [];
@@ -479,6 +484,7 @@ async function main(): Promise<void> {
         `[main-loop] Claude skipped ${filePath}: ${fixResult.skippedReason}`
       );
       skippedFiles.push(filePath);
+      skipReasons.push({ filePath, reason: fixResult.skippedReason });
       continue;
     }
 
@@ -597,6 +603,7 @@ async function main(): Promise<void> {
       // to prevent leaving state stuck in "fixing"
       core.error(`[main-loop] Error processing ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
       skippedFiles.push(filePath);
+      skipReasons.push(formatFileSkipReason(filePath, fileError));
       continue;
     }
   }
@@ -604,8 +611,10 @@ async function main(): Promise<void> {
   // If no edits were applied across all files → stop with claude_api_error
   if (allAppliedEdits.length === 0) {
     core.error("[main-loop] No edits applied. Stopping with claude_api_error.");
+    // No file changed, so do not consume an iteration or persist the findings hash.
+    // Otherwise a manual retry of the same Codex finding would be stopped by loop detection.
     const stoppedState: ReviewState = {
-      ...fixingState,
+      ...updatedStateBase,
       status: "stopped",
       stopReason: "claude_api_error",
     };
@@ -623,7 +632,7 @@ async function main(): Promise<void> {
       "claude_api_error",
       triggerCommentId,
       findings.length,
-      "Claude returned no applicable edits for any selected file",
+      buildNoApplicableEditsDetail(skipReasons),
       config.githubToken
     );
     return;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   filterAndParseComments,
+  parseReviewCommentRecord,
   shouldStabilizeReviewComments,
   stabilizeReviewComments,
 } from "../src/review-collector";
@@ -21,6 +22,26 @@ function makeComment(
     ...overrides,
   };
 }
+
+describe("parseReviewCommentRecord", () => {
+  it("parses a single JSON object line emitted by gh --jq", () => {
+    const comment = makeComment({ id: 10, body: "P1 Existing issue" });
+    const line = JSON.stringify(comment);
+
+    const parsed = parseReviewCommentRecord(line);
+
+    expect(parsed).toEqual(comment);
+  });
+
+  it("parses a JSON-encoded string line for compatibility", () => {
+    const comment = makeComment({ id: 11, body: "P1 Existing issue" });
+    const line = JSON.stringify(JSON.stringify(comment));
+
+    const parsed = parseReviewCommentRecord(line);
+
+    expect(parsed).toEqual(comment);
+  });
+});
 
 describe("filterAndParseComments", () => {
   it("extracts P0 and P1 findings from Codex bot comments", () => {

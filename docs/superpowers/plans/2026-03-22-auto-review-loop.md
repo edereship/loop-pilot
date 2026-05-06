@@ -1694,7 +1694,7 @@ async function callWithRetry(
   for (let attempt = 0; attempt <= 3; attempt++) {
     try {
       return await client.messages.create({
-        model: "claude-opus-4-0-20250514",
+        model: "claude-opus-4-5-20251101",
         max_tokens: 4096,
         system: SYSTEM_PROMPT,
         tools: [EDIT_FILE_TOOL],
