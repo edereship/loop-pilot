@@ -11,7 +11,7 @@ name: Auto Review Init
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, labeled]
 
 permissions:
   contents: read
@@ -20,7 +20,22 @@ permissions:
 
 jobs:
   init:
-    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    # Label-based opt-in:
+    #   - vars.AUTO_REVIEW_LABEL == ''  → gating disabled (PoC compat: every non-fork ready PR triggers init)
+    #   - vars.AUTO_REVIEW_LABEL set    → PR must already carry the label, AND for `labeled` events the
+    #     just-added label must match (so adding an unrelated label to a PR-without-the-gate-label is a no-op)
+    if: >
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        vars.AUTO_REVIEW_LABEL == '' ||
+        contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL)
+      ) &&
+      (
+        github.event.action != 'labeled' ||
+        vars.AUTO_REVIEW_LABEL == '' ||
+        github.event.label.name == vars.AUTO_REVIEW_LABEL
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

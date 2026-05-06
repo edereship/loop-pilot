@@ -21,6 +21,8 @@ export interface Config {
   triggerCommentBody: string;
   prHeadRef: string;
   prTitle: string;
+  // Empty string = label gating disabled (PoC compatibility); non-empty = only PRs with this label proceed.
+  autoReviewLabel: string;
 }
 
 export function loadConfig(): Config {
@@ -73,6 +75,7 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
+    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
   };
 }
 

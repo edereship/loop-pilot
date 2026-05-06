@@ -19,7 +19,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 
 | Issue | 優先度 | 分類 | 概要 |
 |------|--------|------|------|
-| TY-137 | High | 必須 / 仕様判断 | ラベル付き PR のみ auto-review を起動する opt-in 運用 |
+| TY-137 | High | 実装済み / 設定 | ラベル付き PR のみ auto-review を起動する opt-in 運用（`AUTO_REVIEW_LABEL` Repository variable で制御） |
 | TY-138 | High | 必須 / テスト | 複数 Codex 指摘を受けた場合の auto-fix loop テスト |
 | TY-139 | High | 必須 / 実装 | hidden comment の楽観ロック + TOCTOU 対策 |
 | TY-140 | High | 必須 / 運用判断 | Claude API retry / cost limit / spending guard |
@@ -35,7 +35,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 
 ## 設計上の修正が必要な項目（本番移植前に必須）
 
-- [ ] ラベル付き PR のみ auto-review を起動するか決め、実装する（TY-137）
+- [x] ラベル付き PR のみ auto-review を起動する opt-in を実装する（TY-137 — `AUTO_REVIEW_LABEL` Repository variable で有効化、未設定時は従来通り全 PR で起動）
 - [ ] 複数 Codex 指摘を受けた場合の auto-fix loop テストを追加する（TY-138）
 - [ ] インラインコメントの取得範囲フィルタの検証（`created_at` ベースのフィルタが期待通り動作するか。TY-138 の複数指摘テストに含める）
 - [ ] Claude API エラー時のリトライ戦略の実装・チューニング（TY-140）

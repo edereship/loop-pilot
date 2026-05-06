@@ -66,6 +66,10 @@ inputs:
     description: "Number of consecutive stable polls before considering comments settled"
     required: false
     default: "3"
+  auto-review-label:
+    description: "If non-empty, only PRs currently carrying this label proceed. Empty disables label gating (PoC default)."
+    required: false
+    default: ""
   github-repository:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false

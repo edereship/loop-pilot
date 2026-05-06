@@ -13,6 +13,22 @@ describe("Workflow A trigger guard", () => {
     expect(initWorkflow).toContain("codex-review-request-token:");
     expect(initWorkflow).toContain("secrets.CODEX_REVIEW_REQUEST_TOKEN");
   });
+
+  it("listens for the labeled event so adding the gate label can start auto-review", () => {
+    expect(initWorkflow).toContain("types: [opened, ready_for_review, labeled]");
+  });
+
+  it("disables label gating only when AUTO_REVIEW_LABEL is empty", () => {
+    expect(initWorkflow).toContain("vars.AUTO_REVIEW_LABEL == ''");
+    expect(initWorkflow).toContain(
+      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL)",
+    );
+  });
+
+  it("ignores `labeled` events for unrelated labels when gating is enabled", () => {
+    expect(initWorkflow).toContain("github.event.action != 'labeled'");
+    expect(initWorkflow).toContain("github.event.label.name == vars.AUTO_REVIEW_LABEL");
+  });
 });
 
 describe("Workflow B trigger guard", () => {
@@ -48,5 +64,20 @@ describe("Workflow B trigger guard", () => {
   it("keeps explicit fallback checks for the default Codex bot and review marker", () => {
     expect(loopWorkflow).toContain("github.event.comment.user.login == 'chatgpt-codex-connector[bot]'");
     expect(loopWorkflow).toContain("contains(github.event.comment.body, 'Codex Review')");
+  });
+
+  it("does not run auto-fix unless the PR carries AUTO_REVIEW_LABEL (when set)", () => {
+    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_LABEL == ''");
+    expect(loopWorkflow).toContain(
+      "contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL)",
+    );
+    expect(loopWorkflow).toContain(
+      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL)",
+    );
+  });
+
+  it("forwards AUTO_REVIEW_LABEL to the loop action for runtime re-check", () => {
+    expect(loopWorkflow).toContain("auto-review-label:");
+    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_LABEL || ''");
   });
 });

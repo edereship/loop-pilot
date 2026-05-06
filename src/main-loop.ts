@@ -27,6 +27,7 @@ import {
   postInitIncompleteComment,
   postCodexReviewRequest,
 } from "./comment-poster.js";
+import { fetchPrLabels, isAutoReviewAllowed } from "./pr-labels.js";
 import type { Finding, EditOperation, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
@@ -97,6 +98,25 @@ async function main(): Promise<void> {
   core.info(
     `[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`
   );
+
+  // ─── Phase 0: Label gate (opt-in for production) ─────────────────────────
+  // Re-check labels at run time even though the workflow `if` already filtered:
+  // a maintainer may have removed the gate label after Codex posted its review.
+  // When config.autoReviewLabel is empty, gating is disabled (PoC compatibility).
+  if (config.autoReviewLabel !== "") {
+    const labels = await fetchPrLabels(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      config.githubToken,
+    );
+    if (!isAutoReviewAllowed(config.autoReviewLabel, labels)) {
+      core.info(
+        `[main-loop] Required label '${config.autoReviewLabel}' is not present on PR #${config.prNumber}. Skipping (no state mutation, no fix).`,
+      );
+      return;
+    }
+  }
 
   // ─── Phase 1: State + Guard ──────────────────────────────────────────────
 
