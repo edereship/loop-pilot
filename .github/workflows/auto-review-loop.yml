@@ -35,14 +35,14 @@ jobs:
     # is performed inside loop main):
     #   - vars.AUTO_REVIEW_FULL_AUTO == 'true' → gate disabled, every non-fork PR proceeds
     #   - otherwise (default) → PR must carry the gate label
-    #     `vars.AUTO_REVIEW_LABEL || 'auto-review'`.
+    #     `vars.AUTO_REVIEW_LABEL || 'auto-review-fix'`.
     #     `issue_comment.created` exposes labels under github.event.issue.labels;
     #     `pull_request_review.submitted` under github.event.pull_request.labels.
     if: >
       (
         vars.AUTO_REVIEW_FULL_AUTO == 'true' ||
-        contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review') ||
-        contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')
+        contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') ||
+        contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')
       ) &&
       (
         (

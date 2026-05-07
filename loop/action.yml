@@ -67,7 +67,7 @@ inputs:
     required: false
     default: "3"
   auto-review-label:
-    description: "Label name required to run auto-review. Empty falls back to 'auto-review'."
+    description: "Label name required to run auto-review-fix loop. Empty falls back to 'auto-review-fix'."
     required: false
     default: ""
   auto-review-full-auto:

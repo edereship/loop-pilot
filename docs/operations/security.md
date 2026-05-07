@@ -34,10 +34,10 @@ PR #7 の実環境では上記値で Codex review を検知できた。未設定
 
 ## ラベル付き PR のみ起動する運用（default-strict + full-auto opt-out）
 
-本番リポジトリで意図しない PR に Codex review / Claude auto-fix loop が走らないよう、デフォルトで「`auto-review` ラベルが付いた PR でのみ起動」する仕様（TY-137）。完全自動化したい場合のみ opt-out できる。
+本番リポジトリで意図しない PR に Codex review / Claude auto-fix loop が走らないよう、デフォルトで「`auto-review-fix` ラベルが付いた PR でのみ起動」する仕様（TY-137）。完全自動化したい場合のみ opt-out できる。
 
 **仕様:**
-- **デフォルト挙動はラベル必須**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review` ラベルを要求する
+- **デフォルト挙動はラベル必須**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review-fix` ラベルを要求する。ラベル名はレビューだけでなく Claude による自動修正までを示すため `auto-review-fix` を採用する
 - カスタムラベル名を使いたい場合は Repository variable `AUTO_REVIEW_LABEL` にラベル名を設定する。ラベル名の変更は variable の値を書き換えるだけで完結し、workflow YAML の修正は不要
 - 完全自動化（label gate を無効化して全 PR で起動）したい場合のみ Repository variable `AUTO_REVIEW_FULL_AUTO=true` を設定する
 - ラベル比較は case-insensitive（workflow YAML の `contains()` と整合）

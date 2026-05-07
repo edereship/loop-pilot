@@ -29103,7 +29103,7 @@ function info(message) {
 }
 
 // dist/config.js
-var DEFAULT_AUTO_REVIEW_LABEL = "auto-review";
+var DEFAULT_AUTO_REVIEW_LABEL = "auto-review-fix";
 function loadConfig() {
   return {
     ...loadBaseConfig(),

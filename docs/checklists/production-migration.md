@@ -35,7 +35,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 
 ## 設計上の修正が必要な項目（本番移植前に必須）
 
-- [x] ラベル付き PR のみ auto-review を起動する default-strict を実装する（TY-137 — デフォルトで `auto-review` ラベル必須。`AUTO_REVIEW_LABEL` でラベル名カスタマイズ、`AUTO_REVIEW_FULL_AUTO=true` で全 PR opt-out）
+- [x] ラベル付き PR のみ auto-review を起動する default-strict を実装する（TY-137 — デフォルトで `auto-review-fix` ラベル必須。`AUTO_REVIEW_LABEL` でラベル名カスタマイズ、`AUTO_REVIEW_FULL_AUTO=true` で全 PR opt-out）
 - [ ] 複数 Codex 指摘を受けた場合の auto-fix loop テストを追加する（TY-138）
 - [ ] インラインコメントの取得範囲フィルタの検証（`created_at` ベースのフィルタが期待通り動作するか。TY-138 の複数指摘テストに含める）
 - [ ] Claude API エラー時のリトライ戦略の実装・チューニング（TY-140）

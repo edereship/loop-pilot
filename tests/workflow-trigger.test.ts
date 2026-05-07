@@ -18,9 +18,9 @@ describe("Workflow A trigger guard", () => {
     expect(initWorkflow).toContain("types: [opened, ready_for_review, labeled]");
   });
 
-  it("requires the gate label by default and falls back to 'auto-review'", () => {
+  it("requires the gate label by default and falls back to 'auto-review-fix'", () => {
     expect(initWorkflow).toContain(
-      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')",
+      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
     );
   });
 
@@ -37,7 +37,7 @@ describe("Workflow A trigger guard", () => {
 
   it("ignores `labeled` events for unrelated labels when the gate is enabled", () => {
     expect(initWorkflow).toContain(
-      "github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review')",
+      "github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
     );
   });
 });
@@ -77,12 +77,12 @@ describe("Workflow B trigger guard", () => {
     expect(loopWorkflow).toContain("contains(github.event.comment.body, 'Codex Review')");
   });
 
-  it("requires the gate label by default with 'auto-review' fallback for both event types", () => {
+  it("requires the gate label by default with 'auto-review-fix' fallback for both event types", () => {
     expect(loopWorkflow).toContain(
-      "contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')",
+      "contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
     );
     expect(loopWorkflow).toContain(
-      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')",
+      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
     );
   });
 

@@ -25,7 +25,7 @@ jobs:
     #     triggers init. `labeled` events are ignored so adding any label does NOT reset
     #     state and re-post `@codex review`.
     #   - otherwise (default) → PR must carry the gate label
-    #     `vars.AUTO_REVIEW_LABEL || 'auto-review'`. For `labeled` events, the added
+    #     `vars.AUTO_REVIEW_LABEL || 'auto-review-fix'`. For `labeled` events, the added
     #     label itself must match the gate label (adding an unrelated label is a no-op).
     if: >
       github.event.pull_request.draft == false &&
@@ -34,8 +34,8 @@ jobs:
         (vars.AUTO_REVIEW_FULL_AUTO == 'true' && github.event.action != 'labeled') ||
         (
           vars.AUTO_REVIEW_FULL_AUTO != 'true' &&
-          contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review') &&
-          (github.event.action != 'labeled' || github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review'))
+          contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') &&
+          (github.event.action != 'labeled' || github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review-fix'))
         )
       )
     runs-on: ubuntu-latest

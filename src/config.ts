@@ -28,8 +28,12 @@ export interface Config {
   autoReviewFullAuto: boolean;
 }
 
-/** Fallback label name used when the user has not configured AUTO_REVIEW_LABEL. */
-export const DEFAULT_AUTO_REVIEW_LABEL = "auto-review";
+/**
+ * Fallback label name used when the user has not configured AUTO_REVIEW_LABEL.
+ * "auto-review-fix" reflects that the label triggers the full Codex review +
+ * Claude auto-fix loop, not just a review.
+ */
+export const DEFAULT_AUTO_REVIEW_LABEL = "auto-review-fix";
 
 export function loadConfig(): Config {
   return {

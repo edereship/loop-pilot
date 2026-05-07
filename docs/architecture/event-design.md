@@ -32,8 +32,8 @@ if: >
     (vars.AUTO_REVIEW_FULL_AUTO == 'true' && github.event.action != 'labeled') ||
     (
       vars.AUTO_REVIEW_FULL_AUTO != 'true' &&
-      contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review') &&
-      (github.event.action != 'labeled' || github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review'))
+      contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') &&
+      (github.event.action != 'labeled' || github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review-fix'))
     )
   )
 ```
@@ -41,10 +41,10 @@ if: >
 - draft PR では自動レビューを起動しない。作成途中のコードに対して Codex レビュー → Claude 修正が走ることを防ぐ
 - `ready_for_review` イベントは draft → ready 変換時に発火するため、draft 解除後に初回レビューが起動する
 - fork PR では自動レビューを起動しない。外部コードに対して token を持つ auto-fix loop を開始しないため
-- **デフォルト挙動はラベル必須（default-strict）**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review` ラベルを要求する。`AUTO_REVIEW_LABEL` を設定すれば任意のラベル名へ変更可能
+- **デフォルト挙動はラベル必須（default-strict）**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review-fix` ラベルを要求する（ラベル名は Codex レビュー＋ Claude 自動修正の両方を示すため `auto-review-fix`）。`AUTO_REVIEW_LABEL` を設定すれば任意のラベル名へ変更可能
 - 完全自動化（全 PR で起動）にしたい場合のみ `AUTO_REVIEW_FULL_AUTO=true` を Repository variable で設定する。設定すると label gate が無効化され、すべての非 fork ready PR で Workflow A が起動する
 - `AUTO_REVIEW_FULL_AUTO=true` 時は `labeled` イベントを Workflow A の起動条件から除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューと余分な auto-fix サイクルが起きるのを防ぐ
-- gate 有効時の `labeled` イベントは、付与されたラベルが要求ラベル（`AUTO_REVIEW_LABEL || 'auto-review'`）と一致する場合だけ起動する。無関係なラベルが追加されただけでは Workflow A は走らない
+- gate 有効時の `labeled` イベントは、付与されたラベルが要求ラベル（`AUTO_REVIEW_LABEL || 'auto-review-fix'`）と一致する場合だけ起動する。無関係なラベルが追加されただけでは Workflow A は走らない
 
 役割:
 - hidden comment で状態を初期化（`status: initialized`, `iteration_count: 0`）
@@ -76,8 +76,8 @@ on:
 if: >
   (
     vars.AUTO_REVIEW_FULL_AUTO == 'true' ||
-    contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review') ||
-    contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')
+    contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') ||
+    contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')
   ) &&
   (
     (
@@ -116,7 +116,7 @@ if: >
 - PR に紐づく `issue_comment` または `pull_request_review` であること
 - Codex bot の投稿であること（`CODEX_BOT_LOGIN` Repository variable で制御）
 - レビュー本文または総評コメントに `CODEX_REVIEW_MARKER` Repository variable の文言を含むこと
-- `AUTO_REVIEW_FULL_AUTO != 'true'` の場合（デフォルト）はトリガー payload の labels（`issue_comment` は `github.event.issue.labels`、`pull_request_review` は `github.event.pull_request.labels`）に `AUTO_REVIEW_LABEL || 'auto-review'` が含まれていること
+- `AUTO_REVIEW_FULL_AUTO != 'true'` の場合（デフォルト）はトリガー payload の labels（`issue_comment` は `github.event.issue.labels`、`pull_request_review` は `github.event.pull_request.labels`）に `AUTO_REVIEW_LABEL || 'auto-review-fix'` が含まれていること
 - `AUTO_REVIEW_FULL_AUTO == 'true'` の場合は label 確認をスキップ
 
 > **ランタイム再確認:** YAML の `if` で評価される labels は trigger 時点のスナップショットなので、Codex 投稿後にラベルが外された場合は Workflow B の TS 側で再度 `GET /repos/{owner}/{repo}/issues/{pr}/labels` を呼び、ラベルが残っているかを確認する。残っていない場合は state を変えずに早期 return する（後述「Phase 0 ラベルゲート」）。
@@ -125,7 +125,7 @@ if: >
 
 - `CODEX_BOT_LOGIN=chatgpt-codex-connector[bot]`
 - `CODEX_REVIEW_MARKER=Codex Review`
-- `AUTO_REVIEW_LABEL=auto-review`（カスタムラベル名を使う場合のみ。未設定なら `auto-review` をフォールバック使用）
+- `AUTO_REVIEW_LABEL=auto-review-fix`（カスタムラベル名を使う場合のみ。未設定なら `auto-review-fix` をフォールバック使用）
 - `AUTO_REVIEW_FULL_AUTO=true`（label gate を無効化して全 PR で起動したい場合のみ）
 
 PR #7 の実環境では上記推奨値で Codex review を検知できた。
@@ -193,7 +193,7 @@ Workflow B は GitHub API で取得した `.head.repo.full_name` が空または
 **Phase 0: ラベルゲート（default-strict, full-auto opt-out）**
 - `AUTO_REVIEW_FULL_AUTO == true` の場合は本フェーズをスキップ
 - それ以外（デフォルト）では `GET /repos/{owner}/{repo}/issues/{pr}/labels` で現在のラベルを取得
-- 起動ラベル `AUTO_REVIEW_LABEL || 'auto-review'` が付いていなければ、state を変更せずに即 return（hidden comment や findings は触らない）
+- 起動ラベル `AUTO_REVIEW_LABEL || 'auto-review-fix'` が付いていなければ、state を変更せずに即 return（hidden comment や findings は触らない）
 - ラベル比較は case-insensitive で workflow YAML の `contains()` と整合させる
 
 **Phase 1: レビュー受信・集約**
