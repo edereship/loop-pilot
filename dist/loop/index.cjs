@@ -29452,7 +29452,7 @@ function parseReviewCommentRecord(line) {
 function filterAndParseComments(comments, botLogin, lastReceivedAt) {
   return comments.filter((comment) => comment.user.login === botLogin).filter((comment) => lastReceivedAt === null || comment.createdAt > lastReceivedAt).flatMap((comment) => {
     const parsed = parseSeverity(comment.body);
-    if (parsed.severity !== "P0" && parsed.severity !== "P1") {
+    if (parsed.severity !== "P0" && parsed.severity !== "P1" && parsed.severity !== "P2") {
       return [];
     }
     const finding = {
@@ -29503,7 +29503,7 @@ function countRelevantBotComments(comments, botLogin, lastReceivedAt) {
 function summaryMayContainFindings(body) {
   const normalized = body.toLowerCase();
   const noFindingsPatterns = [
-    /\bno\s+p0\s*\/\s*p1\s+findings?\b/i,
+    /\bno\s+p0\s*\/\s*p1(?:\s*\/\s*p2)?\s+findings?\b/i,
     /\bno\s+findings?\b/i,
     /\b0\s+findings?\b/i,
     /\bno\s+issues?\b/i,
@@ -29513,7 +29513,7 @@ function summaryMayContainFindings(body) {
   if (noFindingsPatterns.some((pattern) => pattern.test(body))) {
     return false;
   }
-  return /\bp0\b/i.test(body) || /\bp1\b/i.test(body) || /\bfindings?\b/.test(normalized) || /\bissues?\b/.test(normalized) || /指摘|問題|検出/.test(body);
+  return /\bp0\b/i.test(body) || /\bp1\b/i.test(body) || /\bp2\b/i.test(body) || /\bfindings?\b/.test(normalized) || /\bissues?\b/.test(normalized) || /指摘|問題|検出/.test(body);
 }
 
 // dist/findings-hash.js
@@ -29556,13 +29556,13 @@ var EDIT_FILE_TOOL = {
 function buildSystemPrompt(iteration, maxIterations) {
   const remainingIterations = Math.max(1, maxIterations - iteration + 1);
   const conservativeNote = remainingIterations < 3 ? `
-IMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1 when iteration budget is limited.` : "";
+IMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1, then P2 when iteration budget is limited.` : "";
   return `You are a senior software engineer fixing code review findings on a pull request.
-You will receive Codex review findings (P0/P1 severity) and the source file content.
+You will receive Codex review findings (P0/P1/P2 severity) and the source file content.
 Use the edit_file tool to make precise, minimal fixes for each finding.
 
 Rules:
-- Fix ONLY the listed P0/P1 findings. Do not fix anything else.
+- Fix ONLY the listed P0/P1/P2 findings. Do not fix anything else.
 - Do not perform unrelated refactors, style changes, or improvements.
 - Do not change public APIs unless strictly necessary to fix a finding.
 - Preserve existing behavior outside the scope of each finding.
@@ -29940,7 +29940,7 @@ var import_node_child_process4 = require("node:child_process");
 var import_node_util4 = require("node:util");
 var execFileAsync3 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
 var STOP_REASON_LABELS = {
-  no_findings: "no P0/P1 findings",
+  no_findings: "no P0/P1/P2 findings",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
   loop_detected: "same findings detected in loop",
   claude_api_error: "Claude API error",
@@ -29983,7 +29983,7 @@ async function postCompletionComment(owner, name, pr2, iterations, token) {
   const body = `Auto-review completed.
 
 Iterations: ${iterations}
-All P0/P1 findings have been resolved.`;
+All P0/P1/P2 findings have been resolved.`;
   return postComment(owner, name, pr2, body, token);
 }
 async function postStopComment(owner, name, pr2, stopReason, reviewId, remainingFindings, detail, token) {
@@ -29993,7 +29993,7 @@ async function postStopComment(owner, name, pr2, stopReason, reviewId, remaining
     "",
     `Reason: ${formattedReason}`,
     `Last processed Codex review: #${reviewId}`,
-    `Open P0/P1 findings remaining: ${remainingFindings}`,
+    `Open P0/P1/P2 findings remaining: ${remainingFindings}`,
     `Detail: ${detail}`,
     "Recommendation: manual intervention required."
   ].join("\n");
@@ -30054,21 +30054,22 @@ var HARD_RESET_REASONS = /* @__PURE__ */ new Set([
   "loop_detected"
 ]);
 function isResetCommandLike(body) {
-  return /^\/reset-review(?:\s|$)/.test(body.trimStart());
+  return /^\/reset-review(?:\s|$)/i.test(body.trimStart());
 }
 function parseResetCommand(body) {
   const trimmed = body.trim();
-  if (!trimmed.startsWith("/reset-review")) {
+  if (!trimmed.toLowerCase().startsWith("/reset-review")) {
     return { isReset: false };
   }
   const parts = trimmed.split(/\s+/);
-  if (parts[0] !== "/reset-review") {
+  if (parts[0].toLowerCase() !== "/reset-review") {
     return { isReset: false };
   }
+  const option = parts[1]?.toLowerCase();
   if (parts.length === 1) {
     return { isReset: true, mode: "soft" };
   }
-  if (parts.length === 2 && parts[1] === "--hard") {
+  if (parts.length === 2 && option === "--hard") {
     return { isReset: true, mode: "hard" };
   }
   return { isReset: true, invalidReason: "unsupported_option" };
@@ -30381,7 +30382,7 @@ async function main() {
     log: (message) => info(message)
   });
   const findings = filterAndParseComments(rawComments, config.codexBotLogin, state.lastCodexReviewReceivedAt);
-  info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
+  info(`[main-loop] Found ${findings.length} P0/P1/P2 findings.`);
   const latestCommentTime = rawComments.filter((c2) => c2.user.login === config.codexBotLogin).reduce((max, c2) => c2.createdAt > max ? c2.createdAt : max, state.lastCodexReviewReceivedAt ?? "");
   const updatedStateBase = {
     ...state,
@@ -30592,7 +30593,7 @@ async function main() {
     (0, import_node_child_process7.execFileSync)("git", [
       "commit",
       "-m",
-      `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})
+      `fix: auto-resolve P0/P1/P2 findings from Codex review (iteration ${fixingState.iterationCount})
 
 ${commitBody}`
     ], { stdio: "inherit" });

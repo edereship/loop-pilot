@@ -42,6 +42,8 @@ describe("parseResetCommand", () => {
   it("parses soft and hard reset commands only when they are standalone lines", () => {
     expect(parseResetCommand("/reset-review")).toEqual({ isReset: true, mode: "soft" });
     expect(parseResetCommand("/reset-review --hard")).toEqual({ isReset: true, mode: "hard" });
+    expect(parseResetCommand("/Reset-Review")).toEqual({ isReset: true, mode: "soft" });
+    expect(parseResetCommand("/RESET-REVIEW --hard")).toEqual({ isReset: true, mode: "hard" });
     expect(parseResetCommand(" /reset-review ")).toEqual({ isReset: true, mode: "soft" });
     expect(parseResetCommand("please /reset-review")).toEqual({ isReset: false });
     expect(parseResetCommand("/reset-review now")).toEqual({
@@ -52,6 +54,7 @@ describe("parseResetCommand", () => {
 
   it("detects reset-like comments broadly for workflow/runtime dispatch", () => {
     expect(isResetCommandLike("/reset-review")).toBe(true);
+    expect(isResetCommandLike("/Reset-Review")).toBe(true);
     expect(isResetCommandLike("/reset-review --hard")).toBe(true);
     expect(isResetCommandLike("/reset-review --force")).toBe(true);
     expect(isResetCommandLike("/reset-reviewing")).toBe(false);

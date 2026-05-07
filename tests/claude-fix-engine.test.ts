@@ -48,6 +48,8 @@ describe("buildClaudeRequest", () => {
     expect(request.tools?.[0]?.name).toBe("edit_file");
     expect(request.tool_choice).toEqual({ type: "auto" });
     expect(request.system).toContain("If a minimal safe fix is possible, call edit_file");
+    expect(request.system).toContain("P0/P1/P2 severity");
+    expect(request.system).toContain("Fix ONLY the listed P0/P1/P2 findings");
   });
 });
 

@@ -42,20 +42,22 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
     },
   ];
 
-  it("extracts only P0/P1 findings from Codex bot, ignoring P2 and humans", () => {
+  it("extracts P0/P1/P2 findings from Codex bot, ignoring humans", () => {
     const findings = filterAndParseComments(mockComments, codexBot, null);
-    expect(findings).toHaveLength(2);
+    expect(findings).toHaveLength(3);
     expect(findings[0].severity).toBe("P0");
     expect(findings[0].path).toBe("src/auth/session.ts");
     expect(findings[0].title).toBe("Token refresh path can bypass expiry validation");
     expect(findings[0].body).not.toContain("Useful?");
     expect(findings[1].severity).toBe("P1");
+    expect(findings[2].severity).toBe("P2");
   });
 
   it("filters by time when lastReceivedAt is provided", () => {
     const findings = filterAndParseComments(mockComments, codexBot, "2026-03-20T11:05:15Z");
-    expect(findings).toHaveLength(1);
+    expect(findings).toHaveLength(2);
     expect(findings[0].severity).toBe("P1");
+    expect(findings[1].severity).toBe("P2");
   });
 
   it("computes hash and detects no loop on first iteration", () => {

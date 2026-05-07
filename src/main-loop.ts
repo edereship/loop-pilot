@@ -311,13 +311,13 @@ async function main(): Promise<void> {
     state.lastCodexReviewReceivedAt
   );
 
-  core.info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
+  core.info(`[main-loop] Found ${findings.length} P0/P1/P2 findings.`);
 
   // ─── Phase 2: Judge ───────────────────────────────────────────────────────
 
   // Note: iterationCount is NOT incremented here.
   // It is incremented only after a successful Claude fix (Phase 3).
-  // Spec: "If the initial review has 0 P0/P1, iterationCount is 0."
+  // Spec: "If the initial review has 0 P0/P1/P2, iterationCount is 0."
   // Use the latest Codex comment timestamp rather than processing start time,
   // so the next iteration's time filter does not skip comments posted during processing
   const latestCommentTime = rawComments
@@ -733,7 +733,7 @@ async function main(): Promise<void> {
       [
         "commit",
         "-m",
-        `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})\n\n${commitBody}`,
+        `fix: auto-resolve P0/P1/P2 findings from Codex review (iteration ${fixingState.iterationCount})\n\n${commitBody}`,
       ],
       { stdio: "inherit" }
     );

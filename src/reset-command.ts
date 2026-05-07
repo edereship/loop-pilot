@@ -27,23 +27,24 @@ export type ResetParseResult =
   | { isReset: true; invalidReason: "unsupported_option" };
 
 export function isResetCommandLike(body: string): boolean {
-  return /^\/reset-review(?:\s|$)/.test(body.trimStart());
+  return /^\/reset-review(?:\s|$)/i.test(body.trimStart());
 }
 
 export function parseResetCommand(body: string): ResetParseResult {
   const trimmed = body.trim();
-  if (!trimmed.startsWith("/reset-review")) {
+  if (!trimmed.toLowerCase().startsWith("/reset-review")) {
     return { isReset: false };
   }
 
   const parts = trimmed.split(/\s+/);
-  if (parts[0] !== "/reset-review") {
+  if (parts[0].toLowerCase() !== "/reset-review") {
     return { isReset: false };
   }
+  const option = parts[1]?.toLowerCase();
   if (parts.length === 1) {
     return { isReset: true, mode: "soft" };
   }
-  if (parts.length === 2 && parts[1] === "--hard") {
+  if (parts.length === 2 && option === "--hard") {
     return { isReset: true, mode: "hard" };
   }
   return { isReset: true, invalidReason: "unsupported_option" };
