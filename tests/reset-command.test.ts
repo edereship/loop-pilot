@@ -221,6 +221,58 @@ describe("handleResetCommand", () => {
     expect(deps.updateStateComment).toHaveBeenCalled();
   });
 
+  it("accepts maintain-role users when AUTO_REVIEW_RESET_ROLES includes maintain", async () => {
+    // Regression: prior to using `.role_name`, the GitHub permission API
+    // collapsed `maintain` to `write`, so `AUTO_REVIEW_RESET_ROLES=maintain`
+    // never matched and maintain users were silently rejected.
+    const deps = makeDeps();
+    deps.getCollaboratorPermission.mockResolvedValue("maintain");
+
+    await handleResetCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 14,
+        triggerCommentId: 777,
+        triggerCommentBody: "/reset-review",
+        triggerUserLogin: "maintainer",
+        resetRoles: "maintain,admin",
+        githubToken: "token",
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    expect(deps.updateStateComment).toHaveBeenCalled();
+  });
+
+  it("rejects maintain-role users when only write is configured (role tiers are no longer collapsed)", async () => {
+    // Regression: write-tier configurations should not implicitly grant
+    // maintain users — the legacy `.permission` field hid this distinction.
+    const deps = makeDeps();
+    deps.getCollaboratorPermission.mockResolvedValue("maintain");
+
+    await handleResetCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 14,
+        triggerCommentId: 777,
+        triggerCommentBody: "/reset-review",
+        triggerUserLogin: "maintainer",
+        resetRoles: "write,admin",
+        githubToken: "token",
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    expect(deps.updateStateComment).not.toHaveBeenCalled();
+    expect(deps.postComment.mock.calls[0][3]).toContain(
+      "❌ Reset rejected: insufficient permission.",
+    );
+  });
+
   it("rejects insufficient permission without mutating state or adding a reaction", async () => {
     const deps = makeDeps();
     deps.getCollaboratorPermission.mockResolvedValue("read");

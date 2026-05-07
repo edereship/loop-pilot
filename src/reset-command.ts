@@ -365,7 +365,13 @@ async function getCollaboratorPermission(
         "api",
         `repos/${owner}/${repo}/collaborators/${user}/permission`,
         "--jq",
-        ".permission",
+        // `.permission` reports legacy base roles only: admin / write / read /
+        // none. Under that mapping `maintain` collapses to `write` and `triage`
+        // collapses to `read`, so reset roles configured as `maintain`/`triage`
+        // would never be matched. `.role_name` distinguishes all five tiers,
+        // so we prefer it and fall back to `.permission` on older API
+        // responses where `role_name` may be absent.
+        ".role_name // .permission",
       ],
       { env: buildGhEnv(token) },
     );
