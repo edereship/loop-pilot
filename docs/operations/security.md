@@ -46,6 +46,7 @@ PR #7 の実環境では上記値で Codex review を検知できた。未設定
 - ラベル未設定の PR が作成・ready になっても hidden comment 作成や `@codex review` 投稿は行わない
 - 後から起動ラベルを付けた瞬間（`pull_request.labeled`）に初回 `@codex review` が起動する
 - 無関係なラベルが追加されただけでは起動しない（追加されたラベルが `AUTO_REVIEW_LABEL` と一致する場合のみ）
+- `AUTO_REVIEW_LABEL` が未設定（gating disabled）の場合は `labeled` イベント自体を `if` で除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューが走らないようにするため
 
 **Workflow B（Codex レビュー受信トリガー）の挙動:**
 - workflow `if` で trigger payload の labels を確認し、ラベルがなければ即スキップ（fast skip）

@@ -29,13 +29,12 @@ if: >
   github.event.pull_request.draft == false &&
   github.event.pull_request.head.repo.full_name == github.repository &&
   (
-    vars.AUTO_REVIEW_LABEL == '' ||
-    contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL)
-  ) &&
-  (
-    github.event.action != 'labeled' ||
-    vars.AUTO_REVIEW_LABEL == '' ||
-    github.event.label.name == vars.AUTO_REVIEW_LABEL
+    (vars.AUTO_REVIEW_LABEL == '' && github.event.action != 'labeled') ||
+    (
+      vars.AUTO_REVIEW_LABEL != '' &&
+      contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL) &&
+      (github.event.action != 'labeled' || github.event.label.name == vars.AUTO_REVIEW_LABEL)
+    )
   )
 ```
 
@@ -43,7 +42,8 @@ if: >
 - `ready_for_review` イベントは draft → ready 変換時に発火するため、draft 解除後に初回レビューが起動する
 - fork PR では自動レビューを起動しない。外部コードに対して token を持つ auto-fix loop を開始しないため
 - Repository variable `AUTO_REVIEW_LABEL` が設定されている場合、その名前のラベルが PR に付いている時だけ起動する。未設定/空文字なら従来通り全 PR で起動する（PoC 互換）
-- `labeled` イベント時は、付与されたラベルが `AUTO_REVIEW_LABEL` と一致する場合だけ起動する。無関係なラベルが追加されただけでは Workflow A は走らない
+- `AUTO_REVIEW_LABEL` 未設定時は `labeled` イベントを Workflow A の起動条件から除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューと余分な auto-fix サイクルが起きるのを防ぐ
+- `AUTO_REVIEW_LABEL` 設定時の `labeled` イベントは、付与されたラベルが `AUTO_REVIEW_LABEL` と一致する場合だけ起動する。無関係なラベルが追加されただけでは Workflow A は走らない
 
 役割:
 - hidden comment で状態を初期化（`status: initialized`, `iteration_count: 0`）

@@ -25,6 +25,16 @@ describe("Workflow A trigger guard", () => {
     );
   });
 
+  it("ignores `labeled` events when AUTO_REVIEW_LABEL is empty (no double-init on label edits)", () => {
+    expect(initWorkflow).toContain(
+      "vars.AUTO_REVIEW_LABEL == '' && github.event.action != 'labeled'",
+    );
+  });
+
+  it("requires a non-empty AUTO_REVIEW_LABEL before enforcing the label-match branch", () => {
+    expect(initWorkflow).toContain("vars.AUTO_REVIEW_LABEL != ''");
+  });
+
   it("ignores `labeled` events for unrelated labels when gating is enabled", () => {
     expect(initWorkflow).toContain("github.event.action != 'labeled'");
     expect(initWorkflow).toContain("github.event.label.name == vars.AUTO_REVIEW_LABEL");

@@ -49,12 +49,27 @@ Recommendation: manual intervention required.
 ### 状態のリセットが必要なケース
 - `iteration_count >= MAX_REVIEW_ITERATIONS` で停止した場合: hidden comment の `iteration_count` を手動で 0 にリセットするか、コメントを削除して再初期化する
 - ループ検知で停止した場合: 人間の修正により指摘内容が変わるため、リセット不要。ただし `status` を `waiting_codex` に戻す
+- `claude_api_error` で停止した場合: 修正不能な指摘（バンドル再生成など TS ファイル編集では解消できないもの）が原因。人間がそのコミットを行った後、`status` を `waiting_codex` に戻し、`stopReason` を `null` にし、`lastProcessedReviewId` と `lastCodexReviewReceivedAt` を最新の Codex review に揃えてから `@codex review` を再投稿する
+- `test_failure` で停止した場合: 人間がテストを修正してから `status` を `waiting_codex` に戻して `@codex review` を再投稿する
+
+### hidden comment の手動編集（暫定手順）
+
+TY-144 が実装されるまでの暫定手順。**`maintainer` または PR 作成者のみ** 実施する。
+
+1. PR の hidden comment（`<!-- auto-review-state ... -->` を含むコメント）を特定する
+2. `gh api` で当該コメントの body を取得し JSON 部分を抽出する
+3. 必要なフィールドを変更（典型的には `status` を `waiting_codex` に、`stopReason` を `null` に）
+4. `gh api -X PATCH /repos/:owner/:repo/issues/comments/:id -f body=<新しい body>` で更新
+5. リセットの理由・操作者・対象 review ID を含む audit コメントを PR に投稿する
+6. PR に `@codex review` を投稿して検証を再開する
+
+> **Important:** TY-144 で `/reset-review` PR コマンドを実装した後はこの手動手順を廃止する。手動編集は state が壊れる事故が起きやすいため、運用に組み込まないこと。
 
 **PoC 段階:** 手動リカバリで十分。本番移植時に `/reset-review` のような PR コマンドを検討する。
 
-PR #7 では人間が再度 `@codex review` を投稿して検証を再開する手順を複数回実施した。本番ではこの手順を `/reset-review` などの明示コマンドへ寄せるかを TY-13 で判断する。
+PR #7 では人間が再度 `@codex review` を投稿して検証を再開する手順を複数回実施した。PR #14 では `claude_api_error` 停止後に hidden comment を手動でリセットして検証を継続した。本番ではこの手順を `/reset-review` などの明示コマンドへ寄せるかを TY-13 で判断する。
 
-**後続 Issue:** `/reset-review` と hidden state recovery は TY-144 で追跡する。初期移植では手動復旧で代替可能だが、`MAX_REVIEW_ITERATIONS` 到達、state corruption、hidden comment 消失時に人間が hidden JSON を直接編集しなくて済む状態を目標にする。
+**後続 Issue:** `/reset-review` と hidden state recovery は TY-144 で追跡する。初期移植では手動復旧で代替可能だが、`MAX_REVIEW_ITERATIONS` 到達、state corruption、`claude_api_error`、hidden comment 消失時に人間が hidden JSON を直接編集しなくて済む状態を目標にする。PR #14 で `claude_api_error` 停止が実測されたため、TY-144 は High に昇格済み。
 
 ---
 
