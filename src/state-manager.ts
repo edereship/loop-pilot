@@ -8,7 +8,6 @@ const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB
 
 const STATE_MARKER = "auto-review-state";
 const STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
-const STATE_COMMENT_OPEN_LINE = STATE_COMMENT_OPEN + "\n";
 const STATE_COMMENT_CLOSE = "-->";
 const STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 const MAX_HISTORY_ENTRIES = 3;
@@ -125,7 +124,14 @@ export function deserializeState(commentBody: string): ReviewState | null {
 }
 
 export function containsSerializedStateMarker(commentBody: string): boolean {
-  return commentBody.includes(STATE_COMMENT_OPEN_LINE);
+  // Anchor on the visible header so documentation/linkback comments that quote
+  // the marker inline (e.g., inside backticks) are not misidentified as state
+  // comments. The marker check defends against the rare case where someone
+  // writes a comment that legitimately starts with the visible text.
+  return (
+    commentBody.startsWith(STATE_COMMENT_VISIBLE_TEXT) &&
+    commentBody.includes(STATE_COMMENT_OPEN)
+  );
 }
 
 export type ReadStateResult =
@@ -183,9 +189,23 @@ export async function readState(
       `repos/${owner}/${name}/issues/${pr}/comments`,
       "--paginate",
       "--jq",
-      // @json ensures each result is a single-line JSON-encoded string,
-      // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-      `.[] | select(.body | contains("${STATE_COMMENT_OPEN_LINE}")) | {id: .id, body: .body} | @json`,
+      // Filter to genuine state comments by anchoring on the visible header.
+      // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
+      // properties:
+      //   1. Comments that merely mention `<!-- auto-review-state` inline
+      //      (e.g., the Linear linkback that quotes it in backticks) are
+      //      excluded — they do not start with the visible header.
+      //   2. State comments where the trailing newline after the marker has
+      //      been stripped (manual edits / formatter mangling) are still
+      //      surfaced — `deserializeState` then determines whether the JSON
+      //      is recoverable, so corruption recovery and `/reset-review` can
+      //      proceed instead of silent skip.
+      // The additional `contains(MARKER)` guards against the rare case where a
+      // user writes a comment that legitimately begins with the visible text
+      // but is not a state comment.
+      // @json emits each match as a single-line JSON-encoded string so
+      // split("\n") parsing below stays correct.
+      `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`,
     ],
     { env: buildGhEnv(token), maxBuffer: MAX_BUFFER },
   );

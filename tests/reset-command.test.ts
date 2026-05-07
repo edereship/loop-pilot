@@ -44,12 +44,27 @@ describe("parseResetCommand", () => {
     expect(parseResetCommand("/reset-review --hard")).toEqual({ isReset: true, mode: "hard" });
     expect(parseResetCommand("/Reset-Review")).toEqual({ isReset: true, mode: "soft" });
     expect(parseResetCommand("/RESET-REVIEW --hard")).toEqual({ isReset: true, mode: "hard" });
-    expect(parseResetCommand(" /reset-review ")).toEqual({ isReset: true, mode: "soft" });
     expect(parseResetCommand("please /reset-review")).toEqual({ isReset: false });
     expect(parseResetCommand("/reset-review now")).toEqual({
       isReset: true,
       invalidReason: "unsupported_option",
     });
+  });
+
+  it("tolerates trailing newlines that GitHub may append to comment bodies", () => {
+    expect(parseResetCommand("/reset-review\n")).toEqual({ isReset: true, mode: "soft" });
+    expect(parseResetCommand("/reset-review --hard\r\n")).toEqual({ isReset: true, mode: "hard" });
+  });
+
+  it("rejects forms that Workflow B's `if:` would not trigger on, to avoid runtime/workflow drift", () => {
+    // Workflow B accepts only `body == '/reset-review'` or `startsWith(body, '/reset-review ')`
+    // (single literal space, no leading whitespace). Forms below would be parsed as commands
+    // here but never reach the runtime, leaving the user without an audit reply.
+    expect(parseResetCommand(" /reset-review")).toEqual({ isReset: false });
+    expect(parseResetCommand(" /reset-review ")).toEqual({ isReset: false });
+    expect(parseResetCommand("/reset-review\t--hard")).toEqual({ isReset: false });
+    // An interior newline breaks `startsWith('/reset-review ')` on the workflow side.
+    expect(parseResetCommand("/reset-review\n--hard")).toEqual({ isReset: false });
   });
 
   it("detects reset-like comments broadly for workflow/runtime dispatch", () => {
@@ -59,6 +74,11 @@ describe("parseResetCommand", () => {
     expect(isResetCommandLike("/reset-review --force")).toBe(true);
     expect(isResetCommandLike("/reset-reviewing")).toBe(false);
     expect(isResetCommandLike("@bot /reset-review")).toBe(false);
+  });
+
+  it("isResetCommandLike rejects whitespace forms that Workflow B would not trigger on", () => {
+    expect(isResetCommandLike(" /reset-review")).toBe(false);
+    expect(isResetCommandLike("/reset-review\t--hard")).toBe(false);
   });
 });
 

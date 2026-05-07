@@ -29216,7 +29216,6 @@ var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.ex
 var MAX_BUFFER = 10 * 1024 * 1024;
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
-var STATE_COMMENT_OPEN_LINE = STATE_COMMENT_OPEN + "\n";
 var STATE_COMMENT_CLOSE = "-->";
 var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 3;
@@ -29327,9 +29326,23 @@ async function readState(owner, name, pr2, token) {
     `repos/${owner}/${name}/issues/${pr2}/comments`,
     "--paginate",
     "--jq",
-    // @json ensures each result is a single-line JSON-encoded string,
-    // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-    `.[] | select(.body | contains("${STATE_COMMENT_OPEN_LINE}")) | {id: .id, body: .body} | @json`
+    // Filter to genuine state comments by anchoring on the visible header.
+    // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
+    // properties:
+    //   1. Comments that merely mention `<!-- auto-review-state` inline
+    //      (e.g., the Linear linkback that quotes it in backticks) are
+    //      excluded — they do not start with the visible header.
+    //   2. State comments where the trailing newline after the marker has
+    //      been stripped (manual edits / formatter mangling) are still
+    //      surfaced — `deserializeState` then determines whether the JSON
+    //      is recoverable, so corruption recovery and `/reset-review` can
+    //      proceed instead of silent skip.
+    // The additional `contains(MARKER)` guards against the rare case where a
+    // user writes a comment that legitimately begins with the visible text
+    // but is not a state comment.
+    // @json emits each match as a single-line JSON-encoded string so
+    // split("\n") parsing below stays correct.
+    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
   ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -30053,23 +30066,27 @@ var HARD_RESET_REASONS = /* @__PURE__ */ new Set([
   "max_iterations",
   "loop_detected"
 ]);
+function normalizeBody(body) {
+  return body.replace(/[\r\n]+$/, "");
+}
 function isResetCommandLike(body) {
-  return /^\/reset-review(?:\s|$)/i.test(body.trimStart());
+  const normalized = normalizeBody(body).toLowerCase();
+  return normalized === "/reset-review" || normalized.startsWith("/reset-review ");
 }
 function parseResetCommand(body) {
-  const trimmed = body.trim();
-  if (!trimmed.toLowerCase().startsWith("/reset-review")) {
-    return { isReset: false };
-  }
-  const parts = trimmed.split(/\s+/);
-  if (parts[0].toLowerCase() !== "/reset-review") {
-    return { isReset: false };
-  }
-  const option = parts[1]?.toLowerCase();
-  if (parts.length === 1) {
+  const normalized = normalizeBody(body);
+  const lower = normalized.toLowerCase();
+  if (lower === "/reset-review") {
     return { isReset: true, mode: "soft" };
   }
-  if (parts.length === 2 && option === "--hard") {
+  if (!lower.startsWith("/reset-review ")) {
+    return { isReset: false };
+  }
+  const tail = normalized.slice("/reset-review ".length).trim();
+  if (tail === "") {
+    return { isReset: true, mode: "soft" };
+  }
+  if (tail.toLowerCase() === "--hard") {
     return { isReset: true, mode: "hard" };
   }
   return { isReset: true, invalidReason: "unsupported_option" };

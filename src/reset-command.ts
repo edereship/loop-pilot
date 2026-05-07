@@ -26,25 +26,39 @@ export type ResetParseResult =
   | { isReset: true; mode: ResetMode; invalidReason?: never }
   | { isReset: true; invalidReason: "unsupported_option" };
 
+// Workflow B's `if:` triggers reset-review handling on:
+//   github.event.comment.body == '/reset-review'
+//   || startsWith(github.event.comment.body, '/reset-review ')
+// GitHub Actions `==` and `startsWith` are case-insensitive but the separator
+// is a single literal space — leading whitespace, tabs, and other separators
+// would not start the workflow. The runtime parser mirrors this contract so
+// commands accepted here also reach Workflow B (no silent drift). Trailing
+// CR/LF is tolerated because GitHub sometimes appends them to comment bodies.
+function normalizeBody(body: string): string {
+  return body.replace(/[\r\n]+$/, "");
+}
+
 export function isResetCommandLike(body: string): boolean {
-  return /^\/reset-review(?:\s|$)/i.test(body.trimStart());
+  const normalized = normalizeBody(body).toLowerCase();
+  return normalized === "/reset-review" || normalized.startsWith("/reset-review ");
 }
 
 export function parseResetCommand(body: string): ResetParseResult {
-  const trimmed = body.trim();
-  if (!trimmed.toLowerCase().startsWith("/reset-review")) {
+  const normalized = normalizeBody(body);
+  const lower = normalized.toLowerCase();
+
+  if (lower === "/reset-review") {
+    return { isReset: true, mode: "soft" };
+  }
+  if (!lower.startsWith("/reset-review ")) {
     return { isReset: false };
   }
 
-  const parts = trimmed.split(/\s+/);
-  if (parts[0].toLowerCase() !== "/reset-review") {
-    return { isReset: false };
-  }
-  const option = parts[1]?.toLowerCase();
-  if (parts.length === 1) {
+  const tail = normalized.slice("/reset-review ".length).trim();
+  if (tail === "") {
     return { isReset: true, mode: "soft" };
   }
-  if (parts.length === 2 && option === "--hard") {
+  if (tail.toLowerCase() === "--hard") {
     return { isReset: true, mode: "hard" };
   }
   return { isReset: true, invalidReason: "unsupported_option" };

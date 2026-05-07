@@ -114,6 +114,24 @@ describe("containsSerializedStateMarker", () => {
     expect(containsSerializedStateMarker(stateComment)).toBe(true);
     expect(containsSerializedStateMarker(docsMention)).toBe(false);
   });
+
+  it("still recognizes a state comment whose marker line newline was stripped, so corruption recovery can run", () => {
+    // Manual edits or formatter mangling can join the visible header / marker
+    // with the JSON body. The recognizer must still classify these as state
+    // comments so deserialization (and downstream corruption recovery) can run
+    // instead of being silently treated as 'no state comment'.
+    const mangled =
+      "Auto-review state is stored in this comment.\n\n<!-- auto-review-state{\"iterationCount\":0}-->";
+
+    expect(containsSerializedStateMarker(mangled)).toBe(true);
+  });
+
+  it("does not falsely recognize an unrelated comment that only happens to start with the visible header", () => {
+    const lookalike =
+      "Auto-review state is stored in this comment. (note: feature explanation, no actual marker)";
+
+    expect(containsSerializedStateMarker(lookalike)).toBe(false);
+  });
 });
 
 describe("parseStateCommentRecord", () => {
