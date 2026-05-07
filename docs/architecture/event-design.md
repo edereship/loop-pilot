@@ -42,8 +42,10 @@ if: >
 - `ready_for_review` イベントは draft → ready 変換時に発火するため、draft 解除後に初回レビューが起動する
 - fork PR では自動レビューを起動しない。外部コードに対して token を持つ auto-fix loop を開始しないため
 - **デフォルト挙動はラベル必須（default-strict）**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review-fix` ラベルを要求する（ラベル名は Codex レビュー＋ Claude 自動修正の両方を示すため `auto-review-fix`）。`AUTO_REVIEW_LABEL` を設定すれば任意のラベル名へ変更可能
+- ラベル名は小文字固定を推奨する（例: `auto-review-fix`）。大文字小文字の揺れを避け、運用上の認識ずれを防ぐ
 - 完全自動化（全 PR で起動）にしたい場合のみ `AUTO_REVIEW_FULL_AUTO=true` を Repository variable で設定する。設定すると label gate が無効化され、すべての非 fork ready PR で Workflow A が起動する
 - `AUTO_REVIEW_FULL_AUTO=true` 時は `labeled` イベントを Workflow A の起動条件から除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューと余分な auto-fix サイクルが起きるのを防ぐ
+- `AUTO_REVIEW_FULL_AUTO=true` の間はラベルの付け外しを制御条件として使えない（ラベル操作では開始/停止しない）
 - gate 有効時の `labeled` イベントは、付与されたラベルが要求ラベル（`AUTO_REVIEW_LABEL || 'auto-review-fix'`）と一致する場合だけ起動する。無関係なラベルが追加されただけでは Workflow A は走らない
 
 役割:
@@ -195,6 +197,7 @@ Workflow B は GitHub API で取得した `.head.repo.full_name` が空または
 - それ以外（デフォルト）では `GET /repos/{owner}/{repo}/issues/{pr}/labels` で現在のラベルを取得
 - 起動ラベル `AUTO_REVIEW_LABEL || 'auto-review-fix'` が付いていなければ、state を変更せずに即 return（hidden comment や findings は触らない）
 - ラベル比較は case-insensitive で workflow YAML の `contains()` と整合させる
+- ただし運用では小文字ラベルを固定使用する。case を揺らさないことで、トリガー判定の想定違いを防ぐ
 
 **Phase 1: レビュー受信・集約**
 - hidden comment から状態を読み込む

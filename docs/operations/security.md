@@ -40,18 +40,25 @@ PR #7 の実環境では上記値で Codex review を検知できた。未設定
 - **デフォルト挙動はラベル必須**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review-fix` ラベルを要求する。ラベル名はレビューだけでなく Claude による自動修正までを示すため `auto-review-fix` を採用する
 - カスタムラベル名を使いたい場合は Repository variable `AUTO_REVIEW_LABEL` にラベル名を設定する。ラベル名の変更は variable の値を書き換えるだけで完結し、workflow YAML の修正は不要
 - 完全自動化（label gate を無効化して全 PR で起動）したい場合のみ Repository variable `AUTO_REVIEW_FULL_AUTO=true` を設定する
-- ラベル比較は case-insensitive（workflow YAML の `contains()` と整合）
+- ラベル名は **小文字固定** を推奨する（例: `auto-review-fix`）。Workflow 側の評価と運用手順の認識ずれを避けるため
+- TS 側のラベル比較は case-insensitive だが、運用上の混乱防止のため表示名の揺れ（`Auto-Review-Fix` など）は使わない
 
 **Workflow A（PR 作成 / ready / labeled トリガー）の挙動:**
 - デフォルト（label gate 有効）: ラベル未設定の PR が作成・ready になっても hidden comment 作成や `@codex review` 投稿は行わない
 - 後から起動ラベルを付けた瞬間（`pull_request.labeled`）に初回 `@codex review` が起動する
 - 無関係なラベルが追加されただけでは起動しない（追加されたラベルが要求ラベルと一致する場合のみ）
 - `AUTO_REVIEW_FULL_AUTO=true`（label gate 無効）時は `labeled` イベントを `if` で除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューが走らないようにするため
+- `AUTO_REVIEW_FULL_AUTO=true` の間は、ラベルの付け外しによる開始/停止はできない（ラベル操作は制御条件として無視される）
 
 **Workflow B（Codex レビュー受信トリガー）の挙動:**
 - workflow `if` で trigger payload の labels を確認し、ラベルがなければ即スキップ（fast skip）。`AUTO_REVIEW_FULL_AUTO=true` の場合はこの確認をスキップ
 - TS 側でも実行時に `GET /repos/{owner}/{repo}/issues/{pr}/labels` を呼び直し、ラベルが現在も付いているかを再確認する。Codex 投稿後にラベルが外された場合に修正フェーズへ進まないようにするため
 - ラベルが外れている場合は state を更新せずに早期 return する。状態は `waiting_codex` のまま温存され、ラベルを付け直した後に新たな `@codex review` が来れば再開する
+- `AUTO_REVIEW_FULL_AUTO=true` の場合はこの再確認をスキップするため、ラベル外しでの停止はできない
+
+**運用時の注意（Runbook）:**
+- 「ラベルを外したのに止まらない」場合は、`AUTO_REVIEW_FULL_AUTO` が `true` になっていないかを最初に確認する
+- full-auto から停止したい場合は、`AUTO_REVIEW_FULL_AUTO=false` に戻す（または workflow を無効化する）。ラベル操作だけでは停止しない
 
 この制御は fork guard や token 最小権限の代替ではなく、誤起動とコスト発生を抑える追加の安全策として扱う。
 
