@@ -4,6 +4,7 @@ import {
   handleResetCommand,
   isResetCommandLike,
   parseResetCommand,
+  pickPermission,
 } from "../src/reset-command.js";
 import { createInitialState, type ReadStateResult } from "../src/state-manager.js";
 import type { ReviewState } from "../src/types.js";
@@ -79,6 +80,29 @@ describe("parseResetCommand", () => {
   it("isResetCommandLike rejects whitespace forms that Workflow B would not trigger on", () => {
     expect(isResetCommandLike(" /reset-review")).toBe(false);
     expect(isResetCommandLike("/reset-review\t--hard")).toBe(false);
+  });
+});
+
+describe("pickPermission", () => {
+  it("prefers role_name when it matches a built-in tier so maintain/triage are not collapsed", () => {
+    expect(pickPermission("maintain", "write")).toBe("maintain");
+    expect(pickPermission("triage", "read")).toBe("triage");
+    expect(pickPermission("admin", "admin")).toBe("admin");
+  });
+
+  it("falls back to base permission when role_name is a custom role outside the built-in tiers", () => {
+    // GitHub Enterprise / orgs with custom roles return arbitrary role_name
+    // values while still reporting the underlying base permission. Reset
+    // recovery must keep working in that case.
+    expect(pickPermission("Reviewer", "write")).toBe("write");
+    expect(pickPermission("auto-review-admin", "admin")).toBe("admin");
+    expect(pickPermission("Spectator", "read")).toBe("read");
+  });
+
+  it("returns 'none' when both fields are missing or unrecognized", () => {
+    expect(pickPermission(null, null)).toBe("none");
+    expect(pickPermission("CustomRole", null)).toBe("none");
+    expect(pickPermission("CustomRole", "garbage")).toBe("none");
   });
 });
 

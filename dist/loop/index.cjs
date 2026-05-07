@@ -30212,28 +30212,42 @@ async function getPrAuthor(owner, repo, prNumber, token) {
   const { stdout } = await execFileAsync5("gh", ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"], { env: buildGhEnv(token) });
   return stdout.trim();
 }
+var BUILTIN_PERMISSIONS = /* @__PURE__ */ new Set([
+  "admin",
+  "maintain",
+  "write",
+  "triage",
+  "read"
+]);
+function isBuiltinPermission(value) {
+  return typeof value === "string" && BUILTIN_PERMISSIONS.has(value);
+}
+function pickPermission(roleName, permission) {
+  if (isBuiltinPermission(roleName)) {
+    return roleName;
+  }
+  if (isBuiltinPermission(permission)) {
+    return permission;
+  }
+  return "none";
+}
 async function getCollaboratorPermission(owner, repo, user, token) {
   try {
     const { stdout } = await execFileAsync5("gh", [
       "api",
       `repos/${owner}/${repo}/collaborators/${user}/permission`,
       "--jq",
-      // `.permission` reports legacy base roles only: admin / write / read /
-      // none. Under that mapping `maintain` collapses to `write` and `triage`
-      // collapses to `read`, so reset roles configured as `maintain`/`triage`
-      // would never be matched. `.role_name` distinguishes all five tiers,
-      // so we prefer it and fall back to `.permission` on older API
-      // responses where `role_name` may be absent.
-      ".role_name // .permission"
+      // Emit both fields as a JSON array so we can disambiguate custom
+      // role_name (e.g., "Reviewer") from built-in tiers in TS.
+      "[.role_name, .permission] | @json"
     ], { env: buildGhEnv(token) });
-    const permission = stdout.trim();
-    if (permission === "admin" || permission === "maintain" || permission === "write" || permission === "triage" || permission === "read") {
-      return permission;
-    }
+    const parsed = JSON.parse(stdout.trim());
+    const roleName = typeof parsed[0] === "string" ? parsed[0] : null;
+    const permission = typeof parsed[1] === "string" ? parsed[1] : null;
+    return pickPermission(roleName, permission);
   } catch {
     return "none";
   }
-  return "none";
 }
 async function postComment2(owner, repo, prNumber, body, token) {
   const { stdout } = await execFileAsync5("gh", [

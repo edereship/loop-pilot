@@ -352,6 +352,42 @@ async function getPrAuthor(
   return stdout.trim();
 }
 
+const BUILTIN_PERMISSIONS = new Set<Permission>([
+  "admin",
+  "maintain",
+  "write",
+  "triage",
+  "read",
+]);
+
+function isBuiltinPermission(value: unknown): value is Permission {
+  return typeof value === "string" && BUILTIN_PERMISSIONS.has(value as Permission);
+}
+
+/**
+ * Selects the effective permission tier for reset authorization.
+ *
+ * GitHub returns both `role_name` (5-tier: admin/maintain/write/triage/read)
+ * and `permission` (legacy 4-tier: admin/write/read/none). When a repo uses
+ * custom roles, `role_name` can be an arbitrary string ("Reviewer", etc.)
+ * while `permission` still reports the underlying base tier. We prefer
+ * `role_name` for accurate maintain/triage detection but fall back to
+ * `permission` whenever `role_name` is not one of the built-in tiers, so
+ * custom-role users keep their base access for reset commands.
+ */
+export function pickPermission(
+  roleName: string | null,
+  permission: string | null,
+): Permission {
+  if (isBuiltinPermission(roleName)) {
+    return roleName;
+  }
+  if (isBuiltinPermission(permission)) {
+    return permission;
+  }
+  return "none";
+}
+
 async function getCollaboratorPermission(
   owner: string,
   repo: string,
@@ -365,30 +401,19 @@ async function getCollaboratorPermission(
         "api",
         `repos/${owner}/${repo}/collaborators/${user}/permission`,
         "--jq",
-        // `.permission` reports legacy base roles only: admin / write / read /
-        // none. Under that mapping `maintain` collapses to `write` and `triage`
-        // collapses to `read`, so reset roles configured as `maintain`/`triage`
-        // would never be matched. `.role_name` distinguishes all five tiers,
-        // so we prefer it and fall back to `.permission` on older API
-        // responses where `role_name` may be absent.
-        ".role_name // .permission",
+        // Emit both fields as a JSON array so we can disambiguate custom
+        // role_name (e.g., "Reviewer") from built-in tiers in TS.
+        "[.role_name, .permission] | @json",
       ],
       { env: buildGhEnv(token) },
     );
-    const permission = stdout.trim();
-    if (
-      permission === "admin" ||
-      permission === "maintain" ||
-      permission === "write" ||
-      permission === "triage" ||
-      permission === "read"
-    ) {
-      return permission;
-    }
+    const parsed = JSON.parse(stdout.trim()) as [unknown, unknown];
+    const roleName = typeof parsed[0] === "string" ? parsed[0] : null;
+    const permission = typeof parsed[1] === "string" ? parsed[1] : null;
+    return pickPermission(roleName, permission);
   } catch {
     return "none";
   }
-  return "none";
 }
 
 async function postComment(
