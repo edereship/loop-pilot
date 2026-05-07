@@ -3,6 +3,7 @@ import {
   createInitialState,
   serializeState,
   deserializeState,
+  containsSerializedStateMarker,
   parseStateCommentRecord,
 } from "../src/state-manager.js";
 import type { ReviewState, FindingsHashEntry } from "../src/types.js";
@@ -101,6 +102,17 @@ describe("deserializeState", () => {
   it("returns null for a comment body with corrupted JSON", () => {
     const corruptedBody = `<!-- auto-review-state\n{not valid json\n-->`;
     expect(deserializeState(corruptedBody)).toBeNull();
+  });
+});
+
+describe("containsSerializedStateMarker", () => {
+  it("matches only the hidden state marker line, not documentation text mentioning the marker", () => {
+    const stateComment = serializeState(makeState());
+    const docsMention =
+      "Linear linkback text mentions `<!-- auto-review-state` as documentation, but it is not the hidden state comment.";
+
+    expect(containsSerializedStateMarker(stateComment)).toBe(true);
+    expect(containsSerializedStateMarker(docsMention)).toBe(false);
   });
 });
 

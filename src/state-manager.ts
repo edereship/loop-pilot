@@ -8,6 +8,7 @@ const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB
 
 const STATE_MARKER = "auto-review-state";
 const STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
+const STATE_COMMENT_OPEN_LINE = STATE_COMMENT_OPEN + "\n";
 const STATE_COMMENT_CLOSE = "-->";
 const STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 const MAX_HISTORY_ENTRIES = 3;
@@ -123,6 +124,10 @@ export function deserializeState(commentBody: string): ReviewState | null {
   }
 }
 
+export function containsSerializedStateMarker(commentBody: string): boolean {
+  return commentBody.includes(STATE_COMMENT_OPEN_LINE);
+}
+
 export type ReadStateResult =
   | { found: true; corrupted: false; state: ReviewState; commentId: number }
   | { found: false; corrupted: false; commentId: null }
@@ -180,7 +185,7 @@ export async function readState(
       "--jq",
       // @json ensures each result is a single-line JSON-encoded string,
       // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-      `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`,
+      `.[] | select(.body | contains("${STATE_COMMENT_OPEN_LINE}")) | {id: .id, body: .body} | @json`,
     ],
     { env: buildGhEnv(token), maxBuffer: MAX_BUFFER },
   );

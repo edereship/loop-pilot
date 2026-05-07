@@ -96,4 +96,13 @@ describe("Workflow B trigger guard", () => {
     expect(loopWorkflow).toContain("auto-review-full-auto:");
     expect(loopWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO || 'false'");
   });
+
+  it("starts from human /reset-review issue comments without requiring Codex bot markers", () => {
+    expect(loopWorkflow).toContain("github.event.comment.body == '/reset-review'");
+    expect(loopWorkflow).toContain("startsWith(github.event.comment.body, '/reset-review ')");
+    expect(loopWorkflow).toContain("trigger-user-login:");
+    expect(loopWorkflow).toContain("github.event.comment.user.login || github.event.review.user.login");
+    expect(loopWorkflow).toContain("auto-review-reset-roles:");
+    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_RESET_ROLES || 'author,write,maintain,admin'");
+  });
 });

@@ -28,6 +28,7 @@ import {
   postCodexReviewRequest,
 } from "./comment-poster.js";
 import { fetchPrLabels, isAutoReviewAllowed } from "./pr-labels.js";
+import { handleResetCommand, isResetCommandLike } from "./reset-command.js";
 import type { Finding, EditOperation, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
@@ -127,6 +128,23 @@ async function main(): Promise<void> {
     config.prNumber,
     config.githubToken
   );
+
+  if (isResetCommandLike(config.triggerCommentBody)) {
+    const resetResult = await handleResetCommand({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      prNumber: config.prNumber,
+      triggerCommentId,
+      triggerCommentBody: config.triggerCommentBody,
+      triggerUserLogin: config.triggerUserLogin,
+      resetRoles: config.autoReviewResetRoles,
+      githubToken: config.githubToken,
+      stateResult,
+    });
+    if (resetResult.handled) {
+      return;
+    }
+  }
 
   // Guard: no hidden comment means Workflow A hasn't run yet — skip silently
   if (!stateResult.found && !stateResult.corrupted) {

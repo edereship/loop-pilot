@@ -19,6 +19,7 @@ export interface Config {
   // New: moved from inline process.env reads in main-loop.ts
   triggerCommentId: number;
   triggerCommentBody: string;
+  triggerUserLogin: string;
   prHeadRef: string;
   prTitle: string;
   // Label-based opt-in (default-strict: PR must carry the label unless full-auto is on).
@@ -26,6 +27,7 @@ export interface Config {
   // - autoReviewFullAuto: true disables the label gate (every non-fork ready PR triggers).
   autoReviewLabel: string;
   autoReviewFullAuto: boolean;
+  autoReviewResetRoles: string;
 }
 
 /**
@@ -83,10 +85,16 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
+    triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
     autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
+    autoReviewResetRoles: input(
+      "auto-review-reset-roles",
+      "AUTO_REVIEW_RESET_ROLES",
+      "author,write,maintain,admin",
+    ),
   };
 }
 

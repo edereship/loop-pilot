@@ -128,6 +128,32 @@ All P0/P1 findings have been resolved.
 
 ---
 
+### 7. 停止後の reset
+
+`stopped` になった後、人間がPRコメントに `/reset-review` または `/reset-review --hard` を投稿すると、Workflow B が reset command として処理する。
+
+処理:
+- Workflow B の `issue_comment.created` で `/reset-review` から始まるPRコメントを受け付ける
+- Codex bot / `Codex Review` marker 条件には依存しない
+- runtime で command body を再parseする
+- `trigger-user-login` に対して `AUTO_REVIEW_RESET_ROLES` の権限チェックを行う
+- `readState` 直後、通常の terminal state guard より前に reset handler へ分岐する
+- reset handler は受理・拒否・no-op のいずれでもPRコメントを残し、同じWorkflow実行内では通常のCodex review処理やClaude fix処理へ進まない
+
+soft reset:
+- 対象: `claude_api_error`, `test_failure`, `manual_stop`
+- `status` を `waiting_codex` に戻す
+- `stopReason` を `null` に戻す
+- `iterationCount`、`findingsHashHistory`、`lastProcessedReviewId`、`lastClaudeCommitSha` は保持する
+
+hard reset:
+- 対象: soft reset 対象 + `max_iterations`, `loop_detected`
+- soft reset の変更に加え、`iterationCount` を `0`、`findingsHashHistory` を `[]` に戻す
+
+`done` は reset 不可。`waiting_codex` は冪等な no-op として扱い、state を書き換えない。`state_corrupted` は state JSON を安全に読めないため reset 不可とし、[停止条件とリカバリ](../operations/stop-and-recovery.md) の手動復旧手順へ誘導する。
+
+---
+
 ## 状態管理
 
 PR ごとに以下の状態を持つ。
@@ -169,6 +195,9 @@ PR ごとに以下の状態を持つ。
 
 ```
 initialized → waiting_codex → fixing → waiting_codex → ... → done / stopped
+stopped --/reset-review--> waiting_codex
+stopped --/reset-review --hard--> waiting_codex
+waiting_codex --/reset-review--> waiting_codex (no-op)
 ```
 
 | 値 | 意味 | 設定する workflow |

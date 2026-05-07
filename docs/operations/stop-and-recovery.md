@@ -41,35 +41,78 @@ Recommendation: manual intervention required.
 
 自動修正が停止した後、人間が修正を加えて再開する手順を定義する。
 
-### 再開方法
+### `/reset-review` による再開方法
+
+`stopped` になった auto-review は、PR の issue comment に reset command を投稿して再開する。hidden comment JSON を直接編集しない。
+
+```text
+/reset-review
+```
+
+soft reset。以下の停止理由から再開できる。
+
+- `claude_api_error`
+- `test_failure`
+- `manual_stop`
+
+保持する状態:
+
+- `iterationCount`
+- `findingsHashHistory`
+- `lastProcessedReviewId`
+- `lastClaudeCommitSha`
+- `lastCodexRequestCommentId`
+- `lastCodexReviewReceivedAt`
+
+書き換える状態:
+
+- `status`: `stopped` → `waiting_codex`
+- `stopReason`: 対象停止理由 → `null`
+
+```text
+/reset-review --hard
+```
+
+hard reset。soft reset の対象に加えて、以下の停止理由から再開できる。
+
+- `max_iterations`
+- `loop_detected`
+
+hard reset では `iterationCount` を `0`、`findingsHashHistory` を `[]` に戻す。`max_iterations` は上限判定を抜けるために hard reset が必要。`loop_detected` は履歴を消すため、人間が修正済みであることを確認してから使う。
+
+### 権限
+
+`/reset-review` を実行できるユーザーは `AUTO_REVIEW_RESET_ROLES` で制御する。
+
+- デフォルト: `author,write,maintain,admin`
+- `author`: PR 作成者
+- `write` / `maintain` / `admin`: GitHub collaborator permission
+
+権限不足の場合、状態は変更せず、PR に `❌ Reset rejected: insufficient permission.` コメントを残す。
+
+### 再開フロー
+
 1. 人間が修正を commit / push する
-2. PR に `@codex review` を手動投稿する
-3. Workflow B が通常通り起動し、ループが再開される
+2. 停止理由に応じて `/reset-review` または `/reset-review --hard` をPRコメントに投稿する
+3. Workflow B が hidden state を `waiting_codex` に戻す
+4. 必要に応じて PR に `@codex review` を投稿し、Codex の再レビューを起動する
 
 ### 状態のリセットが必要なケース
-- `iteration_count >= MAX_REVIEW_ITERATIONS` で停止した場合: hidden comment の `iteration_count` を手動で 0 にリセットするか、コメントを削除して再初期化する
-- ループ検知で停止した場合: 人間の修正により指摘内容が変わるため、リセット不要。ただし `status` を `waiting_codex` に戻す
-- `claude_api_error` で停止した場合: 修正不能な指摘（バンドル再生成など TS ファイル編集では解消できないもの）が原因。人間がそのコミットを行った後、`status` を `waiting_codex` に戻し、`stopReason` を `null` にし、`lastProcessedReviewId` と `lastCodexReviewReceivedAt` を最新の Codex review に揃えてから `@codex review` を再投稿する
-- `test_failure` で停止した場合: 人間がテストを修正してから `status` を `waiting_codex` に戻して `@codex review` を再投稿する
+- `iteration_count >= MAX_REVIEW_ITERATIONS` で停止した場合: `/reset-review --hard`
+- ループ検知で停止した場合: 人間の修正で指摘内容が変わったことを確認してから `/reset-review --hard`
+- `claude_api_error` で停止した場合: 人間が必要な修正を commit / push してから `/reset-review`
+- `test_failure` で停止した場合: 人間がテストを修正してから `/reset-review`
 
-### hidden comment の手動編集（暫定手順）
+### `state_corrupted` の手動復旧
 
-TY-144 が実装されるまでの暫定手順。**`maintainer` または PR 作成者のみ** 実施する。
+state JSON が壊れている場合、`/reset-review` は状態を安全に読めないため拒否される。この場合のみ、maintainer が hidden comment を削除して再初期化する。
 
 1. PR の hidden comment（`<!-- auto-review-state ... -->` を含むコメント）を特定する
-2. `gh api` で当該コメントの body を取得し JSON 部分を抽出する
-3. 必要なフィールドを変更（典型的には `status` を `waiting_codex` に、`stopReason` を `null` に）
-4. `gh api -X PATCH /repos/:owner/:repo/issues/comments/:id -f body=<新しい body>` で更新
-5. リセットの理由・操作者・対象 review ID を含む audit コメントを PR に投稿する
-6. PR に `@codex review` を投稿して検証を再開する
+2. `gh api -X DELETE /repos/:owner/:repo/issues/comments/:id` で削除する
+3. Workflow A を手動 dispatch、またはPR操作で再実行して hidden comment を再作成する
+4. PR に復旧理由・操作者を含む audit コメントを投稿する
 
-> **Important:** TY-144 で `/reset-review` PR コマンドを実装した後はこの手動手順を廃止する。手動編集は state が壊れる事故が起きやすいため、運用に組み込まないこと。
-
-**PoC 段階:** 手動リカバリで十分。本番移植時に `/reset-review` のような PR コマンドを検討する。
-
-PR #7 では人間が再度 `@codex review` を投稿して検証を再開する手順を複数回実施した。PR #14 では `claude_api_error` 停止後に hidden comment を手動でリセットして検証を継続した。本番ではこの手順を `/reset-review` などの明示コマンドへ寄せるかを TY-13 で判断する。
-
-**後続 Issue:** `/reset-review` と hidden state recovery は TY-144 で追跡する。初期移植では手動復旧で代替可能だが、`MAX_REVIEW_ITERATIONS` 到達、state corruption、`claude_api_error`、hidden comment 消失時に人間が hidden JSON を直接編集しなくて済む状態を目標にする。PR #14 で `claude_api_error` 停止が実測されたため、TY-144 は High に昇格済み。
+PR #7 では人間が再度 `@codex review` を投稿して検証を再開する手順を複数回実施した。PR #14 では `claude_api_error` 停止後に hidden comment を手動でリセットして検証を継続した。TY-144 以降は、通常の停止復旧では `/reset-review` を使い、hidden JSON の直接編集は運用に組み込まない。
 
 ---
 

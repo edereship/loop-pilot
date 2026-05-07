@@ -17240,7 +17240,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify6 } = require("node:util");
+    var { promisify: promisify7 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -17280,7 +17280,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify6(this[kOriginalClose])();
+        await promisify7(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -17293,7 +17293,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify6 } = require("node:util");
+    var { promisify: promisify7 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -17333,7 +17333,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify6(this[kOriginalClose])();
+        await promisify7(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -25038,7 +25038,7 @@ var require_undici = __commonJS({
 // dist/main-loop.js
 var import_node_fs2 = require("node:fs");
 var import_node_path = require("node:path");
-var import_node_child_process6 = require("node:child_process");
+var import_node_child_process7 = require("node:child_process");
 
 // node_modules/@anthropic-ai/sdk/version.mjs
 var VERSION = "0.39.0";
@@ -29142,10 +29142,12 @@ function loadBaseConfig() {
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
+    triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false)
+    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
+    autoReviewResetRoles: input("auto-review-reset-roles", "AUTO_REVIEW_RESET_ROLES", "author,write,maintain,admin")
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -29214,6 +29216,7 @@ var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.ex
 var MAX_BUFFER = 10 * 1024 * 1024;
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
+var STATE_COMMENT_OPEN_LINE = STATE_COMMENT_OPEN + "\n";
 var STATE_COMMENT_CLOSE = "-->";
 var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 3;
@@ -29326,7 +29329,7 @@ async function readState(owner, name, pr2, token) {
     "--jq",
     // @json ensures each result is a single-line JSON-encoded string,
     // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-    `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+    `.[] | select(.body | contains("${STATE_COMMENT_OPEN_LINE}")) | {id: .id, body: .body} | @json`
   ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -30036,6 +30039,211 @@ function isAutoReviewAllowed(requiredLabel, currentLabels) {
   return currentLabels.some((label) => label.toLowerCase() === normalized);
 }
 
+// dist/reset-command.js
+var import_node_child_process6 = require("node:child_process");
+var import_node_util6 = require("node:util");
+var execFileAsync5 = (0, import_node_util6.promisify)(import_node_child_process6.execFile);
+var SOFT_RESET_REASONS = /* @__PURE__ */ new Set([
+  "claude_api_error",
+  "test_failure",
+  "manual_stop"
+]);
+var HARD_RESET_REASONS = /* @__PURE__ */ new Set([
+  ...SOFT_RESET_REASONS,
+  "max_iterations",
+  "loop_detected"
+]);
+function isResetCommandLike(body) {
+  return /^\/reset-review(?:\s|$)/.test(body.trimStart());
+}
+function parseResetCommand(body) {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith("/reset-review")) {
+    return { isReset: false };
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts[0] !== "/reset-review") {
+    return { isReset: false };
+  }
+  if (parts.length === 1) {
+    return { isReset: true, mode: "soft" };
+  }
+  if (parts.length === 2 && parts[1] === "--hard") {
+    return { isReset: true, mode: "hard" };
+  }
+  return { isReset: true, invalidReason: "unsupported_option" };
+}
+function applyResetToState(state, mode) {
+  if (state.status === "waiting_codex") {
+    return {
+      ok: true,
+      nextState: state,
+      noChange: true,
+      previousStopReason: state.stopReason
+    };
+  }
+  if (state.status === "done") {
+    return { ok: false, reason: "already_done" };
+  }
+  if (state.status !== "stopped") {
+    return { ok: false, reason: "unsupported_status" };
+  }
+  if (state.stopReason === "state_corrupted") {
+    return { ok: false, reason: "state_corrupted" };
+  }
+  const stopReason = state.stopReason;
+  if (mode === "soft") {
+    if (stopReason === "max_iterations" || stopReason === "loop_detected") {
+      return { ok: false, reason: "hard_required" };
+    }
+    if (stopReason !== null && !SOFT_RESET_REASONS.has(stopReason)) {
+      return { ok: false, reason: "unsupported_stop_reason" };
+    }
+  }
+  if (mode === "hard" && stopReason !== null && !HARD_RESET_REASONS.has(stopReason)) {
+    return { ok: false, reason: "unsupported_stop_reason" };
+  }
+  const nextState = {
+    ...state,
+    status: "waiting_codex",
+    stopReason: null
+  };
+  if (mode === "hard") {
+    nextState.iterationCount = 0;
+    nextState.findingsHashHistory = [];
+  }
+  return { ok: true, nextState, previousStopReason: stopReason };
+}
+async function handleResetCommand(context, deps = defaultResetCommandDeps) {
+  const command = parseResetCommand(context.triggerCommentBody);
+  if (!command.isReset) {
+    return { handled: false };
+  }
+  if (command.invalidReason) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset rejected: unsupported option. Use `/reset-review` or `/reset-review --hard`.", context.githubToken);
+    return { handled: true };
+  }
+  if (!context.stateResult.found && context.stateResult.corrupted) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.", context.githubToken);
+    return { handled: true };
+  }
+  if (!context.stateResult.found) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset cannot apply: auto-review state was not found.", context.githubToken);
+    return { handled: true };
+  }
+  const hasPermission = await canReset(context, deps);
+  if (!hasPermission) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Reset rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to reset auto-review.`, context.githubToken);
+    return { handled: true };
+  }
+  const resetResult = applyResetToState(context.stateResult.state, command.mode);
+  if (!resetResult.ok) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, rejectionMessage(resetResult.reason), context.githubToken);
+    return { handled: true };
+  }
+  if (!resetResult.noChange) {
+    await deps.updateStateComment(context.owner, context.repo, context.stateResult.commentId, resetResult.nextState, context.githubToken);
+  }
+  const body = resetResult.noChange ? "\u{1F7E2} Already in waiting_codex \u2014 no change." : [
+    `\u{1F7E2} Auto-review reset accepted by @${context.triggerUserLogin}.`,
+    "",
+    `mode: ${command.mode}`,
+    `from: ${resetResult.previousStopReason ?? "none"}`
+  ].join("\n");
+  await deps.postComment(context.owner, context.repo, context.prNumber, body, context.githubToken);
+  if (context.triggerCommentId !== 0) {
+    try {
+      await deps.addEyesReaction(context.owner, context.repo, context.triggerCommentId, context.githubToken);
+    } catch {
+    }
+  }
+  return { handled: true };
+}
+async function canReset(context, deps) {
+  if (!context.triggerUserLogin) {
+    return false;
+  }
+  const roles = parseRoles(context.resetRoles);
+  if (roles.has("author")) {
+    const author = await deps.getPrAuthor(context.owner, context.repo, context.prNumber, context.githubToken);
+    if (author === context.triggerUserLogin) {
+      return true;
+    }
+  }
+  const permission = await deps.getCollaboratorPermission(context.owner, context.repo, context.triggerUserLogin, context.githubToken);
+  return roles.has(permission);
+}
+function parseRoles(raw) {
+  return new Set(raw.split(",").map((role) => role.trim().toLowerCase()).filter(Boolean));
+}
+function rejectionMessage(reason) {
+  switch (reason) {
+    case "already_done":
+      return "\u274C Reset cannot apply: review already done.";
+    case "state_corrupted":
+      return "\u274C Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.";
+    case "hard_required":
+      return "\u274C Reset cannot apply: use `/reset-review --hard` for this stop reason.";
+    case "unsupported_status":
+      return "\u274C Reset cannot apply: current review status is not resettable.";
+    case "unsupported_stop_reason":
+      return "\u274C Reset cannot apply: current stop reason is not resettable.";
+  }
+}
+async function getPrAuthor(owner, repo, prNumber, token) {
+  const { stdout } = await execFileAsync5("gh", ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"], { env: buildGhEnv(token) });
+  return stdout.trim();
+}
+async function getCollaboratorPermission(owner, repo, user, token) {
+  try {
+    const { stdout } = await execFileAsync5("gh", [
+      "api",
+      `repos/${owner}/${repo}/collaborators/${user}/permission`,
+      "--jq",
+      ".permission"
+    ], { env: buildGhEnv(token) });
+    const permission = stdout.trim();
+    if (permission === "admin" || permission === "maintain" || permission === "write" || permission === "triage" || permission === "read") {
+      return permission;
+    }
+  } catch {
+    return "none";
+  }
+  return "none";
+}
+async function postComment2(owner, repo, prNumber, body, token) {
+  const { stdout } = await execFileAsync5("gh", [
+    "api",
+    `repos/${owner}/${repo}/issues/${prNumber}/comments`,
+    "-X",
+    "POST",
+    "-f",
+    `body=${body}`,
+    "--jq",
+    ".id"
+  ], { env: buildGhEnv(token) });
+  return Number.parseInt(stdout.trim(), 10);
+}
+async function addEyesReaction(owner, repo, commentId, token) {
+  await execFileAsync5("gh", [
+    "api",
+    `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
+    "-X",
+    "POST",
+    "-H",
+    "Accept: application/vnd.github+json",
+    "-f",
+    "content=eyes"
+  ], { env: buildGhEnv(token) });
+}
+var defaultResetCommandDeps = {
+  getPrAuthor,
+  getCollaboratorPermission,
+  updateStateComment,
+  postComment: postComment2,
+  addEyesReaction
+};
+
 // dist/main-loop.js
 function sleep3(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
@@ -30082,6 +30290,22 @@ async function main() {
     }
   }
   const stateResult = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  if (isResetCommandLike(config.triggerCommentBody)) {
+    const resetResult = await handleResetCommand({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      prNumber: config.prNumber,
+      triggerCommentId,
+      triggerCommentBody: config.triggerCommentBody,
+      triggerUserLogin: config.triggerUserLogin,
+      resetRoles: config.autoReviewResetRoles,
+      githubToken: config.githubToken,
+      stateResult
+    });
+    if (resetResult.handled) {
+      return;
+    }
+  }
   if (!stateResult.found && !stateResult.corrupted) {
     info("[main-loop] No state found. Workflow A has not run. Skipping.");
     return;
@@ -30216,7 +30440,7 @@ async function main() {
       throw new Error(`[main-loop] Invalid branch name: ${prHeadRef}`);
     }
     info(`[main-loop] Checking out branch: ${prHeadRef}`);
-    (0, import_node_child_process6.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
+    (0, import_node_child_process7.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
   const fileGroups = groupByFile(findings);
   const selectedFiles = selectFiles(fileGroups, config.maxFilesPerIteration);
@@ -30358,23 +30582,23 @@ async function main() {
     return;
   }
   info("[main-loop] Check command passed. Committing changes...");
-  (0, import_node_child_process6.execFileSync)("git", ["add", ...modifiedFiles], { stdio: "inherit" });
+  (0, import_node_child_process7.execFileSync)("git", ["add", ...modifiedFiles], { stdio: "inherit" });
   try {
-    (0, import_node_child_process6.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
+    (0, import_node_child_process7.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
     warning("[main-loop] No staged changes after edits. Skipping commit.");
   } catch {
     const sanitize = (s2) => s2.replace(/[\r\n]+/g, " ").trim();
     const commitBody = allAppliedEdits.map((e2) => `- ${sanitize(e2.explanation)}`).join("\n");
-    (0, import_node_child_process6.execFileSync)("git", [
+    (0, import_node_child_process7.execFileSync)("git", [
       "commit",
       "-m",
       `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})
 
 ${commitBody}`
     ], { stdio: "inherit" });
-    (0, import_node_child_process6.execFileSync)("git", ["push"], { stdio: "inherit" });
+    (0, import_node_child_process7.execFileSync)("git", ["push"], { stdio: "inherit" });
   }
-  const commitSha = (0, import_node_child_process6.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+  const commitSha = (0, import_node_child_process7.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
   info(`[main-loop] Committed: ${commitSha}`);
   await postFixSummary(config.repoOwner, config.repoName, config.prNumber, fixingState.iterationCount, allAppliedEdits, skippedFiles, config.githubToken);
   const waitingState = {

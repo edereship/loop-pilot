@@ -12,6 +12,7 @@
 #       pr-title: ${{ steps.pr.outputs.title }}
 #       trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
 #       trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
+#       trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
 name: Auto Review Loop
 
 on:
@@ -55,6 +56,14 @@ jobs:
           (
             contains(github.event.comment.body, 'Codex Review') ||
             (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER))
+          )
+        ) ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request &&
+          (
+            github.event.comment.body == '/reset-review' ||
+            startsWith(github.event.comment.body, '/reset-review ')
           )
         ) ||
         (
@@ -134,6 +143,7 @@ jobs:
           pr-title: ${{ steps.pr.outputs.title }}
           trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
           trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
+          trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
           max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           debounce-seconds: ${{ vars.DEBOUNCE_SECONDS || '90' }}
           check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}
@@ -145,6 +155,7 @@ jobs:
           stabilize-count: ${{ vars.STABILIZE_COUNT || '3' }}
           auto-review-label: ${{ vars.AUTO_REVIEW_LABEL || '' }}
           auto-review-full-auto: ${{ vars.AUTO_REVIEW_FULL_AUTO || 'false' }}
+          auto-review-reset-roles: ${{ vars.AUTO_REVIEW_RESET_ROLES || 'author,write,maintain,admin' }}
 
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact

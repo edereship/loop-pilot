@@ -19159,10 +19159,12 @@ function loadBaseConfig() {
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
+    triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false)
+    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
+    autoReviewResetRoles: input("auto-review-reset-roles", "AUTO_REVIEW_RESET_ROLES", "author,write,maintain,admin")
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -19231,6 +19233,7 @@ var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.ex
 var MAX_BUFFER = 10 * 1024 * 1024;
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
+var STATE_COMMENT_OPEN_LINE = STATE_COMMENT_OPEN + "\n";
 var STATE_COMMENT_CLOSE = "-->";
 var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 3;
@@ -19343,7 +19346,7 @@ async function readState(owner, name, pr, token) {
     "--jq",
     // @json ensures each result is a single-line JSON-encoded string,
     // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-    `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+    `.[] | select(.body | contains("${STATE_COMMENT_OPEN_LINE}")) | {id: .id, body: .body} | @json`
   ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {

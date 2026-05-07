@@ -30,6 +30,10 @@ inputs:
     description: "Body of the Codex summary comment or PR review that triggered this run"
     required: false
     default: ""
+  trigger-user-login:
+    description: "GitHub login of the user who posted the trigger comment or review"
+    required: false
+    default: ""
   max-review-iterations:
     description: "Maximum number of review-fix iterations"
     required: false
@@ -74,6 +78,10 @@ inputs:
     description: "Set to 'true' to disable the label gate and run auto-review on every non-fork ready PR."
     required: false
     default: "false"
+  auto-review-reset-roles:
+    description: "Comma-separated roles allowed to run /reset-review. Supports author, admin, maintain, write, triage, read."
+    required: false
+    default: "author,write,maintain,admin"
   github-repository:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false
