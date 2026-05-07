@@ -99,7 +99,7 @@ export function parseReviewCommentRecord(line: string): RawReviewComment | null 
 
 /**
  * Filters raw review comments by bot login and timestamp, parses severity,
- * and returns only P0/P1 findings.
+ * and returns P0/P1/P2 findings.
  *
  * Why strict greater-than for timestamp: a comment received exactly at
  * lastReceivedAt was already processed in the previous iteration.
@@ -117,7 +117,11 @@ export function filterAndParseComments(
     )
     .flatMap((comment) => {
       const parsed = parseSeverity(comment.body);
-      if (parsed.severity !== "P0" && parsed.severity !== "P1") {
+      if (
+        parsed.severity !== "P0" &&
+        parsed.severity !== "P1" &&
+        parsed.severity !== "P2"
+      ) {
         return [];
       }
       const finding: Finding = {
@@ -220,7 +224,7 @@ function countRelevantBotComments(
 function summaryMayContainFindings(body: string): boolean {
   const normalized = body.toLowerCase();
   const noFindingsPatterns = [
-    /\bno\s+p0\s*\/\s*p1\s+findings?\b/i,
+    /\bno\s+p0\s*\/\s*p1(?:\s*\/\s*p2)?\s+findings?\b/i,
     /\bno\s+findings?\b/i,
     /\b0\s+findings?\b/i,
     /\bno\s+issues?\b/i,
@@ -234,6 +238,7 @@ function summaryMayContainFindings(body: string): boolean {
   return (
     /\bp0\b/i.test(body) ||
     /\bp1\b/i.test(body) ||
+    /\bp2\b/i.test(body) ||
     /\bfindings?\b/.test(normalized) ||
     /\bissues?\b/.test(normalized) ||
     /指摘|問題|検出/.test(body)

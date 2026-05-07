@@ -44,15 +44,16 @@ describe("parseReviewCommentRecord", () => {
 });
 
 describe("filterAndParseComments", () => {
-  it("extracts P0 and P1 findings from Codex bot comments", () => {
+  it("extracts P0, P1, and P2 findings from Codex bot comments", () => {
     const comments: RawReviewComment[] = [
       makeComment({ id: 1, body: "P0 Null dereference\n\nFix the null check." }),
       makeComment({ id: 2, body: "P1 Missing type annotation\n\nAdd return type." }),
+      makeComment({ id: 3, body: "P2 Style issue\n\nPrefer a smaller helper." }),
     ];
 
     const findings = filterAndParseComments(comments, BOT_LOGIN, null);
 
-    expect(findings).toHaveLength(2);
+    expect(findings).toHaveLength(3);
     expect(findings[0].severity).toBe("P0");
     expect(findings[0].title).toBe("Null dereference");
     expect(findings[0].body).toBe("Fix the null check.");
@@ -60,6 +61,8 @@ describe("filterAndParseComments", () => {
     expect(findings[0].line).toBe(10);
     expect(findings[1].severity).toBe("P1");
     expect(findings[1].title).toBe("Missing type annotation");
+    expect(findings[2].severity).toBe("P2");
+    expect(findings[2].title).toBe("Style issue");
   });
 
   it("filters out comments from non-Codex bot users", () => {
@@ -74,7 +77,7 @@ describe("filterAndParseComments", () => {
     expect(findings[0].severity).toBe("P1");
   });
 
-  it("filters out P2 findings", () => {
+  it("includes P2 findings", () => {
     const comments: RawReviewComment[] = [
       makeComment({ id: 1, body: "P0 Critical\n\nFix immediately." }),
       makeComment({ id: 2, body: "P2 Low priority\n\nCould improve later." }),
@@ -83,8 +86,8 @@ describe("filterAndParseComments", () => {
 
     const findings = filterAndParseComments(comments, BOT_LOGIN, null);
 
-    expect(findings).toHaveLength(2);
-    expect(findings.every((f) => f.severity === "P0" || f.severity === "P1")).toBe(true);
+    expect(findings).toHaveLength(3);
+    expect(findings.map((f) => f.severity)).toEqual(["P0", "P2", "P1"]);
   });
 
   it("filters by createdAt when lastReceivedAt is provided", () => {
@@ -144,7 +147,7 @@ describe("shouldStabilizeReviewComments", () => {
         [],
         BOT_LOGIN,
         null,
-        "Codex Review found P1 issues that should be fixed."
+        "Codex Review found P2 issues that should be fixed."
       )
     ).toBe(true);
   });
@@ -166,7 +169,7 @@ describe("shouldStabilizeReviewComments", () => {
         [],
         BOT_LOGIN,
         null,
-        "Codex Review completed. No P0/P1 findings."
+        "Codex Review completed. No P0/P1/P2 findings."
       )
     ).toBe(false);
   });

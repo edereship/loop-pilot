@@ -17240,7 +17240,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify6 } = require("node:util");
+    var { promisify: promisify7 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -17280,7 +17280,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify6(this[kOriginalClose])();
+        await promisify7(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -17293,7 +17293,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify6 } = require("node:util");
+    var { promisify: promisify7 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -17333,7 +17333,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify6(this[kOriginalClose])();
+        await promisify7(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -25038,7 +25038,7 @@ var require_undici = __commonJS({
 // dist/main-loop.js
 var import_node_fs2 = require("node:fs");
 var import_node_path = require("node:path");
-var import_node_child_process6 = require("node:child_process");
+var import_node_child_process7 = require("node:child_process");
 
 // node_modules/@anthropic-ai/sdk/version.mjs
 var VERSION = "0.39.0";
@@ -29142,10 +29142,12 @@ function loadBaseConfig() {
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
+    triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false)
+    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
+    autoReviewResetRoles: input("auto-review-reset-roles", "AUTO_REVIEW_RESET_ROLES", "author,write,maintain,admin")
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -29324,9 +29326,23 @@ async function readState(owner, name, pr2, token) {
     `repos/${owner}/${name}/issues/${pr2}/comments`,
     "--paginate",
     "--jq",
-    // @json ensures each result is a single-line JSON-encoded string,
-    // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-    `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+    // Filter to genuine state comments by anchoring on the visible header.
+    // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
+    // properties:
+    //   1. Comments that merely mention `<!-- auto-review-state` inline
+    //      (e.g., the Linear linkback that quotes it in backticks) are
+    //      excluded — they do not start with the visible header.
+    //   2. State comments where the trailing newline after the marker has
+    //      been stripped (manual edits / formatter mangling) are still
+    //      surfaced — `deserializeState` then determines whether the JSON
+    //      is recoverable, so corruption recovery and `/reset-review` can
+    //      proceed instead of silent skip.
+    // The additional `contains(MARKER)` guards against the rare case where a
+    // user writes a comment that legitimately begins with the visible text
+    // but is not a state comment.
+    // @json emits each match as a single-line JSON-encoded string so
+    // split("\n") parsing below stays correct.
+    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
   ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -29449,7 +29465,7 @@ function parseReviewCommentRecord(line) {
 function filterAndParseComments(comments, botLogin, lastReceivedAt) {
   return comments.filter((comment) => comment.user.login === botLogin).filter((comment) => lastReceivedAt === null || comment.createdAt > lastReceivedAt).flatMap((comment) => {
     const parsed = parseSeverity(comment.body);
-    if (parsed.severity !== "P0" && parsed.severity !== "P1") {
+    if (parsed.severity !== "P0" && parsed.severity !== "P1" && parsed.severity !== "P2") {
       return [];
     }
     const finding = {
@@ -29500,7 +29516,7 @@ function countRelevantBotComments(comments, botLogin, lastReceivedAt) {
 function summaryMayContainFindings(body) {
   const normalized = body.toLowerCase();
   const noFindingsPatterns = [
-    /\bno\s+p0\s*\/\s*p1\s+findings?\b/i,
+    /\bno\s+p0\s*\/\s*p1(?:\s*\/\s*p2)?\s+findings?\b/i,
     /\bno\s+findings?\b/i,
     /\b0\s+findings?\b/i,
     /\bno\s+issues?\b/i,
@@ -29510,7 +29526,7 @@ function summaryMayContainFindings(body) {
   if (noFindingsPatterns.some((pattern) => pattern.test(body))) {
     return false;
   }
-  return /\bp0\b/i.test(body) || /\bp1\b/i.test(body) || /\bfindings?\b/.test(normalized) || /\bissues?\b/.test(normalized) || /指摘|問題|検出/.test(body);
+  return /\bp0\b/i.test(body) || /\bp1\b/i.test(body) || /\bp2\b/i.test(body) || /\bfindings?\b/.test(normalized) || /\bissues?\b/.test(normalized) || /指摘|問題|検出/.test(body);
 }
 
 // dist/findings-hash.js
@@ -29553,13 +29569,13 @@ var EDIT_FILE_TOOL = {
 function buildSystemPrompt(iteration, maxIterations) {
   const remainingIterations = Math.max(1, maxIterations - iteration + 1);
   const conservativeNote = remainingIterations < 3 ? `
-IMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1 when iteration budget is limited.` : "";
+IMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1, then P2 when iteration budget is limited.` : "";
   return `You are a senior software engineer fixing code review findings on a pull request.
-You will receive Codex review findings (P0/P1 severity) and the source file content.
+You will receive Codex review findings (P0/P1/P2 severity) and the source file content.
 Use the edit_file tool to make precise, minimal fixes for each finding.
 
 Rules:
-- Fix ONLY the listed P0/P1 findings. Do not fix anything else.
+- Fix ONLY the listed P0/P1/P2 findings. Do not fix anything else.
 - Do not perform unrelated refactors, style changes, or improvements.
 - Do not change public APIs unless strictly necessary to fix a finding.
 - Preserve existing behavior outside the scope of each finding.
@@ -29937,7 +29953,7 @@ var import_node_child_process4 = require("node:child_process");
 var import_node_util4 = require("node:util");
 var execFileAsync3 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
 var STOP_REASON_LABELS = {
-  no_findings: "no P0/P1 findings",
+  no_findings: "no P0/P1/P2 findings",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
   loop_detected: "same findings detected in loop",
   claude_api_error: "Claude API error",
@@ -29980,7 +29996,7 @@ async function postCompletionComment(owner, name, pr2, iterations, token) {
   const body = `Auto-review completed.
 
 Iterations: ${iterations}
-All P0/P1 findings have been resolved.`;
+All P0/P1/P2 findings have been resolved.`;
   return postComment(owner, name, pr2, body, token);
 }
 async function postStopComment(owner, name, pr2, stopReason, reviewId, remainingFindings, detail, token) {
@@ -29990,7 +30006,7 @@ async function postStopComment(owner, name, pr2, stopReason, reviewId, remaining
     "",
     `Reason: ${formattedReason}`,
     `Last processed Codex review: #${reviewId}`,
-    `Open P0/P1 findings remaining: ${remainingFindings}`,
+    `Open P0/P1/P2 findings remaining: ${remainingFindings}`,
     `Detail: ${detail}`,
     "Recommendation: manual intervention required."
   ].join("\n");
@@ -30036,6 +30052,236 @@ function isAutoReviewAllowed(requiredLabel, currentLabels) {
   return currentLabels.some((label) => label.toLowerCase() === normalized);
 }
 
+// dist/reset-command.js
+var import_node_child_process6 = require("node:child_process");
+var import_node_util6 = require("node:util");
+var execFileAsync5 = (0, import_node_util6.promisify)(import_node_child_process6.execFile);
+var SOFT_RESET_REASONS = /* @__PURE__ */ new Set([
+  "claude_api_error",
+  "test_failure",
+  "manual_stop"
+]);
+var HARD_RESET_REASONS = /* @__PURE__ */ new Set([
+  ...SOFT_RESET_REASONS,
+  "max_iterations",
+  "loop_detected"
+]);
+function normalizeBody(body) {
+  return body.replace(/[\r\n]+$/, "");
+}
+function isResetCommandLike(body) {
+  const normalized = normalizeBody(body).toLowerCase();
+  return normalized === "/reset-review" || normalized.startsWith("/reset-review ");
+}
+function parseResetCommand(body) {
+  const normalized = normalizeBody(body);
+  const lower = normalized.toLowerCase();
+  if (lower === "/reset-review") {
+    return { isReset: true, mode: "soft" };
+  }
+  if (!lower.startsWith("/reset-review ")) {
+    return { isReset: false };
+  }
+  const tail = normalized.slice("/reset-review ".length).trim();
+  if (tail === "") {
+    return { isReset: true, mode: "soft" };
+  }
+  if (tail.toLowerCase() === "--hard") {
+    return { isReset: true, mode: "hard" };
+  }
+  return { isReset: true, invalidReason: "unsupported_option" };
+}
+function applyResetToState(state, mode) {
+  if (state.status === "waiting_codex") {
+    return {
+      ok: true,
+      nextState: state,
+      noChange: true,
+      previousStopReason: state.stopReason
+    };
+  }
+  if (state.status === "done") {
+    return { ok: false, reason: "already_done" };
+  }
+  if (state.status !== "stopped") {
+    return { ok: false, reason: "unsupported_status" };
+  }
+  if (state.stopReason === "state_corrupted") {
+    return { ok: false, reason: "state_corrupted" };
+  }
+  const stopReason = state.stopReason;
+  if (mode === "soft") {
+    if (stopReason === "max_iterations" || stopReason === "loop_detected") {
+      return { ok: false, reason: "hard_required" };
+    }
+    if (stopReason !== null && !SOFT_RESET_REASONS.has(stopReason)) {
+      return { ok: false, reason: "unsupported_stop_reason" };
+    }
+  }
+  if (mode === "hard" && stopReason !== null && !HARD_RESET_REASONS.has(stopReason)) {
+    return { ok: false, reason: "unsupported_stop_reason" };
+  }
+  const nextState = {
+    ...state,
+    status: "waiting_codex",
+    stopReason: null
+  };
+  if (mode === "hard") {
+    nextState.iterationCount = 0;
+    nextState.findingsHashHistory = [];
+  }
+  return { ok: true, nextState, previousStopReason: stopReason };
+}
+async function handleResetCommand(context, deps = defaultResetCommandDeps) {
+  const command = parseResetCommand(context.triggerCommentBody);
+  if (!command.isReset) {
+    return { handled: false };
+  }
+  if (command.invalidReason) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset rejected: unsupported option. Use `/reset-review` or `/reset-review --hard`.", context.githubToken);
+    return { handled: true };
+  }
+  if (!context.stateResult.found && context.stateResult.corrupted) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.", context.githubToken);
+    return { handled: true };
+  }
+  if (!context.stateResult.found) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset cannot apply: auto-review state was not found.", context.githubToken);
+    return { handled: true };
+  }
+  const hasPermission = await canReset(context, deps);
+  if (!hasPermission) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Reset rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to reset auto-review.`, context.githubToken);
+    return { handled: true };
+  }
+  const resetResult = applyResetToState(context.stateResult.state, command.mode);
+  if (!resetResult.ok) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, rejectionMessage(resetResult.reason), context.githubToken);
+    return { handled: true };
+  }
+  if (!resetResult.noChange) {
+    await deps.updateStateComment(context.owner, context.repo, context.stateResult.commentId, resetResult.nextState, context.githubToken);
+  }
+  const body = resetResult.noChange ? "\u{1F7E2} Already in waiting_codex \u2014 no change." : [
+    `\u{1F7E2} Auto-review reset accepted by @${context.triggerUserLogin}.`,
+    "",
+    `mode: ${command.mode}`,
+    `from: ${resetResult.previousStopReason ?? "none"}`
+  ].join("\n");
+  await deps.postComment(context.owner, context.repo, context.prNumber, body, context.githubToken);
+  if (context.triggerCommentId !== 0) {
+    try {
+      await deps.addEyesReaction(context.owner, context.repo, context.triggerCommentId, context.githubToken);
+    } catch {
+    }
+  }
+  return { handled: true };
+}
+async function canReset(context, deps) {
+  if (!context.triggerUserLogin) {
+    return false;
+  }
+  const roles = parseRoles(context.resetRoles);
+  if (roles.has("author")) {
+    const author = await deps.getPrAuthor(context.owner, context.repo, context.prNumber, context.githubToken);
+    if (author === context.triggerUserLogin) {
+      return true;
+    }
+  }
+  const permission = await deps.getCollaboratorPermission(context.owner, context.repo, context.triggerUserLogin, context.githubToken);
+  return roles.has(permission);
+}
+function parseRoles(raw) {
+  return new Set(raw.split(",").map((role) => role.trim().toLowerCase()).filter(Boolean));
+}
+function rejectionMessage(reason) {
+  switch (reason) {
+    case "already_done":
+      return "\u274C Reset cannot apply: review already done.";
+    case "state_corrupted":
+      return "\u274C Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.";
+    case "hard_required":
+      return "\u274C Reset cannot apply: use `/reset-review --hard` for this stop reason.";
+    case "unsupported_status":
+      return "\u274C Reset cannot apply: current review status is not resettable.";
+    case "unsupported_stop_reason":
+      return "\u274C Reset cannot apply: current stop reason is not resettable.";
+  }
+}
+async function getPrAuthor(owner, repo, prNumber, token) {
+  const { stdout } = await execFileAsync5("gh", ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"], { env: buildGhEnv(token) });
+  return stdout.trim();
+}
+var BUILTIN_PERMISSIONS = /* @__PURE__ */ new Set([
+  "admin",
+  "maintain",
+  "write",
+  "triage",
+  "read"
+]);
+function isBuiltinPermission(value) {
+  return typeof value === "string" && BUILTIN_PERMISSIONS.has(value);
+}
+function pickPermission(roleName, permission) {
+  if (isBuiltinPermission(roleName)) {
+    return roleName;
+  }
+  if (isBuiltinPermission(permission)) {
+    return permission;
+  }
+  return "none";
+}
+async function getCollaboratorPermission(owner, repo, user, token) {
+  try {
+    const { stdout } = await execFileAsync5("gh", [
+      "api",
+      `repos/${owner}/${repo}/collaborators/${user}/permission`,
+      "--jq",
+      // Emit both fields as a JSON array so we can disambiguate custom
+      // role_name (e.g., "Reviewer") from built-in tiers in TS.
+      "[.role_name, .permission] | @json"
+    ], { env: buildGhEnv(token) });
+    const parsed = JSON.parse(stdout.trim());
+    const roleName = typeof parsed[0] === "string" ? parsed[0] : null;
+    const permission = typeof parsed[1] === "string" ? parsed[1] : null;
+    return pickPermission(roleName, permission);
+  } catch {
+    return "none";
+  }
+}
+async function postComment2(owner, repo, prNumber, body, token) {
+  const { stdout } = await execFileAsync5("gh", [
+    "api",
+    `repos/${owner}/${repo}/issues/${prNumber}/comments`,
+    "-X",
+    "POST",
+    "-f",
+    `body=${body}`,
+    "--jq",
+    ".id"
+  ], { env: buildGhEnv(token) });
+  return Number.parseInt(stdout.trim(), 10);
+}
+async function addEyesReaction(owner, repo, commentId, token) {
+  await execFileAsync5("gh", [
+    "api",
+    `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
+    "-X",
+    "POST",
+    "-H",
+    "Accept: application/vnd.github+json",
+    "-f",
+    "content=eyes"
+  ], { env: buildGhEnv(token) });
+}
+var defaultResetCommandDeps = {
+  getPrAuthor,
+  getCollaboratorPermission,
+  updateStateComment,
+  postComment: postComment2,
+  addEyesReaction
+};
+
 // dist/main-loop.js
 function sleep3(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
@@ -30073,7 +30319,8 @@ async function main() {
     throw new Error("[main-loop] pr-head-ref is required but not set. Cannot determine target branch.");
   }
   info(`[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
-  if (!config.autoReviewFullAuto) {
+  const isResetTrigger = isResetCommandLike(config.triggerCommentBody);
+  if (!config.autoReviewFullAuto && !isResetTrigger) {
     const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
     const labels = await fetchPrLabels(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
     if (!isAutoReviewAllowed(effectiveLabel, labels)) {
@@ -30082,6 +30329,22 @@ async function main() {
     }
   }
   const stateResult = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  if (isResetTrigger) {
+    const resetResult = await handleResetCommand({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      prNumber: config.prNumber,
+      triggerCommentId,
+      triggerCommentBody: config.triggerCommentBody,
+      triggerUserLogin: config.triggerUserLogin,
+      resetRoles: config.autoReviewResetRoles,
+      githubToken: config.githubToken,
+      stateResult
+    });
+    if (resetResult.handled) {
+      return;
+    }
+  }
   if (!stateResult.found && !stateResult.corrupted) {
     info("[main-loop] No state found. Workflow A has not run. Skipping.");
     return;
@@ -30157,7 +30420,7 @@ async function main() {
     log: (message) => info(message)
   });
   const findings = filterAndParseComments(rawComments, config.codexBotLogin, state.lastCodexReviewReceivedAt);
-  info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
+  info(`[main-loop] Found ${findings.length} P0/P1/P2 findings.`);
   const latestCommentTime = rawComments.filter((c2) => c2.user.login === config.codexBotLogin).reduce((max, c2) => c2.createdAt > max ? c2.createdAt : max, state.lastCodexReviewReceivedAt ?? "");
   const updatedStateBase = {
     ...state,
@@ -30216,7 +30479,7 @@ async function main() {
       throw new Error(`[main-loop] Invalid branch name: ${prHeadRef}`);
     }
     info(`[main-loop] Checking out branch: ${prHeadRef}`);
-    (0, import_node_child_process6.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
+    (0, import_node_child_process7.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
   const fileGroups = groupByFile(findings);
   const selectedFiles = selectFiles(fileGroups, config.maxFilesPerIteration);
@@ -30358,23 +30621,23 @@ async function main() {
     return;
   }
   info("[main-loop] Check command passed. Committing changes...");
-  (0, import_node_child_process6.execFileSync)("git", ["add", ...modifiedFiles], { stdio: "inherit" });
+  (0, import_node_child_process7.execFileSync)("git", ["add", ...modifiedFiles], { stdio: "inherit" });
   try {
-    (0, import_node_child_process6.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
+    (0, import_node_child_process7.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
     warning("[main-loop] No staged changes after edits. Skipping commit.");
   } catch {
     const sanitize = (s2) => s2.replace(/[\r\n]+/g, " ").trim();
     const commitBody = allAppliedEdits.map((e2) => `- ${sanitize(e2.explanation)}`).join("\n");
-    (0, import_node_child_process6.execFileSync)("git", [
+    (0, import_node_child_process7.execFileSync)("git", [
       "commit",
       "-m",
-      `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})
+      `fix: auto-resolve P0/P1/P2 findings from Codex review (iteration ${fixingState.iterationCount})
 
 ${commitBody}`
     ], { stdio: "inherit" });
-    (0, import_node_child_process6.execFileSync)("git", ["push"], { stdio: "inherit" });
+    (0, import_node_child_process7.execFileSync)("git", ["push"], { stdio: "inherit" });
   }
-  const commitSha = (0, import_node_child_process6.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+  const commitSha = (0, import_node_child_process7.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
   info(`[main-loop] Committed: ${commitSha}`);
   await postFixSummary(config.repoOwner, config.repoName, config.prNumber, fixingState.iterationCount, allAppliedEdits, skippedFiles, config.githubToken);
   const waitingState = {

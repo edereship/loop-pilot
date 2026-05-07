@@ -12,6 +12,7 @@
 #       pr-title: ${{ steps.pr.outputs.title }}
 #       trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
 #       trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
+#       trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
 name: Auto Review Loop
 
 on:
@@ -38,35 +39,50 @@ jobs:
     #     `vars.AUTO_REVIEW_LABEL || 'auto-review-fix'`.
     #     `issue_comment.created` exposes labels under github.event.issue.labels;
     #     `pull_request_review.submitted` under github.event.pull_request.labels.
+    #
+    # Reset commands (`/reset-review`) bypass the label gate so operators can
+    # recover a stopped loop even after the gate label has been removed. The
+    # fork guard inside steps and the runtime permission check in
+    # handleResetCommand still apply.
     if: >
       (
-        vars.AUTO_REVIEW_FULL_AUTO == 'true' ||
-        contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') ||
-        contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')
-      ) &&
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        (
+          github.event.comment.body == '/reset-review' ||
+          startsWith(github.event.comment.body, '/reset-review ')
+        )
+      ) ||
       (
         (
-          github.event_name == 'issue_comment' &&
-          github.event.issue.pull_request &&
-          (
-            github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
-            (vars.CODEX_BOT_LOGIN != '' && github.event.comment.user.login == vars.CODEX_BOT_LOGIN)
-          ) &&
-          (
-            contains(github.event.comment.body, 'Codex Review') ||
-            (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER))
-          )
-        ) ||
+          vars.AUTO_REVIEW_FULL_AUTO == 'true' ||
+          contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') ||
+          contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')
+        ) &&
         (
-          github.event_name == 'pull_request_review' &&
-          github.event.review.state == 'commented' &&
           (
-            github.event.review.user.login == 'chatgpt-codex-connector[bot]' ||
-            (vars.CODEX_BOT_LOGIN != '' && github.event.review.user.login == vars.CODEX_BOT_LOGIN)
-          ) &&
+            github.event_name == 'issue_comment' &&
+            github.event.issue.pull_request &&
+            (
+              github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
+              (vars.CODEX_BOT_LOGIN != '' && github.event.comment.user.login == vars.CODEX_BOT_LOGIN)
+            ) &&
+            (
+              contains(github.event.comment.body, 'Codex Review') ||
+              (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER))
+            )
+          ) ||
           (
-            contains(github.event.review.body, 'Codex Review') ||
-            (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.review.body, vars.CODEX_REVIEW_MARKER))
+            github.event_name == 'pull_request_review' &&
+            github.event.review.state == 'commented' &&
+            (
+              github.event.review.user.login == 'chatgpt-codex-connector[bot]' ||
+              (vars.CODEX_BOT_LOGIN != '' && github.event.review.user.login == vars.CODEX_BOT_LOGIN)
+            ) &&
+            (
+              contains(github.event.review.body, 'Codex Review') ||
+              (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.review.body, vars.CODEX_REVIEW_MARKER))
+            )
           )
         )
       )
@@ -134,6 +150,7 @@ jobs:
           pr-title: ${{ steps.pr.outputs.title }}
           trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
           trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
+          trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
           max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           debounce-seconds: ${{ vars.DEBOUNCE_SECONDS || '90' }}
           check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}
@@ -145,6 +162,7 @@ jobs:
           stabilize-count: ${{ vars.STABILIZE_COUNT || '3' }}
           auto-review-label: ${{ vars.AUTO_REVIEW_LABEL || '' }}
           auto-review-full-auto: ${{ vars.AUTO_REVIEW_FULL_AUTO || 'false' }}
+          auto-review-reset-roles: ${{ vars.AUTO_REVIEW_RESET_ROLES || 'author,write,maintain,admin' }}
 
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact

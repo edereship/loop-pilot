@@ -6,7 +6,7 @@ import type { EditOperation, StopReason } from "./types.js";
 const execFileAsync = promisify(execFile);
 
 const STOP_REASON_LABELS: Record<StopReason, string> = {
-  no_findings: "no P0/P1 findings",
+  no_findings: "no P0/P1/P2 findings",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
   loop_detected: "same findings detected in loop",
   claude_api_error: "Claude API error",
@@ -90,7 +90,7 @@ export async function postFixSummary(
 }
 
 /**
- * Posts a completion comment when all P0/P1 findings have been resolved.
+ * Posts a completion comment when all P0/P1/P2 findings have been resolved.
  */
 export async function postCompletionComment(
   owner: string,
@@ -99,7 +99,7 @@ export async function postCompletionComment(
   iterations: number,
   token: string,
 ): Promise<number> {
-  const body = `Auto-review completed.\n\nIterations: ${iterations}\nAll P0/P1 findings have been resolved.`;
+  const body = `Auto-review completed.\n\nIterations: ${iterations}\nAll P0/P1/P2 findings have been resolved.`;
 
   return postComment(owner, name, pr, body, token);
 }
@@ -109,7 +109,7 @@ export async function postCompletionComment(
  *
  * @param stopReason - The reason automation was stopped
  * @param reviewId - The ID of the last processed Codex review comment
- * @param remainingFindings - Count of open P0/P1 findings at the time of stopping
+ * @param remainingFindings - Count of open P0/P1/P2 findings at the time of stopping
  * @param detail - Additional detail about why automation stopped
  */
 export async function postStopComment(
@@ -129,7 +129,7 @@ export async function postStopComment(
     "",
     `Reason: ${formattedReason}`,
     `Last processed Codex review: #${reviewId}`,
-    `Open P0/P1 findings remaining: ${remainingFindings}`,
+    `Open P0/P1/P2 findings remaining: ${remainingFindings}`,
     `Detail: ${detail}`,
     "Recommendation: manual intervention required.",
   ].join("\n");

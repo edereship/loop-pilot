@@ -28,6 +28,7 @@ import {
   postCodexReviewRequest,
 } from "./comment-poster.js";
 import { fetchPrLabels, isAutoReviewAllowed } from "./pr-labels.js";
+import { handleResetCommand, isResetCommandLike } from "./reset-command.js";
 import type { Finding, EditOperation, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
@@ -103,7 +104,11 @@ async function main(): Promise<void> {
   // Re-check labels at run time even though the workflow `if` already filtered:
   // a maintainer may have removed the gate label after Codex posted its review.
   // When AUTO_REVIEW_FULL_AUTO=true the gate is disabled and we proceed unconditionally.
-  if (!config.autoReviewFullAuto) {
+  // Reset commands bypass this gate so operators can recover a stopped loop even
+  // after the gate label has been removed; the fork guard in the workflow and
+  // the per-user permission check in handleResetCommand still apply.
+  const isResetTrigger = isResetCommandLike(config.triggerCommentBody);
+  if (!config.autoReviewFullAuto && !isResetTrigger) {
     const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
     const labels = await fetchPrLabels(
       config.repoOwner,
@@ -127,6 +132,23 @@ async function main(): Promise<void> {
     config.prNumber,
     config.githubToken
   );
+
+  if (isResetTrigger) {
+    const resetResult = await handleResetCommand({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      prNumber: config.prNumber,
+      triggerCommentId,
+      triggerCommentBody: config.triggerCommentBody,
+      triggerUserLogin: config.triggerUserLogin,
+      resetRoles: config.autoReviewResetRoles,
+      githubToken: config.githubToken,
+      stateResult,
+    });
+    if (resetResult.handled) {
+      return;
+    }
+  }
 
   // Guard: no hidden comment means Workflow A hasn't run yet — skip silently
   if (!stateResult.found && !stateResult.corrupted) {
@@ -293,13 +315,13 @@ async function main(): Promise<void> {
     state.lastCodexReviewReceivedAt
   );
 
-  core.info(`[main-loop] Found ${findings.length} P0/P1 findings.`);
+  core.info(`[main-loop] Found ${findings.length} P0/P1/P2 findings.`);
 
   // ─── Phase 2: Judge ───────────────────────────────────────────────────────
 
   // Note: iterationCount is NOT incremented here.
   // It is incremented only after a successful Claude fix (Phase 3).
-  // Spec: "If the initial review has 0 P0/P1, iterationCount is 0."
+  // Spec: "If the initial review has 0 P0/P1/P2, iterationCount is 0."
   // Use the latest Codex comment timestamp rather than processing start time,
   // so the next iteration's time filter does not skip comments posted during processing
   const latestCommentTime = rawComments
@@ -715,7 +737,7 @@ async function main(): Promise<void> {
       [
         "commit",
         "-m",
-        `fix: auto-resolve P0/P1 findings from Codex review (iteration ${fixingState.iterationCount})\n\n${commitBody}`,
+        `fix: auto-resolve P0/P1/P2 findings from Codex review (iteration ${fixingState.iterationCount})\n\n${commitBody}`,
       ],
       { stdio: "inherit" }
     );

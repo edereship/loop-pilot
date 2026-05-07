@@ -1,6 +1,6 @@
 /** Codex インラインコメントから抽出した指摘 */
 export interface Finding {
-  severity: "P0" | "P1";
+  severity: "P0" | "P1" | "P2";
   path: string;
   line: number;
   title: string;

@@ -27,15 +27,15 @@ export function buildSystemPrompt(iteration: number, maxIterations: number): str
   const remainingIterations = Math.max(1, maxIterations - iteration + 1);
   const conservativeNote =
     remainingIterations < 3
-      ? `\nIMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1 when iteration budget is limited.`
+      ? `\nIMPORTANT: Only ${remainingIterations} iteration(s) remaining. Prefer conservative, minimal fixes over ambitious rewrites. Prioritize P0 findings over P1, then P2 when iteration budget is limited.`
       : "";
 
   return `You are a senior software engineer fixing code review findings on a pull request.
-You will receive Codex review findings (P0/P1 severity) and the source file content.
+You will receive Codex review findings (P0/P1/P2 severity) and the source file content.
 Use the edit_file tool to make precise, minimal fixes for each finding.
 
 Rules:
-- Fix ONLY the listed P0/P1 findings. Do not fix anything else.
+- Fix ONLY the listed P0/P1/P2 findings. Do not fix anything else.
 - Do not perform unrelated refactors, style changes, or improvements.
 - Do not change public APIs unless strictly necessary to fix a finding.
 - Preserve existing behavior outside the scope of each finding.

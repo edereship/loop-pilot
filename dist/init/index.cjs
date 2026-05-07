@@ -19159,10 +19159,12 @@ function loadBaseConfig() {
     prNumber: requirePositiveInt("pr-number", "PR_NUMBER"),
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
+    triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false)
+    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
+    autoReviewResetRoles: input("auto-review-reset-roles", "AUTO_REVIEW_RESET_ROLES", "author,write,maintain,admin")
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -19341,9 +19343,23 @@ async function readState(owner, name, pr, token) {
     `repos/${owner}/${name}/issues/${pr}/comments`,
     "--paginate",
     "--jq",
-    // @json ensures each result is a single-line JSON-encoded string,
-    // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-    `.[] | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+    // Filter to genuine state comments by anchoring on the visible header.
+    // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
+    // properties:
+    //   1. Comments that merely mention `<!-- auto-review-state` inline
+    //      (e.g., the Linear linkback that quotes it in backticks) are
+    //      excluded — they do not start with the visible header.
+    //   2. State comments where the trailing newline after the marker has
+    //      been stripped (manual edits / formatter mangling) are still
+    //      surfaced — `deserializeState` then determines whether the JSON
+    //      is recoverable, so corruption recovery and `/reset-review` can
+    //      proceed instead of silent skip.
+    // The additional `contains(MARKER)` guards against the rare case where a
+    // user writes a comment that legitimately begins with the visible text
+    // but is not a state comment.
+    // @json emits each match as a single-line JSON-encoded string so
+    // split("\n") parsing below stays correct.
+    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
   ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
