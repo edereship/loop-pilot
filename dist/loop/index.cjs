@@ -30299,7 +30299,8 @@ async function main() {
     throw new Error("[main-loop] pr-head-ref is required but not set. Cannot determine target branch.");
   }
   info(`[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
-  if (!config.autoReviewFullAuto) {
+  const isResetTrigger = isResetCommandLike(config.triggerCommentBody);
+  if (!config.autoReviewFullAuto && !isResetTrigger) {
     const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
     const labels = await fetchPrLabels(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
     if (!isAutoReviewAllowed(effectiveLabel, labels)) {
@@ -30308,7 +30309,7 @@ async function main() {
     }
   }
   const stateResult = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
-  if (isResetCommandLike(config.triggerCommentBody)) {
+  if (isResetTrigger) {
     const resetResult = await handleResetCommand({
       owner: config.repoOwner,
       repo: config.repoName,
