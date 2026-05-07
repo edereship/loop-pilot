@@ -21,9 +21,15 @@ export interface Config {
   triggerCommentBody: string;
   prHeadRef: string;
   prTitle: string;
-  // Empty string = label gating disabled (PoC compatibility); non-empty = only PRs with this label proceed.
+  // Label-based opt-in (default-strict: PR must carry the label unless full-auto is on).
+  // - autoReviewLabel: required label name. Empty string falls back to DEFAULT_AUTO_REVIEW_LABEL.
+  // - autoReviewFullAuto: true disables the label gate (every non-fork ready PR triggers).
   autoReviewLabel: string;
+  autoReviewFullAuto: boolean;
 }
+
+/** Fallback label name used when the user has not configured AUTO_REVIEW_LABEL. */
+export const DEFAULT_AUTO_REVIEW_LABEL = "auto-review";
 
 export function loadConfig(): Config {
   return {
@@ -76,6 +82,7 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
+    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
   };
 }
 
@@ -89,6 +96,19 @@ function input(inputName: string, envName: string, defaultValue: string): string
   const fromEnv = process.env[envName];
   if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
   return defaultValue;
+}
+
+/**
+ * Read a boolean input. Accepts case-insensitive 'true' / 'false'.
+ * Empty string returns the default (mirrors GitHub Actions semantics where
+ * an unset Repository variable yields '').
+ */
+function boolInput(inputName: string, envName: string, defaultValue: boolean): boolean {
+  const raw = input(inputName, envName, "").trim().toLowerCase();
+  if (raw === "") return defaultValue;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
 
 function intInput(inputName: string, envName: string, defaultValue: number): number {

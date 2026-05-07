@@ -19161,7 +19161,8 @@ function loadBaseConfig() {
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
-    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", "")
+    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
+    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false)
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -19172,6 +19173,16 @@ function input(inputName, envName, defaultValue) {
   if (fromEnv !== void 0 && fromEnv !== "")
     return fromEnv;
   return defaultValue;
+}
+function boolInput(inputName, envName, defaultValue) {
+  const raw = input(inputName, envName, "").trim().toLowerCase();
+  if (raw === "")
+    return defaultValue;
+  if (raw === "true")
+    return true;
+  if (raw === "false")
+    return false;
+  throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
 function intInput(inputName, envName, defaultValue) {
   const raw = input(inputName, envName, "");

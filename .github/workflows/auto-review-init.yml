@@ -20,22 +20,22 @@ permissions:
 
 jobs:
   init:
-    # Label-based opt-in:
-    #   - vars.AUTO_REVIEW_LABEL == ''  → gating disabled. Only `opened`/`ready_for_review`
-    #     start the loop; `labeled` events are ignored so adding any label to a PR
-    #     does NOT reset state and re-post `@codex review` (PoC-compatible behavior).
-    #   - vars.AUTO_REVIEW_LABEL set    → PR must currently carry the gate label, AND
-    #     for `labeled` events the just-added label must match (so adding an unrelated
-    #     label to a PR-without-the-gate-label is a no-op).
+    # Default-strict label gate with full-auto opt-out:
+    #   - vars.AUTO_REVIEW_FULL_AUTO == 'true' → gate disabled, every non-fork ready PR
+    #     triggers init. `labeled` events are ignored so adding any label does NOT reset
+    #     state and re-post `@codex review`.
+    #   - otherwise (default) → PR must carry the gate label
+    #     `vars.AUTO_REVIEW_LABEL || 'auto-review'`. For `labeled` events, the added
+    #     label itself must match the gate label (adding an unrelated label is a no-op).
     if: >
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (
-        (vars.AUTO_REVIEW_LABEL == '' && github.event.action != 'labeled') ||
+        (vars.AUTO_REVIEW_FULL_AUTO == 'true' && github.event.action != 'labeled') ||
         (
-          vars.AUTO_REVIEW_LABEL != '' &&
-          contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL) &&
-          (github.event.action != 'labeled' || github.event.label.name == vars.AUTO_REVIEW_LABEL)
+          vars.AUTO_REVIEW_FULL_AUTO != 'true' &&
+          contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review') &&
+          (github.event.action != 'labeled' || github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review'))
         )
       )
     runs-on: ubuntu-latest

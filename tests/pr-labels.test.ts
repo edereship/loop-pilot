@@ -2,11 +2,6 @@ import { describe, expect, it } from "vitest";
 import { isAutoReviewAllowed } from "../src/pr-labels.js";
 
 describe("isAutoReviewAllowed", () => {
-  it("returns true when no label is required (gating disabled)", () => {
-    expect(isAutoReviewAllowed("", [])).toBe(true);
-    expect(isAutoReviewAllowed("", ["auto-review", "bug"])).toBe(true);
-  });
-
   it("returns true when the required label is currently on the PR", () => {
     expect(isAutoReviewAllowed("auto-review", ["auto-review"])).toBe(true);
     expect(isAutoReviewAllowed("auto-review", ["bug", "auto-review", "P1"])).toBe(
@@ -28,5 +23,10 @@ describe("isAutoReviewAllowed", () => {
   it("does not match a partial label name", () => {
     expect(isAutoReviewAllowed("auto-review", ["auto-review-2"])).toBe(false);
     expect(isAutoReviewAllowed("review", ["auto-review"])).toBe(false);
+  });
+
+  it("returns false for an empty requiredLabel (fail-safe against misconfiguration)", () => {
+    expect(isAutoReviewAllowed("", [])).toBe(false);
+    expect(isAutoReviewAllowed("", ["auto-review", "bug"])).toBe(false);
   });
 });

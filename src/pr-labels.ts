@@ -41,18 +41,24 @@ export const fetchPrLabels: FetchPrLabelsFn = async (
 };
 
 /**
- * Decide whether the auto-review loop should proceed for a PR.
+ * Check whether a PR currently carries the gate label.
  *
- * - When `requiredLabel` is empty, gating is disabled (preserves PoC behavior).
- * - When `requiredLabel` is set, the PR must currently carry that label.
- *   Matching is case-insensitive to align with the workflow YAML `contains()` check
- *   and avoid a state where the workflow triggers but the runtime gate skips fixes.
+ * Caller responsibilities:
+ * - Decide whether the gate applies at all (e.g., skip when full-auto mode is on).
+ * - Resolve the effective label name (e.g., apply DEFAULT_AUTO_REVIEW_LABEL when the
+ *   user-configured value is empty) before calling.
+ *
+ * Matching is case-insensitive to align with the workflow YAML `contains()` check
+ * and avoid a state where the workflow triggers but the runtime gate skips fixes.
+ *
+ * Fail-safe: an empty `requiredLabel` returns false (a misconfigured caller should
+ * not silently bypass the gate).
  */
 export function isAutoReviewAllowed(
   requiredLabel: string,
   currentLabels: readonly string[],
 ): boolean {
-  if (requiredLabel === "") return true;
+  if (requiredLabel === "") return false;
   const normalized = requiredLabel.toLowerCase();
   return currentLabels.some((label) => label.toLowerCase() === normalized);
 }

@@ -67,9 +67,13 @@ inputs:
     required: false
     default: "3"
   auto-review-label:
-    description: "If non-empty, only PRs currently carrying this label proceed. Empty disables label gating (PoC default)."
+    description: "Label name required to run auto-review. Empty falls back to 'auto-review'."
     required: false
     default: ""
+  auto-review-full-auto:
+    description: "Set to 'true' to disable the label gate and run auto-review on every non-fork ready PR."
+    required: false
+    default: "false"
   github-repository:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false

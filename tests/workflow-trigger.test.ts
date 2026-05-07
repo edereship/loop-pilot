@@ -18,26 +18,27 @@ describe("Workflow A trigger guard", () => {
     expect(initWorkflow).toContain("types: [opened, ready_for_review, labeled]");
   });
 
-  it("disables label gating only when AUTO_REVIEW_LABEL is empty", () => {
-    expect(initWorkflow).toContain("vars.AUTO_REVIEW_LABEL == ''");
+  it("requires the gate label by default and falls back to 'auto-review'", () => {
     expect(initWorkflow).toContain(
-      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL)",
+      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')",
     );
   });
 
-  it("ignores `labeled` events when AUTO_REVIEW_LABEL is empty (no double-init on label edits)", () => {
+  it("opts out of the label gate only when AUTO_REVIEW_FULL_AUTO is exactly 'true'", () => {
+    expect(initWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO == 'true'");
+    expect(initWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO != 'true'");
+  });
+
+  it("ignores labeled events under full-auto mode (no double-init on label edits)", () => {
     expect(initWorkflow).toContain(
-      "vars.AUTO_REVIEW_LABEL == '' && github.event.action != 'labeled'",
+      "vars.AUTO_REVIEW_FULL_AUTO == 'true' && github.event.action != 'labeled'",
     );
   });
 
-  it("requires a non-empty AUTO_REVIEW_LABEL before enforcing the label-match branch", () => {
-    expect(initWorkflow).toContain("vars.AUTO_REVIEW_LABEL != ''");
-  });
-
-  it("ignores `labeled` events for unrelated labels when gating is enabled", () => {
-    expect(initWorkflow).toContain("github.event.action != 'labeled'");
-    expect(initWorkflow).toContain("github.event.label.name == vars.AUTO_REVIEW_LABEL");
+  it("ignores `labeled` events for unrelated labels when the gate is enabled", () => {
+    expect(initWorkflow).toContain(
+      "github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review')",
+    );
   });
 });
 
@@ -76,18 +77,23 @@ describe("Workflow B trigger guard", () => {
     expect(loopWorkflow).toContain("contains(github.event.comment.body, 'Codex Review')");
   });
 
-  it("does not run auto-fix unless the PR carries AUTO_REVIEW_LABEL (when set)", () => {
-    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_LABEL == ''");
+  it("requires the gate label by default with 'auto-review' fallback for both event types", () => {
     expect(loopWorkflow).toContain(
-      "contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL)",
+      "contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')",
     );
     expect(loopWorkflow).toContain(
-      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL)",
+      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review')",
     );
   });
 
-  it("forwards AUTO_REVIEW_LABEL to the loop action for runtime re-check", () => {
+  it("opts out of the label gate via AUTO_REVIEW_FULL_AUTO=true", () => {
+    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO == 'true'");
+  });
+
+  it("forwards both AUTO_REVIEW_LABEL and AUTO_REVIEW_FULL_AUTO to the loop action", () => {
     expect(loopWorkflow).toContain("auto-review-label:");
     expect(loopWorkflow).toContain("vars.AUTO_REVIEW_LABEL || ''");
+    expect(loopWorkflow).toContain("auto-review-full-auto:");
+    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO || 'false'");
   });
 });

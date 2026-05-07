@@ -32,24 +32,24 @@ PR #7 の実環境では上記値で Codex review を検知できた。未設定
 - fallback の `chatgpt-codex-connector[bot]` と `Codex Review` は明示的に別条件として残す
 - 通常ユーザーの PR コメント/レビューや、Codex bot 以外の投稿では Workflow B が起動しない
 
-## ラベル付き PR のみ起動する運用（opt-in）
+## ラベル付き PR のみ起動する運用（default-strict + full-auto opt-out）
 
-本番リポジトリで意図しない PR に Codex review / Claude auto-fix loop が走らないよう、Repository variable `AUTO_REVIEW_LABEL` で起動ラベルを指定する opt-in 運用をサポートする（TY-137）。
+本番リポジトリで意図しない PR に Codex review / Claude auto-fix loop が走らないよう、デフォルトで「`auto-review` ラベルが付いた PR でのみ起動」する仕様（TY-137）。完全自動化したい場合のみ opt-out できる。
 
 **仕様:**
-- Repository variable `AUTO_REVIEW_LABEL` にラベル名を設定すると、その名前のラベルが付いた PR でのみ Workflow A/B が起動する
-- 未設定または空文字なら従来通り全 PR で起動する（PoC 互換）
-- 推奨ラベル名は `auto-review`。チーム慣習に応じて任意の名前を使える
-- ラベル名の変更は Repository variable の値を書き換えるだけで完結し、workflow YAML の修正は不要
+- **デフォルト挙動はラベル必須**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review` ラベルを要求する
+- カスタムラベル名を使いたい場合は Repository variable `AUTO_REVIEW_LABEL` にラベル名を設定する。ラベル名の変更は variable の値を書き換えるだけで完結し、workflow YAML の修正は不要
+- 完全自動化（label gate を無効化して全 PR で起動）したい場合のみ Repository variable `AUTO_REVIEW_FULL_AUTO=true` を設定する
+- ラベル比較は case-insensitive（workflow YAML の `contains()` と整合）
 
 **Workflow A（PR 作成 / ready / labeled トリガー）の挙動:**
-- ラベル未設定の PR が作成・ready になっても hidden comment 作成や `@codex review` 投稿は行わない
+- デフォルト（label gate 有効）: ラベル未設定の PR が作成・ready になっても hidden comment 作成や `@codex review` 投稿は行わない
 - 後から起動ラベルを付けた瞬間（`pull_request.labeled`）に初回 `@codex review` が起動する
-- 無関係なラベルが追加されただけでは起動しない（追加されたラベルが `AUTO_REVIEW_LABEL` と一致する場合のみ）
-- `AUTO_REVIEW_LABEL` が未設定（gating disabled）の場合は `labeled` イベント自体を `if` で除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューが走らないようにするため
+- 無関係なラベルが追加されただけでは起動しない（追加されたラベルが要求ラベルと一致する場合のみ）
+- `AUTO_REVIEW_FULL_AUTO=true`（label gate 無効）時は `labeled` イベントを `if` で除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューが走らないようにするため
 
 **Workflow B（Codex レビュー受信トリガー）の挙動:**
-- workflow `if` で trigger payload の labels を確認し、ラベルがなければ即スキップ（fast skip）
+- workflow `if` で trigger payload の labels を確認し、ラベルがなければ即スキップ（fast skip）。`AUTO_REVIEW_FULL_AUTO=true` の場合はこの確認をスキップ
 - TS 側でも実行時に `GET /repos/{owner}/{repo}/issues/{pr}/labels` を呼び直し、ラベルが現在も付いているかを再確認する。Codex 投稿後にラベルが外された場合に修正フェーズへ進まないようにするため
 - ラベルが外れている場合は state を更新せずに早期 return する。状態は `waiting_codex` のまま温存され、ラベルを付け直した後に新たな `@codex review` が来れば再開する
 

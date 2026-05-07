@@ -54,7 +54,8 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 | `STABILIZE_COUNT` | コメント数安定と判定する連続一致回数 | `3` | `3` |
 | `CODEX_REVIEW_MARKER` | Codex 総評レビュー/コメントの検知文言 | `Codex Review` | `Codex Review` |
 | `CODEX_REVIEW_REQUEST_TOKEN` | `@codex review` 投稿専用の接続済みユーザー PAT。未設定時は `GITHUB_TOKEN` に fallback | なし | 接続済みユーザーの Fine-grained PAT |
-| `AUTO_REVIEW_LABEL` | 起動ラベル名。設定すると、このラベルが付いた PR でのみ Workflow A/B が起動する。未設定/空文字なら全 PR で起動（PoC 互換） | なし | 未設定（PoC は全 PR 対象） |
+| `AUTO_REVIEW_LABEL` | 起動ラベル名（カスタマイズ用）。デフォルトのラベル必須モードでこのラベルが付いた PR のみ Workflow A/B が起動する。未設定/空文字なら `auto-review` をフォールバック使用 | `auto-review` | 未設定（フォールバックで `auto-review` を要求） |
+| `AUTO_REVIEW_FULL_AUTO` | `true` を設定すると label gate を無効化し、すべての非 fork ready PR で起動する（完全自動化、PoC 互換挙動） | `false`（ラベル必須） | 未設定（ラベル必須） |
 
 GitHub Actions workflow の `env` または Repository variables で設定する。
 

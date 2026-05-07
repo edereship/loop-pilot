@@ -29103,6 +29103,7 @@ function info(message) {
 }
 
 // dist/config.js
+var DEFAULT_AUTO_REVIEW_LABEL = "auto-review";
 function loadConfig() {
   return {
     ...loadBaseConfig(),
@@ -29143,7 +29144,8 @@ function loadBaseConfig() {
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
-    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", "")
+    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
+    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false)
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -29154,6 +29156,16 @@ function input(inputName, envName, defaultValue) {
   if (fromEnv !== void 0 && fromEnv !== "")
     return fromEnv;
   return defaultValue;
+}
+function boolInput(inputName, envName, defaultValue) {
+  const raw = input(inputName, envName, "").trim().toLowerCase();
+  if (raw === "")
+    return defaultValue;
+  if (raw === "true")
+    return true;
+  if (raw === "false")
+    return false;
+  throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
 function intInput(inputName, envName, defaultValue) {
   const raw = input(inputName, envName, "");
@@ -30019,7 +30031,7 @@ var fetchPrLabels = async (owner, name, pr2, token) => {
 };
 function isAutoReviewAllowed(requiredLabel, currentLabels) {
   if (requiredLabel === "")
-    return true;
+    return false;
   const normalized = requiredLabel.toLowerCase();
   return currentLabels.some((label) => label.toLowerCase() === normalized);
 }
@@ -30061,10 +30073,11 @@ async function main() {
     throw new Error("[main-loop] pr-head-ref is required but not set. Cannot determine target branch.");
   }
   info(`[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
-  if (config.autoReviewLabel !== "") {
+  if (!config.autoReviewFullAuto) {
+    const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
     const labels = await fetchPrLabels(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
-    if (!isAutoReviewAllowed(config.autoReviewLabel, labels)) {
-      info(`[main-loop] Required label '${config.autoReviewLabel}' is not present on PR #${config.prNumber}. Skipping (no state mutation, no fix).`);
+    if (!isAutoReviewAllowed(effectiveLabel, labels)) {
+      info(`[main-loop] Required label '${effectiveLabel}' is not present on PR #${config.prNumber}. Skipping (no state mutation, no fix).`);
       return;
     }
   }

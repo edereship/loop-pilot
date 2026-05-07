@@ -3,7 +3,7 @@ import { resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import Anthropic from "@anthropic-ai/sdk";
 import * as core from "@actions/core";
-import { loadConfig, loadInitConfig } from "./config.js";
+import { loadConfig, loadInitConfig, DEFAULT_AUTO_REVIEW_LABEL } from "./config.js";
 import { createInitialState, readState, updateStateComment } from "./state-manager.js";
 import {
   fetchReviewComments,
@@ -99,20 +99,21 @@ async function main(): Promise<void> {
     `[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`
   );
 
-  // ─── Phase 0: Label gate (opt-in for production) ─────────────────────────
+  // ─── Phase 0: Label gate (default-strict, opt-out via AUTO_REVIEW_FULL_AUTO) ───
   // Re-check labels at run time even though the workflow `if` already filtered:
   // a maintainer may have removed the gate label after Codex posted its review.
-  // When config.autoReviewLabel is empty, gating is disabled (PoC compatibility).
-  if (config.autoReviewLabel !== "") {
+  // When AUTO_REVIEW_FULL_AUTO=true the gate is disabled and we proceed unconditionally.
+  if (!config.autoReviewFullAuto) {
+    const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
     const labels = await fetchPrLabels(
       config.repoOwner,
       config.repoName,
       config.prNumber,
       config.githubToken,
     );
-    if (!isAutoReviewAllowed(config.autoReviewLabel, labels)) {
+    if (!isAutoReviewAllowed(effectiveLabel, labels)) {
       core.info(
-        `[main-loop] Required label '${config.autoReviewLabel}' is not present on PR #${config.prNumber}. Skipping (no state mutation, no fix).`,
+        `[main-loop] Required label '${effectiveLabel}' is not present on PR #${config.prNumber}. Skipping (no state mutation, no fix).`,
       );
       return;
     }
