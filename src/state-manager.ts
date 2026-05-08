@@ -198,7 +198,7 @@ export async function readState(
       //   2. State comments where the trailing newline after the marker has
       //      been stripped (manual edits / formatter mangling) are still
       //      surfaced — `deserializeState` then determines whether the JSON
-      //      is recoverable, so corruption recovery and `/reset-review` can
+      //      is recoverable, so corruption recovery and `/restart-review` can
       //      proceed instead of silent skip.
       // The additional `contains(MARKER)` guards against the rare case where a
       // user writes a comment that legitimately begins with the visible text

@@ -28,7 +28,10 @@ import {
   postCodexReviewRequest,
 } from "./comment-poster.js";
 import { fetchPrLabels, isAutoReviewAllowed } from "./pr-labels.js";
-import { handleResetCommand, isResetCommandLike } from "./reset-command.js";
+import {
+  handleRestartCommand,
+  isRestartCommandLike,
+} from "./restart-command.js";
 import type { Finding, EditOperation, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
@@ -104,11 +107,11 @@ async function main(): Promise<void> {
   // Re-check labels at run time even though the workflow `if` already filtered:
   // a maintainer may have removed the gate label after Codex posted its review.
   // When AUTO_REVIEW_FULL_AUTO=true the gate is disabled and we proceed unconditionally.
-  // Reset commands bypass this gate so operators can recover a stopped loop even
+  // Recovery commands bypass this gate so operators can recover or restart a loop even
   // after the gate label has been removed; the fork guard in the workflow and
-  // the per-user permission check in handleResetCommand still apply.
-  const isResetTrigger = isResetCommandLike(config.triggerCommentBody);
-  if (!config.autoReviewFullAuto && !isResetTrigger) {
+  // the per-user permission checks in command handlers still apply.
+  const isCommandTrigger = isRestartCommandLike(config.triggerCommentBody);
+  if (!config.autoReviewFullAuto && !isCommandTrigger) {
     const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
     const labels = await fetchPrLabels(
       config.repoOwner,
@@ -133,19 +136,20 @@ async function main(): Promise<void> {
     config.githubToken
   );
 
-  if (isResetTrigger) {
-    const resetResult = await handleResetCommand({
+  if (isRestartCommandLike(config.triggerCommentBody)) {
+    const restartResult = await handleRestartCommand({
       owner: config.repoOwner,
       repo: config.repoName,
       prNumber: config.prNumber,
       triggerCommentId,
       triggerCommentBody: config.triggerCommentBody,
       triggerUserLogin: config.triggerUserLogin,
-      resetRoles: config.autoReviewResetRoles,
+      restartRoles: config.autoReviewRestartRoles,
       githubToken: config.githubToken,
+      codexReviewRequestToken: config.codexReviewRequestToken,
       stateResult,
     });
-    if (resetResult.handled) {
+    if (restartResult.handled) {
       return;
     }
   }
@@ -191,7 +195,8 @@ async function main(): Promise<void> {
     // Unreachable — guard for type narrowing
     return;
   }
-  const { state, commentId } = stateResult;
+  const { state } = stateResult;
+  const { commentId } = stateResult;
 
   // Guard: status === "initialized" means Workflow A never posted the review request
   if (state.status === "initialized") {

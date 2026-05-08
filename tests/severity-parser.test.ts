@@ -43,6 +43,17 @@ describe("parseSeverity", () => {
     expect(result.title).toBe("Title");
   });
 
+  it("parses Codex image badge comments including P2", () => {
+    const raw =
+      "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Reject soft restart for exhausted/looped states**\n\nThe restart can stop again immediately.\n\nUseful? React with 👍 / 👎.";
+
+    const result = parseSeverity(raw);
+
+    expect(result.severity).toBe("P2");
+    expect(result.title).toBe("Reject soft restart for exhausted/looped states");
+    expect(result.body).toBe("The restart can stop again immediately.");
+  });
+
   // --- Preprocessing: leading whitespace/newlines ---
 
   it('strips leading whitespace before matching ("\\n  P0 Title" → P0, "Title")', () => {

@@ -40,17 +40,18 @@ jobs:
     #     `issue_comment.created` exposes labels under github.event.issue.labels;
     #     `pull_request_review.submitted` under github.event.pull_request.labels.
     #
-    # Reset commands (`/reset-review`) bypass the label gate so operators can
-    # recover a stopped loop even after the gate label has been removed. The
+    # Recovery commands (`/restart-review`) bypass the label
+    # gate so operators can recover a stopped loop or restart a completed loop
+    # even after the gate label has been removed. The
     # fork guard inside steps and the runtime permission check in
-    # handleResetCommand still apply.
+    # handleRestartCommand still apply.
     if: >
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
         (
-          github.event.comment.body == '/reset-review' ||
-          startsWith(github.event.comment.body, '/reset-review ')
+          github.event.comment.body == '/restart-review' ||
+          startsWith(github.event.comment.body, '/restart-review ')
         )
       ) ||
       (
@@ -162,7 +163,7 @@ jobs:
           stabilize-count: ${{ vars.STABILIZE_COUNT || '3' }}
           auto-review-label: ${{ vars.AUTO_REVIEW_LABEL || '' }}
           auto-review-full-auto: ${{ vars.AUTO_REVIEW_FULL_AUTO || 'false' }}
-          auto-review-reset-roles: ${{ vars.AUTO_REVIEW_RESET_ROLES || 'author,write,maintain,admin' }}
+          auto-review-restart-roles: ${{ vars.AUTO_REVIEW_RESTART_ROLES || 'author,write,maintain,admin' }}
 
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact

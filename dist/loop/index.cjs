@@ -29147,7 +29147,7 @@ function loadBaseConfig() {
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
     autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
-    autoReviewResetRoles: input("auto-review-reset-roles", "AUTO_REVIEW_RESET_ROLES", "author,write,maintain,admin")
+    autoReviewRestartRoles: input("auto-review-restart-roles", "AUTO_REVIEW_RESTART_ROLES", "author,write,maintain,admin")
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -29335,7 +29335,7 @@ async function readState(owner, name, pr2, token) {
     //   2. State comments where the trailing newline after the marker has
     //      been stripped (manual edits / formatter mangling) are still
     //      surfaced — `deserializeState` then determines whether the JSON
-    //      is recoverable, so corruption recovery and `/reset-review` can
+    //      is recoverable, so corruption recovery and `/restart-review` can
     //      proceed instead of silent skip.
     // The additional `contains(MARKER)` guards against the rare case where a
     // user writes a comment that legitimately begins with the visible text
@@ -29381,6 +29381,7 @@ var CODEX_FOOTER_PATTERN = /\n?Useful\? React with 👍 \/ 👎\.\s*$/;
 var NO_FINDINGS_PATTERN = /\bno\s+(?:p0\s*\/\s*p1\s+)?findings?\b|\b0\s+findings?\b|\bno\s+issues?\b/i;
 var STAGE1_REGEX = /^\s*\[?(P[0-2])\]?\s*(.*)/;
 var STAGE2_REGEX = /^\s*(?:\*{2})?\[?(P[0-2])\]?(?:\*{2})?\s*(.*)/;
+var IMAGE_BADGE_REGEX = /!\[(P[0-2])\s+Badge\]\([^)]+\)(?:\s*<\/sub>)*\s*(.*)$/i;
 var FALLBACK_KEYWORD_REGEX = /\b(P0|P1)\b/;
 function parseSeverity(rawBody) {
   const stripped = rawBody.replace(/^[\s\n]+/, "");
@@ -29400,6 +29401,12 @@ function parseSeverity(rawBody) {
     const title = stage2Match[2].trim();
     return { severity, title: cleanTitle(title), body };
   }
+  const imageBadgeMatch = IMAGE_BADGE_REGEX.exec(firstLine);
+  if (imageBadgeMatch) {
+    const severity = imageBadgeMatch[1].toUpperCase();
+    const title = imageBadgeMatch[2].trim();
+    return { severity, title: cleanTitle(title), body };
+  }
   if (NO_FINDINGS_PATTERN.test(firstLine)) {
     return { severity: null, title: firstLine.trim(), body };
   }
@@ -29411,7 +29418,7 @@ function parseSeverity(rawBody) {
   return { severity: null, title: firstLine.trim(), body };
 }
 function cleanTitle(title) {
-  return title.trim().replace(/^\*\*(.+)\*\*$/, "$1").replace(/^__(.+)__$/, "$1").trim();
+  return title.trim().replace(/^\*\*/, "").replace(/\*\*$/, "").replace(/^\*\*(.+)\*\*$/, "$1").replace(/^__(.+)__$/, "$1").trim();
 }
 
 // dist/review-collector.js
@@ -29551,7 +29558,7 @@ function isLoop(currentFindings, findingsHashHistory) {
 }
 
 // dist/claude-fix-engine.js
-var DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101";
+var DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6";
 var EDIT_FILE_TOOL = {
   name: "edit_file",
   description: "Replace a specific code section in a file",
@@ -29564,7 +29571,8 @@ var EDIT_FILE_TOOL = {
       explanation: { type: "string" }
     },
     required: ["path", "old_code", "new_code", "explanation"]
-  }
+  },
+  strict: true
 };
 function buildSystemPrompt(iteration, maxIterations) {
   const remainingIterations = Math.max(1, maxIterations - iteration + 1);
@@ -30052,123 +30060,101 @@ function isAutoReviewAllowed(requiredLabel, currentLabels) {
   return currentLabels.some((label) => label.toLowerCase() === normalized);
 }
 
-// dist/reset-command.js
+// dist/restart-command.js
 var import_node_child_process6 = require("node:child_process");
 var import_node_util6 = require("node:util");
 var execFileAsync5 = (0, import_node_util6.promisify)(import_node_child_process6.execFile);
-var SOFT_RESET_REASONS = /* @__PURE__ */ new Set([
-  "claude_api_error",
-  "test_failure",
-  "manual_stop"
-]);
-var HARD_RESET_REASONS = /* @__PURE__ */ new Set([
-  ...SOFT_RESET_REASONS,
-  "max_iterations",
-  "loop_detected"
-]);
 function normalizeBody(body) {
   return body.replace(/[\r\n]+$/, "");
 }
-function isResetCommandLike(body) {
+function isRestartCommandLike(body) {
   const normalized = normalizeBody(body).toLowerCase();
-  return normalized === "/reset-review" || normalized.startsWith("/reset-review ");
+  return normalized === "/restart-review" || normalized.startsWith("/restart-review ");
 }
-function parseResetCommand(body) {
+function parseRestartCommand(body) {
   const normalized = normalizeBody(body);
   const lower = normalized.toLowerCase();
-  if (lower === "/reset-review") {
-    return { isReset: true, mode: "soft" };
+  if (lower === "/restart-review") {
+    return { isRestart: true, mode: "soft" };
   }
-  if (!lower.startsWith("/reset-review ")) {
-    return { isReset: false };
+  if (!lower.startsWith("/restart-review ")) {
+    return { isRestart: false };
   }
-  const tail = normalized.slice("/reset-review ".length).trim();
+  const tail = normalized.slice("/restart-review ".length).trim();
   if (tail === "") {
-    return { isReset: true, mode: "soft" };
+    return { isRestart: true, mode: "soft" };
   }
   if (tail.toLowerCase() === "--hard") {
-    return { isReset: true, mode: "hard" };
+    return { isRestart: true, mode: "hard" };
   }
-  return { isReset: true, invalidReason: "unsupported_option" };
+  return { isRestart: true, invalidReason: "unsupported_option" };
 }
-function applyResetToState(state, mode) {
-  if (state.status === "waiting_codex") {
-    return {
-      ok: true,
-      nextState: state,
-      noChange: true,
-      previousStopReason: state.stopReason
-    };
-  }
-  if (state.status === "done") {
-    return { ok: false, reason: "already_done" };
-  }
-  if (state.status !== "stopped") {
+function applyRestartToState(state, mode, reviewRequestCommentId) {
+  if (state.status === "initialized" || state.status === "fixing") {
     return { ok: false, reason: "unsupported_status" };
   }
-  if (state.stopReason === "state_corrupted") {
+  if (state.status === "stopped" && state.stopReason === "state_corrupted") {
     return { ok: false, reason: "state_corrupted" };
   }
-  const stopReason = state.stopReason;
-  if (mode === "soft") {
-    if (stopReason === "max_iterations" || stopReason === "loop_detected") {
-      return { ok: false, reason: "hard_required" };
-    }
-    if (stopReason !== null && !SOFT_RESET_REASONS.has(stopReason)) {
-      return { ok: false, reason: "unsupported_stop_reason" };
-    }
-  }
-  if (mode === "hard" && stopReason !== null && !HARD_RESET_REASONS.has(stopReason)) {
-    return { ok: false, reason: "unsupported_stop_reason" };
+  if (state.status !== "done" && state.status !== "stopped" && state.status !== "waiting_codex") {
+    return { ok: false, reason: "unsupported_status" };
   }
   const nextState = {
     ...state,
     status: "waiting_codex",
-    stopReason: null
+    stopReason: null,
+    lastProcessedReviewId: null,
+    lastCodexRequestCommentId: reviewRequestCommentId
   };
   if (mode === "hard") {
     nextState.iterationCount = 0;
     nextState.findingsHashHistory = [];
+    nextState.lastFindingsHash = null;
   }
-  return { ok: true, nextState, previousStopReason: stopReason };
+  return { ok: true, nextState, previousStopReason: state.stopReason };
 }
-async function handleResetCommand(context, deps = defaultResetCommandDeps) {
-  const command = parseResetCommand(context.triggerCommentBody);
-  if (!command.isReset) {
+async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
+  const command = parseRestartCommand(context.triggerCommentBody);
+  if (!command.isRestart) {
     return { handled: false };
   }
   if (command.invalidReason) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset rejected: unsupported option. Use `/reset-review` or `/reset-review --hard`.", context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.", context.githubToken);
     return { handled: true };
   }
   if (!context.stateResult.found && context.stateResult.corrupted) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.", context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.", context.githubToken);
     return { handled: true };
   }
   if (!context.stateResult.found) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Reset cannot apply: auto-review state was not found.", context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart cannot apply: auto-review state was not found.", context.githubToken);
     return { handled: true };
   }
-  const hasPermission = await canReset(context, deps);
+  const hasPermission = await canRestart(context, deps);
   if (!hasPermission) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Reset rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to reset auto-review.`, context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`, context.githubToken);
     return { handled: true };
   }
-  const resetResult = applyResetToState(context.stateResult.state, command.mode);
-  if (!resetResult.ok) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, rejectionMessage(resetResult.reason), context.githubToken);
+  const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
+  if (!preflight.ok) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, restartRejectionMessage(preflight.reason), context.githubToken);
     return { handled: true };
   }
-  if (!resetResult.noChange) {
-    await deps.updateStateComment(context.owner, context.repo, context.stateResult.commentId, resetResult.nextState, context.githubToken);
+  await deps.updateStateComment(context.owner, context.repo, context.stateResult.commentId, preflight.nextState, context.githubToken);
+  const reviewRequestCommentId = await deps.postCodexReviewRequest(context.owner, context.repo, context.prNumber, context.codexReviewRequestToken);
+  const restartResult = applyRestartToState(context.stateResult.state, command.mode, reviewRequestCommentId);
+  if (!restartResult.ok) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, restartRejectionMessage(restartResult.reason), context.githubToken);
+    return { handled: true };
   }
-  const body = resetResult.noChange ? "\u{1F7E2} Already in waiting_codex \u2014 no change." : [
-    `\u{1F7E2} Auto-review reset accepted by @${context.triggerUserLogin}.`,
+  await deps.updateStateComment(context.owner, context.repo, context.stateResult.commentId, restartResult.nextState, context.githubToken);
+  await deps.postComment(context.owner, context.repo, context.prNumber, [
+    `\u{1F7E2} Auto-review restarted by @${context.triggerUserLogin}.`,
     "",
     `mode: ${command.mode}`,
-    `from: ${resetResult.previousStopReason ?? "none"}`
-  ].join("\n");
-  await deps.postComment(context.owner, context.repo, context.prNumber, body, context.githubToken);
+    `from: ${restartResult.previousStopReason ?? "none"}`,
+    `reviewRequestCommentId: ${reviewRequestCommentId}`
+  ].join("\n"), context.githubToken);
   if (context.triggerCommentId !== 0) {
     try {
       await deps.addEyesReaction(context.owner, context.repo, context.triggerCommentId, context.githubToken);
@@ -30177,11 +30163,11 @@ async function handleResetCommand(context, deps = defaultResetCommandDeps) {
   }
   return { handled: true };
 }
-async function canReset(context, deps) {
+async function canRestart(context, deps) {
   if (!context.triggerUserLogin) {
     return false;
   }
-  const roles = parseRoles(context.resetRoles);
+  const roles = parseRoles(context.restartRoles);
   if (roles.has("author")) {
     const author = await deps.getPrAuthor(context.owner, context.repo, context.prNumber, context.githubToken);
     if (author === context.triggerUserLogin) {
@@ -30194,18 +30180,12 @@ async function canReset(context, deps) {
 function parseRoles(raw) {
   return new Set(raw.split(",").map((role) => role.trim().toLowerCase()).filter(Boolean));
 }
-function rejectionMessage(reason) {
+function restartRejectionMessage(reason) {
   switch (reason) {
-    case "already_done":
-      return "\u274C Reset cannot apply: review already done.";
     case "state_corrupted":
-      return "\u274C Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.";
-    case "hard_required":
-      return "\u274C Reset cannot apply: use `/reset-review --hard` for this stop reason.";
+      return "\u274C Restart cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.";
     case "unsupported_status":
-      return "\u274C Reset cannot apply: current review status is not resettable.";
-    case "unsupported_stop_reason":
-      return "\u274C Reset cannot apply: current stop reason is not resettable.";
+      return "\u274C Restart cannot apply: current review status is not restartable.";
   }
 }
 async function getPrAuthor(owner, repo, prNumber, token) {
@@ -30274,12 +30254,13 @@ async function addEyesReaction(owner, repo, commentId, token) {
     "content=eyes"
   ], { env: buildGhEnv(token) });
 }
-var defaultResetCommandDeps = {
+var defaultRestartCommandDeps = {
   getPrAuthor,
   getCollaboratorPermission,
   updateStateComment,
   postComment: postComment2,
-  addEyesReaction
+  addEyesReaction,
+  postCodexReviewRequest
 };
 
 // dist/main-loop.js
@@ -30319,8 +30300,8 @@ async function main() {
     throw new Error("[main-loop] pr-head-ref is required but not set. Cannot determine target branch.");
   }
   info(`[main-loop] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
-  const isResetTrigger = isResetCommandLike(config.triggerCommentBody);
-  if (!config.autoReviewFullAuto && !isResetTrigger) {
+  const isCommandTrigger = isRestartCommandLike(config.triggerCommentBody);
+  if (!config.autoReviewFullAuto && !isCommandTrigger) {
     const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
     const labels = await fetchPrLabels(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
     if (!isAutoReviewAllowed(effectiveLabel, labels)) {
@@ -30329,19 +30310,20 @@ async function main() {
     }
   }
   const stateResult = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
-  if (isResetTrigger) {
-    const resetResult = await handleResetCommand({
+  if (isRestartCommandLike(config.triggerCommentBody)) {
+    const restartResult = await handleRestartCommand({
       owner: config.repoOwner,
       repo: config.repoName,
       prNumber: config.prNumber,
       triggerCommentId,
       triggerCommentBody: config.triggerCommentBody,
       triggerUserLogin: config.triggerUserLogin,
-      resetRoles: config.autoReviewResetRoles,
+      restartRoles: config.autoReviewRestartRoles,
       githubToken: config.githubToken,
+      codexReviewRequestToken: config.codexReviewRequestToken,
       stateResult
     });
-    if (resetResult.handled) {
+    if (restartResult.handled) {
       return;
     }
   }
@@ -30365,7 +30347,8 @@ async function main() {
   if (!stateResult.found) {
     return;
   }
-  const { state, commentId } = stateResult;
+  const { state } = stateResult;
+  const { commentId } = stateResult;
   if (state.status === "initialized") {
     info("[main-loop] State is 'initialized' \u2014 Workflow A incomplete.");
     await postInitIncompleteComment(config.repoOwner, config.repoName, config.prNumber, config.githubToken);

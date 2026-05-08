@@ -90,6 +90,25 @@ describe("filterAndParseComments", () => {
     expect(findings.map((f) => f.severity)).toEqual(["P0", "P2", "P1"]);
   });
 
+  it("includes Codex image-badge P2 findings", () => {
+    const comments: RawReviewComment[] = [
+      makeComment({
+        id: 1,
+        body:
+          "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Reject soft restart for exhausted/looped states**\n\nThe restart can stop again immediately.\n\nUseful? React with 👍 / 👎.",
+      }),
+    ];
+
+    const findings = filterAndParseComments(comments, BOT_LOGIN, null);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      severity: "P2",
+      title: "Reject soft restart for exhausted/looped states",
+      body: "The restart can stop again immediately.",
+    });
+  });
+
   it("filters by createdAt when lastReceivedAt is provided", () => {
     const lastReceivedAt = "2024-01-10T12:00:00Z";
     const comments: RawReviewComment[] = [

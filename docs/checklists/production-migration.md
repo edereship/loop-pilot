@@ -27,7 +27,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 | TY-145 | High | 必須 / E2E 検証 | 外部 fork PR と branch protection 下での本番 E2E |
 | TY-141 | Medium | 条件付き必須 / 仕様判断 | large file と cross-file finding の対応方針 |
 | TY-142 | Medium | 仕様判断 | debounce / concurrency / `issue_comment` 互換 trigger 方針 |
-| TY-144 | Medium | 運用改善 | `/reset-review` と hidden state recovery |
+| TY-144 | Medium | 運用改善 | `/restart-review` と hidden state recovery |
 
 High は本番移植前に完了または明確な保留判断が必要な項目。Medium は初期移植では手動運用や制限付き運用で代替できるが、移植先の規模・運用要件によって High に上げる。
 
@@ -62,7 +62,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 - [ ] 外部 fork PR を使った起動防止 E2E 検証（TY-145）
 - [ ] branch protection / required checks 下での commit/push 可否確認（TY-145）
 - [ ] `MAX_REVIEW_ITERATIONS` の適正値決定（コスト試算に基づく。20以上も検討。TY-140）
-- [ ] `/reset-review` 等のリカバリコマンド実装（TY-144）
+- [ ] `/restart-review` 等のリカバリコマンド実装（TY-144）
 - [ ] hidden comment 消失時の自動リカバリ機構（TY-144）
 - [ ] GitHub API レート制限の考慮（1 iteration あたり最低4回の API コール × 20 iteration = 80回。複数 PR が並行する場合は 1時間あたり1,000リクエスト制限に注意。TY-140 / TY-142）
 - [ ] Slack 通知等の運用連携（PoC 完了条件からは除外。必要になった時点で別 Issue 化）
@@ -86,7 +86,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 - Slack 通知、ラベル連携以外の外部連携、管理 UI
 - 外部 DB / 外部キュー化。ただし `concurrency` キュー制約が本番要件に合わない場合は TY-142 で再判断する
 - 完全な cross-file 修正エンジン化。初期移植では TY-141 で手動対応ポリシーまたは限定実装を決める
-- `/reset-review` の完全自動化。初期移植時は手動復旧で代替可能だが、TY-144 で運用改善として追跡する
+- `/restart-review` の完全自動化。初期移植時は手動復旧で代替可能だが、TY-144 で運用改善として追跡する
 
 ---
 

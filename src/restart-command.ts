@@ -1,147 +1,106 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { buildGhEnv } from "./gh-env.js";
+import { postCodexReviewRequest as defaultPostCodexReviewRequest } from "./comment-poster.js";
 import { updateStateComment as defaultUpdateStateComment } from "./state-manager.js";
 import type { ReadStateResult } from "./state-manager.js";
 import type { ReviewState, StopReason } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
-export type ResetMode = "soft" | "hard";
+export type RestartMode = "soft" | "hard";
 type Permission = "admin" | "maintain" | "write" | "triage" | "read" | "none";
 
-const SOFT_RESET_REASONS = new Set<StopReason>([
-  "claude_api_error",
-  "test_failure",
-  "manual_stop",
-]);
-const HARD_RESET_REASONS = new Set<StopReason>([
-  ...SOFT_RESET_REASONS,
-  "max_iterations",
-  "loop_detected",
-]);
+export type RestartParseResult =
+  | { isRestart: false }
+  | { isRestart: true; mode: RestartMode; invalidReason?: never }
+  | { isRestart: true; invalidReason: "unsupported_option" };
 
-export type ResetParseResult =
-  | { isReset: false }
-  | { isReset: true; mode: ResetMode; invalidReason?: never }
-  | { isReset: true; invalidReason: "unsupported_option" };
-
-// Workflow B's `if:` triggers reset-review handling on:
-//   github.event.comment.body == '/reset-review'
-//   || startsWith(github.event.comment.body, '/reset-review ')
-// GitHub Actions `==` and `startsWith` are case-insensitive but the separator
-// is a single literal space — leading whitespace, tabs, and other separators
-// would not start the workflow. The runtime parser mirrors this contract so
-// commands accepted here also reach Workflow B (no silent drift). Trailing
-// CR/LF is tolerated because GitHub sometimes appends them to comment bodies.
 function normalizeBody(body: string): string {
   return body.replace(/[\r\n]+$/, "");
 }
 
-export function isResetCommandLike(body: string): boolean {
+export function isRestartCommandLike(body: string): boolean {
   const normalized = normalizeBody(body).toLowerCase();
-  return normalized === "/reset-review" || normalized.startsWith("/reset-review ");
+  return normalized === "/restart-review" || normalized.startsWith("/restart-review ");
 }
 
-export function parseResetCommand(body: string): ResetParseResult {
+export function parseRestartCommand(body: string): RestartParseResult {
   const normalized = normalizeBody(body);
   const lower = normalized.toLowerCase();
 
-  if (lower === "/reset-review") {
-    return { isReset: true, mode: "soft" };
+  if (lower === "/restart-review") {
+    return { isRestart: true, mode: "soft" };
   }
-  if (!lower.startsWith("/reset-review ")) {
-    return { isReset: false };
+  if (!lower.startsWith("/restart-review ")) {
+    return { isRestart: false };
   }
 
-  const tail = normalized.slice("/reset-review ".length).trim();
+  const tail = normalized.slice("/restart-review ".length).trim();
   if (tail === "") {
-    return { isReset: true, mode: "soft" };
+    return { isRestart: true, mode: "soft" };
   }
   if (tail.toLowerCase() === "--hard") {
-    return { isReset: true, mode: "hard" };
+    return { isRestart: true, mode: "hard" };
   }
-  return { isReset: true, invalidReason: "unsupported_option" };
+  return { isRestart: true, invalidReason: "unsupported_option" };
 }
 
-export type ResetApplyResult =
+export type RestartApplyResult =
   | {
       ok: true;
       nextState: ReviewState;
       previousStopReason: StopReason | null;
-      noChange?: boolean;
     }
   | {
       ok: false;
-      reason:
-        | "already_done"
-        | "state_corrupted"
-        | "hard_required"
-        | "unsupported_status"
-        | "unsupported_stop_reason";
+      reason: "state_corrupted" | "unsupported_status";
     };
 
-export function applyResetToState(
+export function applyRestartToState(
   state: ReviewState,
-  mode: ResetMode,
-): ResetApplyResult {
-  if (state.status === "waiting_codex") {
-    return {
-      ok: true,
-      nextState: state,
-      noChange: true,
-      previousStopReason: state.stopReason,
-    };
-  }
-  if (state.status === "done") {
-    return { ok: false, reason: "already_done" };
-  }
-  if (state.status !== "stopped") {
+  mode: RestartMode,
+  reviewRequestCommentId: number | null,
+): RestartApplyResult {
+  if (state.status === "initialized" || state.status === "fixing") {
     return { ok: false, reason: "unsupported_status" };
   }
-  if (state.stopReason === "state_corrupted") {
+  if (state.status === "stopped" && state.stopReason === "state_corrupted") {
     return { ok: false, reason: "state_corrupted" };
   }
-
-  const stopReason = state.stopReason;
-  if (mode === "soft") {
-    if (stopReason === "max_iterations" || stopReason === "loop_detected") {
-      return { ok: false, reason: "hard_required" };
-    }
-    if (stopReason !== null && !SOFT_RESET_REASONS.has(stopReason)) {
-      return { ok: false, reason: "unsupported_stop_reason" };
-    }
-  }
-  if (mode === "hard" && stopReason !== null && !HARD_RESET_REASONS.has(stopReason)) {
-    return { ok: false, reason: "unsupported_stop_reason" };
+  if (state.status !== "done" && state.status !== "stopped" && state.status !== "waiting_codex") {
+    return { ok: false, reason: "unsupported_status" };
   }
 
   const nextState: ReviewState = {
     ...state,
     status: "waiting_codex",
     stopReason: null,
+    lastProcessedReviewId: null,
+    lastCodexRequestCommentId: reviewRequestCommentId,
   };
   if (mode === "hard") {
     nextState.iterationCount = 0;
     nextState.findingsHashHistory = [];
+    nextState.lastFindingsHash = null;
   }
-
-  return { ok: true, nextState, previousStopReason: stopReason };
+  return { ok: true, nextState, previousStopReason: state.stopReason };
 }
 
-export interface ResetCommandContext {
+export interface RestartCommandContext {
   owner: string;
   repo: string;
   prNumber: number;
   triggerCommentId: number;
   triggerCommentBody: string;
   triggerUserLogin: string;
-  resetRoles: string;
+  restartRoles: string;
   githubToken: string;
+  codexReviewRequestToken: string;
   stateResult: ReadStateResult;
 }
 
-export interface ResetCommandDeps {
+export interface RestartCommandDeps {
   getPrAuthor: (
     owner: string,
     repo: string,
@@ -174,14 +133,20 @@ export interface ResetCommandDeps {
     commentId: number,
     token: string,
   ) => Promise<void>;
+  postCodexReviewRequest: (
+    owner: string,
+    repo: string,
+    prNumber: number,
+    token: string,
+  ) => Promise<number>;
 }
 
-export async function handleResetCommand(
-  context: ResetCommandContext,
-  deps: ResetCommandDeps = defaultResetCommandDeps,
+export async function handleRestartCommand(
+  context: RestartCommandContext,
+  deps: RestartCommandDeps = defaultRestartCommandDeps,
 ): Promise<{ handled: boolean }> {
-  const command = parseResetCommand(context.triggerCommentBody);
-  if (!command.isReset) {
+  const command = parseRestartCommand(context.triggerCommentBody);
+  if (!command.isRestart) {
     return { handled: false };
   }
 
@@ -190,7 +155,7 @@ export async function handleResetCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      "❌ Reset rejected: unsupported option. Use `/reset-review` or `/reset-review --hard`.",
+      "❌ Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.",
       context.githubToken,
     );
     return { handled: true };
@@ -201,7 +166,7 @@ export async function handleResetCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      "❌ Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.",
+      "❌ Restart cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.",
       context.githubToken,
     );
     return { handled: true };
@@ -211,60 +176,84 @@ export async function handleResetCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      "❌ Reset cannot apply: auto-review state was not found.",
+      "❌ Restart cannot apply: auto-review state was not found.",
       context.githubToken,
     );
     return { handled: true };
   }
 
-  const hasPermission = await canReset(context, deps);
+  const hasPermission = await canRestart(context, deps);
   if (!hasPermission) {
     await deps.postComment(
       context.owner,
       context.repo,
       context.prNumber,
-      `❌ Reset rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to reset auto-review.`,
+      `❌ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`,
       context.githubToken,
     );
     return { handled: true };
   }
 
-  const resetResult = applyResetToState(context.stateResult.state, command.mode);
-  if (!resetResult.ok) {
+  const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
+  if (!preflight.ok) {
     await deps.postComment(
       context.owner,
       context.repo,
       context.prNumber,
-      rejectionMessage(resetResult.reason),
+      restartRejectionMessage(preflight.reason),
       context.githubToken,
     );
     return { handled: true };
   }
 
-  if (!resetResult.noChange) {
-    await deps.updateStateComment(
+  await deps.updateStateComment(
+    context.owner,
+    context.repo,
+    context.stateResult.commentId,
+    preflight.nextState,
+    context.githubToken,
+  );
+
+  const reviewRequestCommentId = await deps.postCodexReviewRequest(
+    context.owner,
+    context.repo,
+    context.prNumber,
+    context.codexReviewRequestToken,
+  );
+  const restartResult = applyRestartToState(
+    context.stateResult.state,
+    command.mode,
+    reviewRequestCommentId,
+  );
+  if (!restartResult.ok) {
+    await deps.postComment(
       context.owner,
       context.repo,
-      context.stateResult.commentId,
-      resetResult.nextState,
+      context.prNumber,
+      restartRejectionMessage(restartResult.reason),
       context.githubToken,
     );
+    return { handled: true };
   }
 
-  const body = resetResult.noChange
-    ? "🟢 Already in waiting_codex — no change."
-    : [
-        `🟢 Auto-review reset accepted by @${context.triggerUserLogin}.`,
-        "",
-        `mode: ${command.mode}`,
-        `from: ${resetResult.previousStopReason ?? "none"}`,
-      ].join("\n");
-
+  await deps.updateStateComment(
+    context.owner,
+    context.repo,
+    context.stateResult.commentId,
+    restartResult.nextState,
+    context.githubToken,
+  );
   await deps.postComment(
     context.owner,
     context.repo,
     context.prNumber,
-    body,
+    [
+      `🟢 Auto-review restarted by @${context.triggerUserLogin}.`,
+      "",
+      `mode: ${command.mode}`,
+      `from: ${restartResult.previousStopReason ?? "none"}`,
+      `reviewRequestCommentId: ${reviewRequestCommentId}`,
+    ].join("\n"),
     context.githubToken,
   );
   if (context.triggerCommentId !== 0) {
@@ -277,22 +266,24 @@ export async function handleResetCommand(
       );
     } catch {
       // The audit comment is the durable acknowledgement. Reaction failures
-      // can happen on duplicate reactions and should not roll back the reset.
+      // can happen on duplicate reactions and should not roll back restart.
     }
   }
-
   return { handled: true };
 }
 
-async function canReset(
-  context: ResetCommandContext,
-  deps: ResetCommandDeps,
+async function canRestart(
+  context: Pick<
+    RestartCommandContext,
+    "owner" | "repo" | "prNumber" | "triggerUserLogin" | "restartRoles" | "githubToken"
+  >,
+  deps: Pick<RestartCommandDeps, "getPrAuthor" | "getCollaboratorPermission">,
 ): Promise<boolean> {
   if (!context.triggerUserLogin) {
     return false;
   }
 
-  const roles = parseRoles(context.resetRoles);
+  const roles = parseRoles(context.restartRoles);
   if (roles.has("author")) {
     const author = await deps.getPrAuthor(
       context.owner,
@@ -323,18 +314,12 @@ function parseRoles(raw: string): Set<string> {
   );
 }
 
-function rejectionMessage(reason: Exclude<ResetApplyResult, { ok: true }>["reason"]): string {
+function restartRejectionMessage(reason: Exclude<RestartApplyResult, { ok: true }>["reason"]): string {
   switch (reason) {
-    case "already_done":
-      return "❌ Reset cannot apply: review already done.";
     case "state_corrupted":
-      return "❌ Reset cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.";
-    case "hard_required":
-      return "❌ Reset cannot apply: use `/reset-review --hard` for this stop reason.";
+      return "❌ Restart cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.";
     case "unsupported_status":
-      return "❌ Reset cannot apply: current review status is not resettable.";
-    case "unsupported_stop_reason":
-      return "❌ Reset cannot apply: current stop reason is not resettable.";
+      return "❌ Restart cannot apply: current review status is not restartable.";
   }
 }
 
@@ -365,7 +350,7 @@ function isBuiltinPermission(value: unknown): value is Permission {
 }
 
 /**
- * Selects the effective permission tier for reset authorization.
+ * Selects the effective permission tier for restart authorization.
  *
  * GitHub returns both `role_name` (5-tier: admin/maintain/write/triage/read)
  * and `permission` (legacy 4-tier: admin/write/read/none). When a repo uses
@@ -373,7 +358,7 @@ function isBuiltinPermission(value: unknown): value is Permission {
  * while `permission` still reports the underlying base tier. We prefer
  * `role_name` for accurate maintain/triage detection but fall back to
  * `permission` whenever `role_name` is not one of the built-in tiers, so
- * custom-role users keep their base access for reset commands.
+ * custom-role users keep their base access for restart commands.
  */
 export function pickPermission(
   roleName: string | null,
@@ -462,10 +447,11 @@ async function addEyesReaction(
   );
 }
 
-const defaultResetCommandDeps: ResetCommandDeps = {
+const defaultRestartCommandDeps: RestartCommandDeps = {
   getPrAuthor,
   getCollaboratorPermission,
   updateStateComment: defaultUpdateStateComment,
   postComment,
   addEyesReaction,
+  postCodexReviewRequest: defaultPostCodexReviewRequest,
 };

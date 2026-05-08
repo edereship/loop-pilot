@@ -78,8 +78,8 @@ inputs:
     description: "Set to 'true' to disable the label gate and run auto-review on every non-fork ready PR."
     required: false
     default: "false"
-  auto-review-reset-roles:
-    description: "Comma-separated roles allowed to run /reset-review. Supports author, admin, maintain, write, triage, read."
+  auto-review-restart-roles:
+    description: "Comma-separated roles allowed to run /restart-review. Supports author, admin, maintain, write, triage, read."
     required: false
     default: "author,write,maintain,admin"
   github-repository:

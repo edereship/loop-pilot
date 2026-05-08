@@ -10,6 +10,10 @@ const STAGE1_REGEX = /^\s*\[?(P[0-2])\]?\s*(.*)/;
 // Stage 2: Markdown bold variants (**P0** or **[P0]**)
 const STAGE2_REGEX = /^\s*(?:\*{2})?\[?(P[0-2])\]?(?:\*{2})?\s*(.*)/;
 
+// Codex currently renders severity as an image badge:
+// **<sub><sub>![P2 Badge](...)</sub></sub>  Title**
+const IMAGE_BADGE_REGEX = /!\[(P[0-2])\s+Badge\]\([^)]+\)(?:\s*<\/sub>)*\s*(.*)$/i;
+
 // Fallback: P0 or P1 keyword anywhere in text (P2 not included per spec)
 const FALLBACK_KEYWORD_REGEX = /\b(P0|P1)\b/;
 
@@ -57,6 +61,13 @@ export function parseSeverity(rawBody: string): ParsedComment {
     return { severity, title: cleanTitle(title), body };
   }
 
+  const imageBadgeMatch = IMAGE_BADGE_REGEX.exec(firstLine);
+  if (imageBadgeMatch) {
+    const severity = imageBadgeMatch[1].toUpperCase() as "P0" | "P1" | "P2";
+    const title = imageBadgeMatch[2].trim();
+    return { severity, title: cleanTitle(title), body };
+  }
+
   // Fallback: search entire stripped text for P0 or P1 keyword
   if (NO_FINDINGS_PATTERN.test(firstLine)) {
     return { severity: null, title: firstLine.trim(), body };
@@ -75,6 +86,8 @@ export function parseSeverity(rawBody: string): ParsedComment {
 function cleanTitle(title: string): string {
   return title
     .trim()
+    .replace(/^\*\*/, "")
+    .replace(/\*\*$/, "")
     .replace(/^\*\*(.+)\*\*$/, "$1")
     .replace(/^__(.+)__$/, "$1")
     .trim();

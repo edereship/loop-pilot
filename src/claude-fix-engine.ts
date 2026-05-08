@@ -6,9 +6,9 @@ export interface FixFileResult {
   skippedReason: string | null;
 }
 
-export const DEFAULT_CLAUDE_MODEL = "claude-opus-4-5-20251101";
+export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6";
 
-const EDIT_FILE_TOOL: Anthropic.Tool = {
+const EDIT_FILE_TOOL = {
   name: "edit_file",
   description: "Replace a specific code section in a file",
   input_schema: {
@@ -21,7 +21,8 @@ const EDIT_FILE_TOOL: Anthropic.Tool = {
     },
     required: ["path", "old_code", "new_code", "explanation"],
   },
-};
+  strict: true,
+} as Anthropic.Tool & { strict: true };
 
 export function buildSystemPrompt(iteration: number, maxIterations: number): string {
   const remainingIterations = Math.max(1, maxIterations - iteration + 1);

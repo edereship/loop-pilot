@@ -27,7 +27,7 @@ export interface Config {
   // - autoReviewFullAuto: true disables the label gate (every non-fork ready PR triggers).
   autoReviewLabel: string;
   autoReviewFullAuto: boolean;
-  autoReviewResetRoles: string;
+  autoReviewRestartRoles: string;
 }
 
 /**
@@ -90,9 +90,9 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
     autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
-    autoReviewResetRoles: input(
-      "auto-review-reset-roles",
-      "AUTO_REVIEW_RESET_ROLES",
+    autoReviewRestartRoles: input(
+      "auto-review-restart-roles",
+      "AUTO_REVIEW_RESTART_ROLES",
       "author,write,maintain,admin",
     ),
   };

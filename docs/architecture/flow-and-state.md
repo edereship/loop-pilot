@@ -128,31 +128,32 @@ All P0/P1 findings have been resolved.
 
 ---
 
-### 7. 停止後の reset
+### 7. 停止後・完了後の restart
 
-`stopped` になった後、人間がPRコメントに `/reset-review` または `/reset-review --hard` を投稿すると、Workflow B が reset command として処理する。
+`stopped` または `done(no_findings)` になった後、人間がPRコメントに `/restart-review` または `/restart-review --hard` を投稿すると、Workflow B が restart command として処理する。
 
 処理:
-- Workflow B の `issue_comment.created` で `/reset-review` から始まるPRコメントを受け付ける
+- Workflow B の `issue_comment.created` で `/restart-review` から始まるPRコメントを受け付ける
 - Codex bot / `Codex Review` marker 条件には依存しない
 - runtime で command body を再parseする
-- `trigger-user-login` に対して `AUTO_REVIEW_RESET_ROLES` の権限チェックを行う
-- `readState` 直後、通常の terminal state guard より前に reset handler へ分岐する
-- reset handler は受理・拒否・no-op のいずれでもPRコメントを残し、同じWorkflow実行内では通常のCodex review処理やClaude fix処理へ進まない
+- `trigger-user-login` に対して `AUTO_REVIEW_RESTART_ROLES` の権限チェックを行う
+- `readState` 直後、通常の terminal state guard より前に restart handler へ分岐する
+- restart handler は hidden state を更新し、`@codex review` を投稿し、受理・拒否のPRコメントを残す
+- 同じWorkflow実行内では通常のCodex review処理やClaude fix処理へ進まず、投稿された `@codex review` に対する Codex review を次の Workflow B 実行で処理する
 
-soft reset:
-- 対象: `claude_api_error`, `test_failure`, `manual_stop`
+soft restart:
+- 対象: `done(no_findings)`, `stopped(...)`, `waiting_codex`
 - `status` を `waiting_codex` に戻す
 - `stopReason` を `null` に戻す
-- `iterationCount`、`findingsHashHistory`、`lastProcessedReviewId`、`lastClaudeCommitSha` は保持する
+- `lastProcessedReviewId` を `null` に戻す
+- `lastCodexReviewReceivedAt` は保持し、過去の Codex inline comment を再処理しない
+- `lastCodexRequestCommentId` を新しい `@codex review` comment ID に更新する
+- `iterationCount`、`findingsHashHistory`、`lastClaudeCommitSha`、`lastFindingsHash` は保持する
 
-hard reset:
-- 対象: soft reset 対象 + `max_iterations`, `loop_detected`
-- soft reset の変更に加え、`iterationCount` を `0`、`findingsHashHistory` を `[]` に戻す
+hard restart:
+- soft restart の変更に加え、`iterationCount` を `0`、`findingsHashHistory` を `[]`、`lastFindingsHash` を `null` に戻す
 
-`done` は reset 不可。`waiting_codex` は冪等な no-op として扱い、state を書き換えない。`state_corrupted` は state JSON を安全に読めないため reset 不可とし、[停止条件とリカバリ](../operations/stop-and-recovery.md) の手動復旧手順へ誘導する。
-
----
+`stopped(state_corrupted)` は state JSON を安全に読めないため restart 不可とし、[停止条件とリカバリ](../operations/stop-and-recovery.md) の手動復旧手順へ誘導する。`fixing` / `initialized` は処理中または初期化未完了のため restart 対象外とする。
 
 ## 状態管理
 
@@ -195,9 +196,8 @@ PR ごとに以下の状態を持つ。
 
 ```
 initialized → waiting_codex → fixing → waiting_codex → ... → done / stopped
-stopped --/reset-review--> waiting_codex
-stopped --/reset-review --hard--> waiting_codex
-waiting_codex --/reset-review--> waiting_codex (no-op)
+done/stopped/waiting_codex --/restart-review--> waiting_codex + "@codex review"
+done/stopped/waiting_codex --/restart-review --hard--> waiting_codex + "@codex review" (履歴リセット)
 ```
 
 | 値 | 意味 | 設定する workflow |
@@ -388,6 +388,8 @@ stateDiagram-v2
     fixing --> stopped : テスト失敗 / API エラー
     waiting_codex --> stopped : hidden comment の JSON パース失敗 (state_corrupted)
     initialized --> initialized : Workflow B が検知 → エラーコメント投稿、処理スキップ（状態は変更しない）
+    done --> waiting_codex : /restart-review で "@codex review" 投稿
+    stopped --> waiting_codex : /restart-review で "@codex review" 投稿
     done --> [*]
     stopped --> [*]
 ```
