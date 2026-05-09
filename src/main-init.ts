@@ -7,15 +7,42 @@ import {
   readState,
 } from "./state-manager.js";
 import { postCodexReviewRequest } from "./comment-poster.js";
+import type { Config } from "./config.js";
 
-async function run(): Promise<void> {
-  const config = loadInitConfig();
-  core.setSecret(config.githubToken);
-  core.setSecret(config.codexReviewRequestToken);
-  core.info(`Initializing auto-review for PR #${config.prNumber}`);
+type ReadState = typeof readState;
+type CreateStateComment = typeof createStateComment;
+type UpdateStateComment = typeof updateStateComment;
+type PostCodexReviewRequest = typeof postCodexReviewRequest;
+
+export interface InitDeps {
+  readState: ReadState;
+  createStateComment: CreateStateComment;
+  updateStateComment: UpdateStateComment;
+  postCodexReviewRequest: PostCodexReviewRequest;
+  setSecret: (secret: string) => void;
+  info: (message: string) => void;
+  warning: (message: string) => void;
+  setOutput: (name: string, value: string) => void;
+}
+
+const defaultDeps: InitDeps = {
+  readState,
+  createStateComment,
+  updateStateComment,
+  postCodexReviewRequest,
+  setSecret: core.setSecret,
+  info: core.info,
+  warning: core.warning,
+  setOutput: core.setOutput,
+};
+
+export async function runInit(config: Config, deps: InitDeps = defaultDeps): Promise<void> {
+  deps.setSecret(config.githubToken);
+  deps.setSecret(config.codexReviewRequestToken);
+  deps.info(`Initializing auto-review for PR #${config.prNumber}`);
 
   // Check for existing hidden comment (re-run support)
-  const existing = await readState(
+  const existing = await deps.readState(
     config.repoOwner, config.repoName, config.prNumber, config.githubToken,
   );
 
@@ -23,35 +50,45 @@ async function run(): Promise<void> {
   let state = createInitialState();
 
   if (existing.found) {
-    core.info("Found existing state comment, resetting to initialized");
     commentId = existing.commentId;
-    await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+    if (existing.state.status !== "initialized") {
+      deps.info(`Auto-review state is already ${existing.state.status}. Skipping init.`);
+      deps.setOutput("comment-id", String(commentId));
+      return;
+    }
+    deps.info("Found incomplete initialized state comment, continuing init");
   } else if (existing.corrupted && existing.commentId !== null) {
-    core.warning("Found corrupted state comment, overwriting with fresh state");
+    deps.warning("Found corrupted state comment, overwriting with fresh state");
     commentId = existing.commentId;
-    await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+    await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
   } else {
-    commentId = await createStateComment(config.repoOwner, config.repoName, config.prNumber, state, config.githubToken);
-    core.info(`Created state comment: ${commentId}`);
+    commentId = await deps.createStateComment(config.repoOwner, config.repoName, config.prNumber, state, config.githubToken);
+    deps.info(`Created state comment: ${commentId}`);
   }
 
   // Post @codex review
-  const reviewRequestId = await postCodexReviewRequest(
+  const reviewRequestId = await deps.postCodexReviewRequest(
     config.repoOwner,
     config.repoName,
     config.prNumber,
     config.codexReviewRequestToken
   );
-  core.info(`Posted @codex review: comment ${reviewRequestId}`);
+  deps.info(`Posted @codex review: comment ${reviewRequestId}`);
 
   // Update status to waiting_codex
   state = { ...state, status: "waiting_codex", lastCodexRequestCommentId: reviewRequestId };
-  await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+  await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
 
-  core.info("Workflow A completed: status = waiting_codex");
-  core.setOutput("comment-id", String(commentId));
+  deps.info("Workflow A completed: status = waiting_codex");
+  deps.setOutput("comment-id", String(commentId));
 }
 
-run().catch((error) => {
-  core.setFailed(error instanceof Error ? error.message : String(error));
-});
+async function run(): Promise<void> {
+  await runInit(loadInitConfig());
+}
+
+if (process.env.VITEST !== "true") {
+  run().catch((error) => {
+    core.setFailed(error instanceof Error ? error.message : String(error));
+  });
+}

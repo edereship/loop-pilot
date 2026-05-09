@@ -95,7 +95,7 @@ describe("applyRestartToState", () => {
     });
   });
 
-  it("rejects states that should not be restarted", () => {
+  it("rejects states that should not be soft-restarted", () => {
     expect(applyRestartToState(makeState({ status: "initialized", stopReason: null }), "soft", 1)).toEqual({
       ok: false,
       reason: "unsupported_status",
@@ -107,6 +107,29 @@ describe("applyRestartToState", () => {
     expect(applyRestartToState(makeState({ status: "stopped", stopReason: "state_corrupted" }), "hard", 1)).toEqual({
       ok: false,
       reason: "state_corrupted",
+    });
+  });
+
+  it("hard-restarts fixing states for operator recovery", () => {
+    const state = makeState({
+      status: "fixing",
+      stopReason: null,
+      iterationCount: 3,
+      findingsHashHistory: [{ iteration: 3, hash: "hash-a" }],
+      lastFindingsHash: "hash-a",
+    });
+
+    const result = applyRestartToState(state, "hard", 45678);
+
+    expect(result.ok).toBe(true);
+    expect(result.nextState).toMatchObject({
+      status: "waiting_codex",
+      stopReason: null,
+      iterationCount: 0,
+      findingsHashHistory: [],
+      lastFindingsHash: null,
+      lastProcessedReviewId: null,
+      lastCodexRequestCommentId: 45678,
     });
   });
 });
@@ -253,7 +276,7 @@ describe("handleRestartCommand", () => {
     });
   });
 
-  it("rejects unsupported states before posting @codex review", async () => {
+  it("rejects fixing soft restart before posting @codex review", async () => {
     const deps = makeDeps();
     const state = makeState({ status: "fixing", stopReason: null });
 
@@ -278,6 +301,49 @@ describe("handleRestartCommand", () => {
     expect(deps.postComment.mock.calls[0][3]).toContain(
       "❌ Restart cannot apply: current review status is not restartable.",
     );
+  });
+
+  it("hard-restarts fixing states", async () => {
+    const deps = makeDeps();
+    const state = makeState({
+      status: "fixing",
+      stopReason: null,
+      iterationCount: 3,
+      findingsHashHistory: [{ iteration: 3, hash: "hash-a" }],
+      lastFindingsHash: "hash-a",
+    });
+
+    await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review --hard",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        stateResult: foundState(state),
+      },
+      deps,
+    );
+
+    expect(deps.postCodexReviewRequest).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      18,
+      "codex-token",
+    );
+    expect(deps.updateStateComment.mock.calls[1][3]).toMatchObject({
+      status: "waiting_codex",
+      stopReason: null,
+      iterationCount: 0,
+      findingsHashHistory: [],
+      lastFindingsHash: null,
+      lastProcessedReviewId: null,
+      lastCodexRequestCommentId: 45678,
+    });
   });
 
   it("allows the PR author even when collaborator permission is read", async () => {

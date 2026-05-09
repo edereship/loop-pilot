@@ -20,6 +20,9 @@ permissions:
 
 jobs:
   init:
+    concurrency:
+      group: auto-review-init-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     # Default-strict label gate with full-auto opt-out:
     #   - vars.AUTO_REVIEW_FULL_AUTO == 'true' → gate disabled, every non-fork ready PR
     #     triggers init. `labeled` events are ignored so adding any label does NOT reset

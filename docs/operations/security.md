@@ -47,8 +47,11 @@ PR #7 の実環境では上記値で Codex review を検知できた。未設定
 - デフォルト（label gate 有効）: ラベル未設定の PR が作成・ready になっても hidden comment 作成や `@codex review` 投稿は行わない
 - 後から起動ラベルを付けた瞬間（`pull_request.labeled`）に初回 `@codex review` が起動する
 - 無関係なラベルが追加されただけでは起動しない（追加されたラベルが要求ラベルと一致する場合のみ）
-- `AUTO_REVIEW_FULL_AUTO=true`（label gate 無効）時は `labeled` イベントを `if` で除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューが走らないようにするため
+- `AUTO_REVIEW_FULL_AUTO=true`（label gate 無効）時は `labeled` イベントを `if` で除外する。ラベル編集のたびに余分な init run が起きないようにするため
 - `AUTO_REVIEW_FULL_AUTO=true` の間は、ラベルの付け外しによる開始/停止はできない（ラベル操作は制御条件として無視される）
+- Workflow A は `init` job 単位の PR scoped `concurrency` で直列化される。PR 作成時に起動ラベルを同時付与して `opened` と `labeled` が近接発火しても、既に `waiting_codex` 以降へ進んだ state は reset せず `@codex review` も再投稿しない
+- `concurrency` は workflow level ではなく job level に置く。無関係な `labeled` event は job `if` で skip され、pending init job を置換しないようにするため
+- 既存 state が `done` / `stopped` の場合も Workflow A は no-op になる。再実行は `/restart-review` を使う
 
 **Workflow B（Codex レビュー受信トリガー）の挙動:**
 - workflow `if` で trigger payload の labels を確認し、ラベルがなければ即スキップ（fast skip）。`AUTO_REVIEW_FULL_AUTO=true` の場合はこの確認をスキップ

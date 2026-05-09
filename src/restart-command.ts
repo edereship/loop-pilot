@@ -62,13 +62,18 @@ export function applyRestartToState(
   mode: RestartMode,
   reviewRequestCommentId: number | null,
 ): RestartApplyResult {
-  if (state.status === "initialized" || state.status === "fixing") {
+  if (state.status === "initialized" || (state.status === "fixing" && mode !== "hard")) {
     return { ok: false, reason: "unsupported_status" };
   }
   if (state.status === "stopped" && state.stopReason === "state_corrupted") {
     return { ok: false, reason: "state_corrupted" };
   }
-  if (state.status !== "done" && state.status !== "stopped" && state.status !== "waiting_codex") {
+  if (
+    state.status !== "done" &&
+    state.status !== "stopped" &&
+    state.status !== "waiting_codex" &&
+    state.status !== "fixing"
+  ) {
     return { ok: false, reason: "unsupported_status" };
   }
 

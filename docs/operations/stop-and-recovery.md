@@ -105,6 +105,7 @@ hard restart。soft restart の操作に加えて、`iterationCount` を `0`、`
 - `claude_api_error` で停止した場合: 人間が必要な修正を commit / push してから `/restart-review`
 - `test_failure` で停止した場合: 人間がテストを修正してから `/restart-review`
 - `done(no_findings)` 後に同じ PR を再度レビュー・修正ループにかけたい場合: `/restart-review`
+- `fixing` のまま停止している場合: 実行中の Workflow B がないことを確認してから `/restart-review --hard`
 
 ### `state_corrupted` の手動復旧
 

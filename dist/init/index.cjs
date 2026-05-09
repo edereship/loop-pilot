@@ -8,6 +8,10 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -24,6 +28,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/tunnel/lib/tunnel.js
 var require_tunnel = __commonJS({
@@ -18628,6 +18633,13 @@ var require_undici = __commonJS({
   }
 });
 
+// dist/main-init.js
+var main_init_exports = {};
+__export(main_init_exports, {
+  runInit: () => runInit
+});
+module.exports = __toCommonJS(main_init_exports);
+
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
 
@@ -19433,35 +19445,57 @@ async function postCodexReviewRequest(owner, name, pr, token) {
 }
 
 // dist/main-init.js
-async function run() {
-  const config = loadInitConfig();
-  setSecret(config.githubToken);
-  setSecret(config.codexReviewRequestToken);
-  info(`Initializing auto-review for PR #${config.prNumber}`);
-  const existing = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+var defaultDeps = {
+  readState,
+  createStateComment,
+  updateStateComment,
+  postCodexReviewRequest,
+  setSecret,
+  info,
+  warning,
+  setOutput
+};
+async function runInit(config, deps = defaultDeps) {
+  deps.setSecret(config.githubToken);
+  deps.setSecret(config.codexReviewRequestToken);
+  deps.info(`Initializing auto-review for PR #${config.prNumber}`);
+  const existing = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   let commentId;
   let state = createInitialState();
   if (existing.found) {
-    info("Found existing state comment, resetting to initialized");
     commentId = existing.commentId;
-    await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+    if (existing.state.status !== "initialized") {
+      deps.info(`Auto-review state is already ${existing.state.status}. Skipping init.`);
+      deps.setOutput("comment-id", String(commentId));
+      return;
+    }
+    deps.info("Found incomplete initialized state comment, continuing init");
   } else if (existing.corrupted && existing.commentId !== null) {
-    warning("Found corrupted state comment, overwriting with fresh state");
+    deps.warning("Found corrupted state comment, overwriting with fresh state");
     commentId = existing.commentId;
-    await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+    await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
   } else {
-    commentId = await createStateComment(config.repoOwner, config.repoName, config.prNumber, state, config.githubToken);
-    info(`Created state comment: ${commentId}`);
+    commentId = await deps.createStateComment(config.repoOwner, config.repoName, config.prNumber, state, config.githubToken);
+    deps.info(`Created state comment: ${commentId}`);
   }
-  const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
-  info(`Posted @codex review: comment ${reviewRequestId}`);
+  const reviewRequestId = await deps.postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
+  deps.info(`Posted @codex review: comment ${reviewRequestId}`);
   state = { ...state, status: "waiting_codex", lastCodexRequestCommentId: reviewRequestId };
-  await updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
-  info("Workflow A completed: status = waiting_codex");
-  setOutput("comment-id", String(commentId));
+  await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+  deps.info("Workflow A completed: status = waiting_codex");
+  deps.setOutput("comment-id", String(commentId));
 }
-run().catch((error2) => {
-  setFailed(error2 instanceof Error ? error2.message : String(error2));
+async function run() {
+  await runInit(loadInitConfig());
+}
+if (process.env.VITEST !== "true") {
+  run().catch((error2) => {
+    setFailed(error2 instanceof Error ? error2.message : String(error2));
+  });
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  runInit
 });
 /*! Bundled license information:
 

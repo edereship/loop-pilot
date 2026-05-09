@@ -44,7 +44,7 @@ if: >
 - **デフォルト挙動はラベル必須（default-strict）**。Repository variable `AUTO_REVIEW_LABEL` が空 / 未設定なら `auto-review-fix` ラベルを要求する（ラベル名は Codex レビュー＋ Claude 自動修正の両方を示すため `auto-review-fix`）。`AUTO_REVIEW_LABEL` を設定すれば任意のラベル名へ変更可能
 - ラベル名は小文字固定を推奨する（例: `auto-review-fix`）。大文字小文字の揺れを避け、運用上の認識ずれを防ぐ
 - 完全自動化（全 PR で起動）にしたい場合のみ `AUTO_REVIEW_FULL_AUTO=true` を Repository variable で設定する。設定すると label gate が無効化され、すべての非 fork ready PR で Workflow A が起動する
-- `AUTO_REVIEW_FULL_AUTO=true` 時は `labeled` イベントを Workflow A の起動条件から除外する。`main-init.ts` は state を初期化して `@codex review` を再投稿する設計のため、ラベル編集のたびに重複レビューと余分な auto-fix サイクルが起きるのを防ぐ
+- `AUTO_REVIEW_FULL_AUTO=true` 時は `labeled` イベントを Workflow A の起動条件から除外する。ラベル編集のたびに余分な init run が起きるのを防ぐ
 - `AUTO_REVIEW_FULL_AUTO=true` の間はラベルの付け外しを制御条件として使えない（ラベル操作では開始/停止しない）
 - gate 有効時の `labeled` イベントは、付与されたラベルが要求ラベル（`AUTO_REVIEW_LABEL || 'auto-review-fix'`）と一致する場合だけ起動する。無関係なラベルが追加されただけでは Workflow A は走らない
 
@@ -52,6 +52,13 @@ if: >
 - hidden comment で状態を初期化（`status: initialized`, `iteration_count: 0`）
 - `gh pr comment` で `@codex review` を投稿
 - `CODEX_REVIEW_REQUEST_TOKEN` が設定されている場合、`@codex review` の投稿だけ接続済みユーザー PAT を使用する。未設定時は `GITHUB_TOKEN` に fallback する
+
+冪等化:
+- Workflow A は `init` job 単位の PR scoped `concurrency` で直列化する。PR 作成時に起動ラベルを同時付与して `opened` と `labeled` が近接発火しても、後続 job は先行 job の state 更新後に実行される
+- `concurrency` は workflow level ではなく job level に置く。無関係な `labeled` event は job `if` で skip され、pending init job を置換しないようにするため
+- 既存 state が `waiting_codex` / `fixing` / `done` / `stopped` の場合、Workflow A は state reset も `@codex review` 再投稿も行わず no-op で終了する
+- 既存 state が `initialized` の場合は、前回 init が `@codex review` 投稿前に止まった未完了状態として扱い、初回レビュー投稿を継続する
+- corrupted state comment は従来通り fresh state で上書きし、初期化を継続する
 
 ---
 
@@ -263,7 +270,19 @@ Workflow B は GitHub API で取得した `.head.repo.full_name` が空または
 - 同じ review は再処理しない
 
 #### 2. concurrency 制御
-PR ごとに同時実行を防ぐ。
+Workflow A/B とも PR ごとに同時実行を防ぐ。
+
+Workflow A:
+
+```yaml
+jobs:
+  init:
+    concurrency:
+      group: auto-review-init-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+```
+
+Workflow B:
 
 ```yaml
 concurrency:

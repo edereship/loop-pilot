@@ -40,6 +40,15 @@ describe("Workflow A trigger guard", () => {
       "github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
     );
   });
+
+  it("serializes init runs per PR without canceling the queued duplicate", () => {
+    expect(initWorkflow).toContain("concurrency:");
+    expect(initWorkflow).toContain("  init:\n    concurrency:");
+    expect(initWorkflow).toContain(
+      "group: auto-review-init-${{ github.repository }}-${{ github.event.pull_request.number }}",
+    );
+    expect(initWorkflow).toContain("cancel-in-progress: false");
+  });
 });
 
 describe("Workflow B trigger guard", () => {

@@ -153,7 +153,7 @@ soft restart:
 hard restart:
 - soft restart の変更に加え、`iterationCount` を `0`、`findingsHashHistory` を `[]`、`lastFindingsHash` を `null` に戻す
 
-`stopped(state_corrupted)` は state JSON を安全に読めないため restart 不可とし、[停止条件とリカバリ](../operations/stop-and-recovery.md) の手動復旧手順へ誘導する。`fixing` / `initialized` は処理中または初期化未完了のため restart 対象外とする。
+`stopped(state_corrupted)` は state JSON を安全に読めないため restart 不可とし、[停止条件とリカバリ](../operations/stop-and-recovery.md) の手動復旧手順へ誘導する。`initialized` は初期化未完了のため restart 対象外とする。`fixing` は通常処理中の可能性があるため soft restart は拒否するが、運用者が明示的に `/restart-review --hard` を投稿した場合のみ復旧対象にする。
 
 ## 状態管理
 
@@ -197,7 +197,7 @@ PR ごとに以下の状態を持つ。
 ```
 initialized → waiting_codex → fixing → waiting_codex → ... → done / stopped
 done/stopped/waiting_codex --/restart-review--> waiting_codex + "@codex review"
-done/stopped/waiting_codex --/restart-review --hard--> waiting_codex + "@codex review" (履歴リセット)
+done/stopped/waiting_codex/fixing --/restart-review --hard--> waiting_codex + "@codex review" (履歴リセット)
 ```
 
 | 値 | 意味 | 設定する workflow |
@@ -390,6 +390,7 @@ stateDiagram-v2
     initialized --> initialized : Workflow B が検知 → エラーコメント投稿、処理スキップ（状態は変更しない）
     done --> waiting_codex : /restart-review で "@codex review" 投稿
     stopped --> waiting_codex : /restart-review で "@codex review" 投稿
+    fixing --> waiting_codex : /restart-review --hard で強制復旧
     done --> [*]
     stopped --> [*]
 ```
