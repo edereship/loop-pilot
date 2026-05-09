@@ -3,6 +3,7 @@ import { filterAndParseComments } from "../../src/review-collector.js";
 import { computeFindingsHash } from "../../src/findings-hash.js";
 import { isLoop } from "../../src/loop-detector.js";
 import type { RawReviewComment, FindingsHashEntry } from "../../src/types.js";
+import multipleCodexFindings from "../fixtures/multiple-codex-findings.json";
 
 describe("Workflow B Phase 1: review collection → findings → loop check", () => {
   const codexBot = "chatgpt-codex-connector[bot]";
@@ -72,5 +73,35 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
     const hash = computeFindingsHash(findings);
     const history: FindingsHashEntry[] = [{ iteration: 1, hash }];
     expect(isLoop(findings, history)).toBe(true);
+  });
+
+  it("extracts multiple same-file and multi-file P0/P1/P2 fixture findings", () => {
+    const findings = filterAndParseComments(
+      multipleCodexFindings as RawReviewComment[],
+      codexBot,
+      null,
+    );
+
+    expect(findings.map((finding) => ({
+      severity: finding.severity,
+      path: finding.path,
+      title: finding.title,
+    }))).toEqual([
+      {
+        severity: "P1",
+        path: "src/same.ts",
+        title: "Same-file guard can be bypassed",
+      },
+      {
+        severity: "P0",
+        path: "src/same.ts",
+        title: "Same-file unsafe default remains enabled",
+      },
+      {
+        severity: "P2",
+        path: "src/other.ts",
+        title: "Cross-file cleanup is missing",
+      },
+    ]);
   });
 });

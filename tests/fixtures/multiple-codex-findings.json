@@ -1,0 +1,26 @@
+[
+  {
+    "id": 201,
+    "user": { "login": "chatgpt-codex-connector[bot]" },
+    "body": "[P1] Same-file guard can be bypassed\n\nThe guard returns before checking the unsafe branch.\n\nUseful? React with 👍 / 👎.",
+    "path": "src/same.ts",
+    "line": 10,
+    "createdAt": "2026-05-09T00:00:00Z"
+  },
+  {
+    "id": 202,
+    "user": { "login": "chatgpt-codex-connector[bot]" },
+    "body": "[P0] Same-file unsafe default remains enabled\n\nThe default branch keeps unsafe mode enabled.\n\nUseful? React with 👍 / 👎.",
+    "path": "src/same.ts",
+    "line": 20,
+    "createdAt": "2026-05-09T00:00:01Z"
+  },
+  {
+    "id": 203,
+    "user": { "login": "chatgpt-codex-connector[bot]" },
+    "body": "[P2] Cross-file cleanup is missing\n\nThe cleanup path leaves stale state behind.\n\nUseful? React with 👍 / 👎.",
+    "path": "src/other.ts",
+    "line": 5,
+    "createdAt": "2026-05-09T00:00:02Z"
+  }
+]

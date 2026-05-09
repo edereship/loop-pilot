@@ -12,13 +12,10 @@ import {
 } from "./review-collector.js";
 import { computeFindingsHash } from "./findings-hash.js";
 import { isLoop } from "./loop-detector.js";
-import { fixFile, retryFailedEdits } from "./claude-fix-engine.js";
-import { applyEdits } from "./edit-applier.js";
 import { runCheckCommand } from "./check-runner.js";
-import {
-  buildNoApplicableEditsDetail,
-  formatFileSkipReason,
-} from "./stop-detail.js";
+import { buildNoApplicableEditsDetail } from "./stop-detail.js";
+import { planFindingsForIteration } from "./finding-planner.js";
+import { processFindingsSequentially } from "./sequential-fix-runner.js";
 import {
   postFixSummary,
   postCompletionComment,
@@ -32,57 +29,11 @@ import {
   handleRestartCommand,
   isRestartCommandLike,
 } from "./restart-command.js";
-import type { Finding, EditOperation, PrContext, ReviewState } from "./types.js";
+import type { EditOperation, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Group findings by file path.
- * Returns a Map keyed by file path.
- */
-function groupByFile(findings: Finding[]): Map<string, Finding[]> {
-  const groups = new Map<string, Finding[]>();
-  for (const finding of findings) {
-    const existing = groups.get(finding.path);
-    if (existing) {
-      existing.push(finding);
-    } else {
-      groups.set(finding.path, [finding]);
-    }
-  }
-  return groups;
-}
-
-/**
- * Select files up to maxFiles for processing.
- * Prioritization: files with P0 findings first, then P1-only files sorted by descending finding count.
- */
-function selectFiles(
-  fileGroups: Map<string, Finding[]>,
-  maxFiles: number
-): [string, Finding[]][] {
-  const entries = Array.from(fileGroups.entries());
-
-  // Separate P0 files from P1-only files
-  const p0Files = entries.filter(([, findings]) =>
-    findings.some((f) => f.severity === "P0")
-  );
-  const otherFiles = entries.filter(([, findings]) =>
-    findings.every((f) => f.severity !== "P0")
-  );
-
-  // Sort each group by descending finding count
-  const sortByCount = (a: [string, Finding[]], b: [string, Finding[]]) =>
-    b[1].length - a[1].length;
-
-  p0Files.sort(sortByCount);
-  otherFiles.sort(sortByCount);
-
-  const ordered = [...p0Files, ...otherFiles];
-  return ordered.slice(0, maxFiles);
 }
 
 async function main(): Promise<void> {
@@ -457,12 +408,16 @@ async function main(): Promise<void> {
     execFileSync("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
 
-  // Group findings and select files to process
-  const fileGroups = groupByFile(findings);
-  const selectedFiles = selectFiles(fileGroups, config.maxFilesPerIteration);
+  const plannedFindings = planFindingsForIteration(
+    findings,
+    config.maxFilesPerIteration,
+  );
+  const selectedFileCount = new Set(
+    plannedFindings.selectedFindings.map((finding) => finding.path),
+  ).size;
 
   core.info(
-    `[main-loop] Processing ${selectedFiles.length} file(s) out of ${fileGroups.size} total.`
+    `[main-loop] Processing ${plannedFindings.selectedFindings.length} finding(s) in ${selectedFileCount} file(s).`
   );
 
   const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
@@ -474,186 +429,47 @@ async function main(): Promise<void> {
   };
 
   const allAppliedEdits: EditOperation[] = [];
-  const skippedFiles: string[] = [];
   const skipReasons: { filePath: string; reason: string }[] = [];
 
   // Track modified files for rollback if check fails
-  const modifiedFiles: string[] = [];
+  let modifiedFiles: string[] = [];
 
   const repoRoot = resolve(".");
+  const skippedItems = plannedFindings.deferredFiles.map(
+    (filePath) =>
+      `${filePath}: deferred because MAX_FILES_PER_ITERATION=${config.maxFilesPerIteration} was reached`,
+  );
 
-  for (const [filePath, fileFindings] of selectedFiles) {
-    // Path traversal guard: reject paths outside repository root
-    const resolvedPath = resolve(filePath);
-    if (!resolvedPath.startsWith(repoRoot + sep) && resolvedPath !== repoRoot) {
-      core.warning(`[main-loop] Path traversal detected: ${filePath}. Skipping.`);
-      skippedFiles.push(filePath);
-      continue;
-    }
-
-    let fileContent: string;
-    try {
-      fileContent = readFileSync(filePath, "utf-8");
-    } catch {
-      core.warning(`[main-loop] Cannot read file: ${filePath}. Skipping.`);
-      skippedFiles.push(filePath);
-      continue;
-    }
-
-    try {  // Wrap Claude API + edit logic to catch unrecoverable errors
-
-    // Token estimation guard: skip files that are too large
-    const estimatedTokens = Math.ceil(fileContent.length / 4);
-    if (estimatedTokens > config.maxInputTokensPerFile) {
-      // TODO(phase:PoC, reason:chunking large files not implemented — files exceeding
-      // maxInputTokensPerFile are skipped entirely instead of being processed in chunks,
-      // due:MVP): implement chunked processing for large files
-      core.warning(
-        `[main-loop] File ${filePath} estimated ${estimatedTokens} tokens > max ${config.maxInputTokensPerFile}. Skipping.`
-      );
-      skippedFiles.push(filePath);
-      continue;
-    }
-
-    core.info(`[main-loop] Fixing ${filePath} (${fileFindings.length} findings)...`);
-
-    const fixResult = await fixFile(
-      anthropicClient,
-      prContext,
-      filePath,
-      fileContent,
-      fileFindings,
-      fixingState.iterationCount,
-      config.maxReviewIterations
-    );
-
-    if (fixResult.skippedReason) {
-      core.warning(
-        `[main-loop] Claude skipped ${filePath}: ${fixResult.skippedReason}`
-      );
-      skippedFiles.push(filePath);
-      skipReasons.push({ filePath, reason: fixResult.skippedReason });
-      continue;
-    }
-
-    if (fixResult.edits.length === 0) {
-      core.warning(`[main-loop] No edits returned for ${filePath}. Skipping.`);
-      skippedFiles.push(filePath);
-      continue;
-    }
-
-    // Apply edits (lineHints intentionally omitted: edits array does not
-    // correspond 1:1 to findings, so index-based hint lookup would be wrong)
-    let applyResult = applyEdits(fileContent, fixResult.edits, filePath);
-
-    let successfulEdits: EditOperation[] = [];
-    let failedEdits: EditOperation[] = [];
-
-    if (!applyResult.success) {
-      // Separate successful from failed edits
-      successfulEdits = fixResult.edits.filter(
-        (e) => !applyResult.failedEdits.includes(e)
-      );
-      failedEdits = applyResult.failedEdits;
-
-      // Retry up to 2 times
-      for (let retryAttempt = 0; retryAttempt < 2 && failedEdits.length > 0; retryAttempt++) {
-        core.info(
-          `[main-loop] Retrying ${failedEdits.length} failed edit(s) for ${filePath} (attempt ${retryAttempt + 1}/2)...`
-        );
-
-        // Build intermediate content by applying successful edits to original
-        let intermediateContent = fileContent;
-        if (successfulEdits.length > 0) {
-          const intermediateResult = applyEdits(
-            fileContent,
-            successfulEdits,
-            filePath
-          );
-          if (intermediateResult.success && intermediateResult.content !== null) {
-            intermediateContent = intermediateResult.content;
-          }
-        }
-
-        // Retry failed edits with the intermediate content
-        const retryResult = await retryFailedEdits(
-          anthropicClient,
-          prContext,
-          filePath,
-          intermediateContent,
-          failedEdits,
-          fixingState.iterationCount,
-          config.maxReviewIterations
-        );
-
-        if (retryResult.skippedReason || retryResult.edits.length === 0) {
-          core.warning(
-            `[main-loop] Retry produced no edits for ${filePath}. Keeping successful edits.`
-          );
-          break;
-        }
-
-        // Merge: apply successful + retry edits to ORIGINAL content
-        const mergedEdits = [...successfulEdits, ...retryResult.edits];
-        const mergedResult = applyEdits(fileContent, mergedEdits, filePath);
-
-        if (mergedResult.success) {
-          // All edits applied — update successful set and clear failed
-          successfulEdits = mergedEdits;
-          failedEdits = [];
-          applyResult = mergedResult;
-        } else {
-          // Update sets: edits that are no longer in failed are now successful
-          const stillFailed = mergedResult.failedEdits;
-          const nowSuccessful = mergedEdits.filter((e) => !stillFailed.includes(e));
-          successfulEdits = nowSuccessful;
-          failedEdits = stillFailed;
-          // Keep applyResult as partial failure; next retry will attempt remaining failed edits
-        }
+  const sequentialResult = await processFindingsSequentially({
+    client: anthropicClient,
+    findings: plannedFindings.selectedFindings,
+    prContext,
+    iteration: fixingState.iterationCount,
+    maxIterations: config.maxReviewIterations,
+    maxInputTokensPerFile: config.maxInputTokensPerFile,
+    readFile: (filePath) => {
+      const resolvedPath = resolve(filePath);
+      if (!resolvedPath.startsWith(repoRoot + sep) && resolvedPath !== repoRoot) {
+        throw new Error(`Path traversal detected: ${filePath}`);
       }
+      return readFileSync(filePath, "utf-8");
+    },
+    writeFile: (filePath, content) => {
+      writeFileSync(filePath, content, "utf-8");
+    },
+    log: (message) => core.info(message),
+    warn: (message) => core.warning(message),
+  });
 
-      // After retries, apply only the successful edits to the original file content
-      if (successfulEdits.length > 0) {
-        const finalResult = applyEdits(fileContent, successfulEdits, filePath);
-        if (finalResult.success && finalResult.content !== null) {
-          applyResult = finalResult;
-        } else {
-          core.warning(`[main-loop] All edits failed for ${filePath}. Skipping file.`);
-          skippedFiles.push(filePath);
-          continue;
-        }
-      } else {
-        core.warning(`[main-loop] All edits failed for ${filePath} after retries. Skipping file.`);
-        skippedFiles.push(filePath);
-        continue;
-      }
-    } else {
-      successfulEdits = fixResult.edits;
-    }
-
-    if (!applyResult.success || applyResult.content === null) {
-      core.warning(`[main-loop] Could not apply edits for ${filePath}. Skipping.`);
-      skippedFiles.push(filePath);
-      continue;
-    }
-
-    // Write successful edits to disk
-    writeFileSync(filePath, applyResult.content, "utf-8");
-    allAppliedEdits.push(...successfulEdits);
-    modifiedFiles.push(filePath);
-
-    core.info(
-      `[main-loop] Applied ${successfulEdits.length} edit(s) to ${filePath}.`
-    );
-
-    } catch (fileError: unknown) {
-      // Catch unrecoverable errors (e.g., 400 Bad Request from Claude API)
-      // to prevent leaving state stuck in "fixing"
-      core.error(`[main-loop] Error processing ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
-      skippedFiles.push(filePath);
-      skipReasons.push(formatFileSkipReason(filePath, fileError));
-      continue;
-    }
+  allAppliedEdits.push(...sequentialResult.appliedEdits);
+  modifiedFiles = sequentialResult.modifiedFiles;
+  for (const skipped of sequentialResult.skippedFindings) {
+    const label = `${skipped.finding.severity} ${skipped.finding.path}:${skipped.finding.line} ${skipped.finding.title}`;
+    skippedItems.push(`${label}: ${skipped.reason}`);
+    skipReasons.push({
+      filePath: skipped.finding.path,
+      reason: `${skipped.finding.title}: ${skipped.reason}`,
+    });
   }
 
   // If no edits were applied across all files → stop with claude_api_error
@@ -760,7 +576,7 @@ async function main(): Promise<void> {
     config.prNumber,
     fixingState.iterationCount,
     allAppliedEdits,
-    skippedFiles,
+    skippedItems,
     config.githubToken
   );
 

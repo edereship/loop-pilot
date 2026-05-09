@@ -29557,6 +29557,140 @@ function isLoop(currentFindings, findingsHashHistory) {
   return findingsHashHistory.some((entry) => entry.hash === currentHash);
 }
 
+// dist/check-runner.js
+var import_node_child_process3 = require("node:child_process");
+var import_node_util3 = require("node:util");
+var execAsync = (0, import_node_util3.promisify)(import_node_child_process3.exec);
+function removeAnsiSequences(output) {
+  return output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+function truncateIfNeeded(output) {
+  if (output.length <= 6e4) {
+    return output;
+  }
+  const lines = output.split("\n");
+  const headLines = lines.slice(0, 20).join("\n");
+  const tailLines = lines.slice(-50).join("\n");
+  const marker = "\n... (truncated) ...\n";
+  let result = headLines + marker + tailLines;
+  if (result.length > 6e4) {
+    result = result.slice(0, 6e4);
+  }
+  return result;
+}
+function sanitizeOutput(output) {
+  const cleaned = removeAnsiSequences(output);
+  return truncateIfNeeded(cleaned);
+}
+function extractErrorOutput(error2) {
+  if (error2 instanceof Error) {
+    const anyError = error2;
+    const stdout = anyError.stdout ? String(anyError.stdout) : "";
+    const stderr = anyError.stderr ? String(anyError.stderr) : "";
+    const message = anyError.message || String(error2);
+    return [stdout, stderr, message];
+  }
+  return ["", "", String(error2)];
+}
+async function runCheckCommand(checkCommand, modifiedFiles) {
+  const safeEnv = { ...process.env };
+  delete safeEnv.ANTHROPIC_API_KEY;
+  delete safeEnv.GITHUB_TOKEN;
+  delete safeEnv.GH_TOKEN;
+  for (const key of Object.keys(safeEnv)) {
+    if (key.startsWith("INPUT_ANTHROPIC") || key.startsWith("INPUT_GITHUB")) {
+      delete safeEnv[key];
+    }
+  }
+  try {
+    const { stdout, stderr } = await execAsync(checkCommand, {
+      timeout: 5 * 60 * 1e3,
+      // 5 minutes in milliseconds
+      encoding: "utf-8",
+      env: safeEnv
+    });
+    const combinedOutput = stdout + (stderr ? "\n" + stderr : "");
+    return {
+      success: true,
+      output: sanitizeOutput(combinedOutput)
+    };
+  } catch (error2) {
+    try {
+      if (modifiedFiles.length > 0) {
+        for (const file of modifiedFiles) {
+          (0, import_node_child_process3.execFileSync)("git", ["checkout", "--", file], {
+            encoding: "utf-8"
+          });
+        }
+      }
+    } catch (rollbackError) {
+      error(`Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+    }
+    const [stdout, stderr, errorMessage] = extractErrorOutput(error2);
+    const combinedOutput = stdout + (stderr ? "\n" + stderr : "") + (errorMessage ? "\nError: " + errorMessage : "");
+    return {
+      success: false,
+      output: sanitizeOutput(combinedOutput)
+    };
+  }
+}
+
+// dist/stop-detail.js
+var NO_APPLICABLE_EDITS_DETAIL = "Claude returned no applicable edits for any selected file";
+function sanitizeDetail(text) {
+  return text.replace(/[\r\n]+/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/`{3,}/g, "``").trim();
+}
+function buildNoApplicableEditsDetail(skipReasons) {
+  if (skipReasons.length === 0) {
+    return NO_APPLICABLE_EDITS_DETAIL;
+  }
+  const reasons = skipReasons.slice(0, 3).map(({ filePath, reason }) => `${filePath}: ${sanitizeDetail(reason)}`).join("; ");
+  return `${NO_APPLICABLE_EDITS_DETAIL}. Reasons: ${reasons}`;
+}
+
+// dist/finding-planner.js
+function severityRank(severity) {
+  switch (severity) {
+    case "P0":
+      return 0;
+    case "P1":
+      return 1;
+    case "P2":
+      return 2;
+  }
+}
+function groupByFile(findings) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const finding of findings) {
+    const existing = groups.get(finding.path);
+    if (existing) {
+      existing.push(finding);
+    } else {
+      groups.set(finding.path, [finding]);
+    }
+  }
+  return groups;
+}
+function bestSeverityRank(findings) {
+  return Math.min(...findings.map((finding) => severityRank(finding.severity)));
+}
+function planFindingsForIteration(findings, maxFiles) {
+  const fileGroups = groupByFile(findings);
+  const orderedFiles = Array.from(fileGroups.entries()).sort((a2, b2) => {
+    const severityDelta = bestSeverityRank(a2[1]) - bestSeverityRank(b2[1]);
+    if (severityDelta !== 0)
+      return severityDelta;
+    return b2[1].length - a2[1].length;
+  });
+  const selectedFiles = orderedFiles.slice(0, maxFiles);
+  const deferredFiles = orderedFiles.slice(maxFiles).map(([filePath]) => filePath);
+  const selectedFindings = selectedFiles.flatMap(([, fileFindings]) => fileFindings).sort((a2, b2) => severityRank(a2.severity) - severityRank(b2.severity));
+  return {
+    selectedFindings,
+    deferredFiles
+  };
+}
+
 // dist/claude-fix-engine.js
 var DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6";
 var EDIT_FILE_TOOL = {
@@ -29570,7 +29704,8 @@ var EDIT_FILE_TOOL = {
       new_code: { type: "string" },
       explanation: { type: "string" }
     },
-    required: ["path", "old_code", "new_code", "explanation"]
+    required: ["path", "old_code", "new_code", "explanation"],
+    additionalProperties: false
   },
   strict: true
 };
@@ -29701,17 +29836,6 @@ async function fixFile(client, prContext, filePath, fileContent, findings, itera
       await sleep2(decision.waitMs);
     }
   }
-}
-async function retryFailedEdits(client, prContext, filePath, currentContent, failedEdits, iteration, maxIterations) {
-  const syntheticFindings = failedEdits.map((edit, index) => ({
-    severity: "P1",
-    path: filePath,
-    // Use 0 as a placeholder line number since we don't have the original line
-    line: 0,
-    title: `Retry failed edit ${index + 1}`,
-    body: edit.explanation
-  }));
-  return fixFile(client, prContext, filePath, currentContent, syntheticFindings, iteration, maxIterations);
 }
 
 // dist/edit-applier.js
@@ -29861,99 +29985,119 @@ function selectNearest(candidates, content, lineHint) {
   return bestCandidate;
 }
 
-// dist/check-runner.js
-var import_node_child_process3 = require("node:child_process");
-var import_node_util3 = require("node:util");
-var execAsync = (0, import_node_util3.promisify)(import_node_child_process3.exec);
-function removeAnsiSequences(output) {
-  return output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+// dist/sequential-fix-runner.js
+function formatFindingLabel(finding) {
+  return `${finding.severity} ${finding.path}:${finding.line} ${finding.title}`;
 }
-function truncateIfNeeded(output) {
-  if (output.length <= 6e4) {
-    return output;
-  }
-  const lines = output.split("\n");
-  const headLines = lines.slice(0, 20).join("\n");
-  const tailLines = lines.slice(-50).join("\n");
-  const marker = "\n... (truncated) ...\n";
-  let result = headLines + marker + tailLines;
-  if (result.length > 6e4) {
-    result = result.slice(0, 6e4);
-  }
-  return result;
+function getSuccessfulEdits(edits, failedEdits) {
+  return edits.filter((edit) => !failedEdits.includes(edit));
 }
-function sanitizeOutput(output) {
-  const cleaned = removeAnsiSequences(output);
-  return truncateIfNeeded(cleaned);
-}
-function extractErrorOutput(error2) {
-  if (error2 instanceof Error) {
-    const anyError = error2;
-    const stdout = anyError.stdout ? String(anyError.stdout) : "";
-    const stderr = anyError.stderr ? String(anyError.stderr) : "";
-    const message = anyError.message || String(error2);
-    return [stdout, stderr, message];
-  }
-  return ["", "", String(error2)];
-}
-async function runCheckCommand(checkCommand, modifiedFiles) {
-  const safeEnv = { ...process.env };
-  delete safeEnv.ANTHROPIC_API_KEY;
-  delete safeEnv.GITHUB_TOKEN;
-  delete safeEnv.GH_TOKEN;
-  for (const key of Object.keys(safeEnv)) {
-    if (key.startsWith("INPUT_ANTHROPIC") || key.startsWith("INPUT_GITHUB")) {
-      delete safeEnv[key];
-    }
-  }
-  try {
-    const { stdout, stderr } = await execAsync(checkCommand, {
-      timeout: 5 * 60 * 1e3,
-      // 5 minutes in milliseconds
-      encoding: "utf-8",
-      env: safeEnv
-    });
-    const combinedOutput = stdout + (stderr ? "\n" + stderr : "");
-    return {
-      success: true,
-      output: sanitizeOutput(combinedOutput)
-    };
-  } catch (error2) {
-    try {
-      if (modifiedFiles.length > 0) {
-        for (const file of modifiedFiles) {
-          (0, import_node_child_process3.execFileSync)("git", ["checkout", "--", file], {
-            encoding: "utf-8"
-          });
-        }
+async function processFindingsSequentially(options) {
+  const fixFile2 = options.fixFile ?? fixFile;
+  const client = options.client ?? {};
+  const contentByPath = /* @__PURE__ */ new Map();
+  const changedContentByPath = /* @__PURE__ */ new Map();
+  const appliedEdits = [];
+  const skippedFindings = [];
+  const editsByPath = /* @__PURE__ */ new Map();
+  const findingsByPath = /* @__PURE__ */ new Map();
+  for (const finding of options.findings) {
+    let currentContent = contentByPath.get(finding.path);
+    if (currentContent === void 0) {
+      try {
+        currentContent = options.readFile(finding.path);
+        contentByPath.set(finding.path, currentContent);
+      } catch (error2) {
+        const reason = error2 instanceof Error ? error2.message : "Cannot read file";
+        options.warn?.(`[sequential-fix] Skipping ${formatFindingLabel(finding)}: ${reason}`);
+        skippedFindings.push({ finding, reason });
+        continue;
       }
-    } catch (rollbackError) {
-      error(`Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
     }
-    const [stdout, stderr, errorMessage] = extractErrorOutput(error2);
-    const combinedOutput = stdout + (stderr ? "\n" + stderr : "") + (errorMessage ? "\nError: " + errorMessage : "");
-    return {
-      success: false,
-      output: sanitizeOutput(combinedOutput)
-    };
+    const estimatedTokens = Math.ceil(currentContent.length / 4);
+    if (estimatedTokens > options.maxInputTokensPerFile) {
+      const reason = `file estimated ${estimatedTokens} tokens exceeds max ${options.maxInputTokensPerFile}`;
+      options.warn?.(`[sequential-fix] Skipping ${formatFindingLabel(finding)}: ${reason}`);
+      skippedFindings.push({ finding, reason });
+      continue;
+    }
+    try {
+      options.log?.(`[sequential-fix] Fixing ${formatFindingLabel(finding)}`);
+      const fixResult = await fixFile2(client, options.prContext, finding.path, currentContent, [finding], options.iteration, options.maxIterations);
+      if (fixResult.skippedReason) {
+        skippedFindings.push({ finding, reason: fixResult.skippedReason });
+        continue;
+      }
+      if (fixResult.edits.length === 0) {
+        skippedFindings.push({
+          finding,
+          reason: "Claude returned no edit_file calls."
+        });
+        continue;
+      }
+      const applyResult = applyEdits(currentContent, fixResult.edits, finding.path);
+      const successfulEdits = applyResult.success ? fixResult.edits : getSuccessfulEdits(fixResult.edits, applyResult.failedEdits);
+      let nextContent = applyResult.content;
+      if (nextContent === null && successfulEdits.length > 0) {
+        const successfulApplyResult = applyEdits(currentContent, successfulEdits, finding.path);
+        nextContent = successfulApplyResult.content;
+      }
+      if (successfulEdits.length === 0 || nextContent === null) {
+        skippedFindings.push({
+          finding,
+          reason: "No returned edits could be applied to the latest file content."
+        });
+        continue;
+      }
+      if (!applyResult.success) {
+        skippedFindings.push({
+          finding,
+          reason: `${applyResult.failedEdits.length} edit(s) could not be applied and require manual follow-up.`
+        });
+      }
+      contentByPath.set(finding.path, nextContent);
+      changedContentByPath.set(finding.path, nextContent);
+      appliedEdits.push(...successfulEdits);
+      const fileEdits = editsByPath.get(finding.path) ?? [];
+      fileEdits.push(...successfulEdits);
+      editsByPath.set(finding.path, fileEdits);
+      const fileFindings = findingsByPath.get(finding.path) ?? [];
+      fileFindings.push(finding);
+      findingsByPath.set(finding.path, fileFindings);
+    } catch (error2) {
+      const reason = error2 instanceof Error ? error2.message : String(error2);
+      options.warn?.(`[sequential-fix] Skipping ${formatFindingLabel(finding)}: ${reason}`);
+      skippedFindings.push({ finding, reason });
+    }
   }
-}
-
-// dist/stop-detail.js
-var NO_APPLICABLE_EDITS_DETAIL = "Claude returned no applicable edits for any selected file";
-function sanitizeDetail(text) {
-  return text.replace(/[\r\n]+/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/`{3,}/g, "``").trim();
-}
-function formatFileSkipReason(filePath, reason) {
-  const text = reason instanceof Error ? reason.message : String(reason);
-  return { filePath, reason: sanitizeDetail(text) };
-}
-function buildNoApplicableEditsDetail(skipReasons) {
-  if (skipReasons.length === 0) {
-    return NO_APPLICABLE_EDITS_DETAIL;
+  const modifiedFiles = [];
+  for (const [filePath, content] of changedContentByPath) {
+    try {
+      options.writeFile(filePath, content);
+      modifiedFiles.push(filePath);
+    } catch (error2) {
+      const reason = error2 instanceof Error ? error2.message : String(error2);
+      options.warn?.(`[sequential-fix] Failed to write ${filePath}: ${reason}`);
+      const fileEdits = editsByPath.get(filePath) ?? [];
+      if (fileEdits.length > 0) {
+        const fileEditsSet = new Set(fileEdits);
+        const kept = appliedEdits.filter((e2) => !fileEditsSet.has(e2));
+        appliedEdits.splice(0, appliedEdits.length, ...kept);
+      }
+      const fileFindings = findingsByPath.get(filePath) ?? [];
+      for (const finding of fileFindings) {
+        skippedFindings.push({
+          finding,
+          reason: `write failed: ${reason}`
+        });
+      }
+    }
   }
-  const reasons = skipReasons.slice(0, 3).map(({ filePath, reason }) => `${filePath}: ${sanitizeDetail(reason)}`).join("; ");
-  return `${NO_APPLICABLE_EDITS_DETAIL}. Reasons: ${reasons}`;
+  return {
+    appliedEdits,
+    skippedFindings,
+    modifiedFiles
+  };
 }
 
 // dist/comment-poster.js
@@ -29989,12 +30133,12 @@ async function postComment(owner, name, pr2, body, token) {
 function escapeMarkdown(text) {
   return text.replace(/[\r\n]+/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/`{3,}/g, "``").trim();
 }
-async function postFixSummary(owner, name, pr2, iteration, edits, skippedFiles, token) {
+async function postFixSummary(owner, name, pr2, iteration, edits, skippedItems, token) {
   const editLines = edits.map((edit) => `- \`${edit.path}\`: ${escapeMarkdown(edit.explanation)}`).join("\n");
-  const skippedSection = skippedFiles.length > 0 ? `
+  const skippedSection = skippedItems.length > 0 ? `
 
-**Files requiring manual intervention:**
-${skippedFiles.map((f2) => `- \`${f2}\``).join("\n")}` : "";
+**Findings requiring manual intervention:**
+${skippedItems.map((item) => `- ${escapeMarkdown(item)}`).join("\n")}` : "";
   const body = `**Auto-fix applied (iteration ${iteration})**
 
 ${editLines}${skippedSection}`;
@@ -30267,28 +30411,6 @@ var defaultRestartCommandDeps = {
 function sleep3(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
-function groupByFile(findings) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const finding of findings) {
-    const existing = groups.get(finding.path);
-    if (existing) {
-      existing.push(finding);
-    } else {
-      groups.set(finding.path, [finding]);
-    }
-  }
-  return groups;
-}
-function selectFiles(fileGroups, maxFiles) {
-  const entries = Array.from(fileGroups.entries());
-  const p0Files = entries.filter(([, findings]) => findings.some((f2) => f2.severity === "P0"));
-  const otherFiles = entries.filter(([, findings]) => findings.every((f2) => f2.severity !== "P0"));
-  const sortByCount = (a2, b2) => b2[1].length - a2[1].length;
-  p0Files.sort(sortByCount);
-  otherFiles.sort(sortByCount);
-  const ordered = [...p0Files, ...otherFiles];
-  return ordered.slice(0, maxFiles);
-}
 async function main() {
   const config = loadConfig();
   setSecret(config.anthropicApiKey);
@@ -30464,9 +30586,9 @@ async function main() {
     info(`[main-loop] Checking out branch: ${prHeadRef}`);
     (0, import_node_child_process7.execFileSync)("git", ["checkout", prHeadRef], { stdio: "inherit" });
   }
-  const fileGroups = groupByFile(findings);
-  const selectedFiles = selectFiles(fileGroups, config.maxFilesPerIteration);
-  info(`[main-loop] Processing ${selectedFiles.length} file(s) out of ${fileGroups.size} total.`);
+  const plannedFindings = planFindingsForIteration(findings, config.maxFilesPerIteration);
+  const selectedFileCount = new Set(plannedFindings.selectedFindings.map((finding) => finding.path)).size;
+  info(`[main-loop] Processing ${plannedFindings.selectedFindings.length} finding(s) in ${selectedFileCount} file(s).`);
   const anthropicClient = new sdk_default({ apiKey: config.anthropicApiKey });
   const prContext = {
     number: config.prNumber,
@@ -30474,110 +30596,39 @@ async function main() {
     branch: prHeadRef
   };
   const allAppliedEdits = [];
-  const skippedFiles = [];
   const skipReasons = [];
-  const modifiedFiles = [];
+  let modifiedFiles = [];
   const repoRoot = (0, import_node_path.resolve)(".");
-  for (const [filePath, fileFindings] of selectedFiles) {
-    const resolvedPath = (0, import_node_path.resolve)(filePath);
-    if (!resolvedPath.startsWith(repoRoot + import_node_path.sep) && resolvedPath !== repoRoot) {
-      warning(`[main-loop] Path traversal detected: ${filePath}. Skipping.`);
-      skippedFiles.push(filePath);
-      continue;
-    }
-    let fileContent;
-    try {
-      fileContent = (0, import_node_fs2.readFileSync)(filePath, "utf-8");
-    } catch {
-      warning(`[main-loop] Cannot read file: ${filePath}. Skipping.`);
-      skippedFiles.push(filePath);
-      continue;
-    }
-    try {
-      const estimatedTokens = Math.ceil(fileContent.length / 4);
-      if (estimatedTokens > config.maxInputTokensPerFile) {
-        warning(`[main-loop] File ${filePath} estimated ${estimatedTokens} tokens > max ${config.maxInputTokensPerFile}. Skipping.`);
-        skippedFiles.push(filePath);
-        continue;
+  const skippedItems = plannedFindings.deferredFiles.map((filePath) => `${filePath}: deferred because MAX_FILES_PER_ITERATION=${config.maxFilesPerIteration} was reached`);
+  const sequentialResult = await processFindingsSequentially({
+    client: anthropicClient,
+    findings: plannedFindings.selectedFindings,
+    prContext,
+    iteration: fixingState.iterationCount,
+    maxIterations: config.maxReviewIterations,
+    maxInputTokensPerFile: config.maxInputTokensPerFile,
+    readFile: (filePath) => {
+      const resolvedPath = (0, import_node_path.resolve)(filePath);
+      if (!resolvedPath.startsWith(repoRoot + import_node_path.sep) && resolvedPath !== repoRoot) {
+        throw new Error(`Path traversal detected: ${filePath}`);
       }
-      info(`[main-loop] Fixing ${filePath} (${fileFindings.length} findings)...`);
-      const fixResult = await fixFile(anthropicClient, prContext, filePath, fileContent, fileFindings, fixingState.iterationCount, config.maxReviewIterations);
-      if (fixResult.skippedReason) {
-        warning(`[main-loop] Claude skipped ${filePath}: ${fixResult.skippedReason}`);
-        skippedFiles.push(filePath);
-        skipReasons.push({ filePath, reason: fixResult.skippedReason });
-        continue;
-      }
-      if (fixResult.edits.length === 0) {
-        warning(`[main-loop] No edits returned for ${filePath}. Skipping.`);
-        skippedFiles.push(filePath);
-        continue;
-      }
-      let applyResult = applyEdits(fileContent, fixResult.edits, filePath);
-      let successfulEdits = [];
-      let failedEdits = [];
-      if (!applyResult.success) {
-        successfulEdits = fixResult.edits.filter((e2) => !applyResult.failedEdits.includes(e2));
-        failedEdits = applyResult.failedEdits;
-        for (let retryAttempt = 0; retryAttempt < 2 && failedEdits.length > 0; retryAttempt++) {
-          info(`[main-loop] Retrying ${failedEdits.length} failed edit(s) for ${filePath} (attempt ${retryAttempt + 1}/2)...`);
-          let intermediateContent = fileContent;
-          if (successfulEdits.length > 0) {
-            const intermediateResult = applyEdits(fileContent, successfulEdits, filePath);
-            if (intermediateResult.success && intermediateResult.content !== null) {
-              intermediateContent = intermediateResult.content;
-            }
-          }
-          const retryResult = await retryFailedEdits(anthropicClient, prContext, filePath, intermediateContent, failedEdits, fixingState.iterationCount, config.maxReviewIterations);
-          if (retryResult.skippedReason || retryResult.edits.length === 0) {
-            warning(`[main-loop] Retry produced no edits for ${filePath}. Keeping successful edits.`);
-            break;
-          }
-          const mergedEdits = [...successfulEdits, ...retryResult.edits];
-          const mergedResult = applyEdits(fileContent, mergedEdits, filePath);
-          if (mergedResult.success) {
-            successfulEdits = mergedEdits;
-            failedEdits = [];
-            applyResult = mergedResult;
-          } else {
-            const stillFailed = mergedResult.failedEdits;
-            const nowSuccessful = mergedEdits.filter((e2) => !stillFailed.includes(e2));
-            successfulEdits = nowSuccessful;
-            failedEdits = stillFailed;
-          }
-        }
-        if (successfulEdits.length > 0) {
-          const finalResult = applyEdits(fileContent, successfulEdits, filePath);
-          if (finalResult.success && finalResult.content !== null) {
-            applyResult = finalResult;
-          } else {
-            warning(`[main-loop] All edits failed for ${filePath}. Skipping file.`);
-            skippedFiles.push(filePath);
-            continue;
-          }
-        } else {
-          warning(`[main-loop] All edits failed for ${filePath} after retries. Skipping file.`);
-          skippedFiles.push(filePath);
-          continue;
-        }
-      } else {
-        successfulEdits = fixResult.edits;
-      }
-      if (!applyResult.success || applyResult.content === null) {
-        warning(`[main-loop] Could not apply edits for ${filePath}. Skipping.`);
-        skippedFiles.push(filePath);
-        continue;
-      }
-      (0, import_node_fs2.writeFileSync)(filePath, applyResult.content, "utf-8");
-      allAppliedEdits.push(...successfulEdits);
-      modifiedFiles.push(filePath);
-      info(`[main-loop] Applied ${successfulEdits.length} edit(s) to ${filePath}.`);
-    } catch (fileError) {
-      error(`[main-loop] Error processing ${filePath}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
-      skippedFiles.push(filePath);
-      skipReasons.push(formatFileSkipReason(filePath, fileError));
-      continue;
-    }
+      return (0, import_node_fs2.readFileSync)(filePath, "utf-8");
+    },
+    writeFile: (filePath, content) => {
+      (0, import_node_fs2.writeFileSync)(filePath, content, "utf-8");
+    },
+    log: (message) => info(message),
+    warn: (message) => warning(message)
+  });
+  allAppliedEdits.push(...sequentialResult.appliedEdits);
+  modifiedFiles = sequentialResult.modifiedFiles;
+  for (const skipped of sequentialResult.skippedFindings) {
+    const label = `${skipped.finding.severity} ${skipped.finding.path}:${skipped.finding.line} ${skipped.finding.title}`;
+    skippedItems.push(`${label}: ${skipped.reason}`);
+    skipReasons.push({
+      filePath: skipped.finding.path,
+      reason: `${skipped.finding.title}: ${skipped.reason}`
+    });
   }
   if (allAppliedEdits.length === 0) {
     error("[main-loop] No edits applied. Stopping with claude_api_error.");
@@ -30622,7 +30673,7 @@ ${commitBody}`
   }
   const commitSha = (0, import_node_child_process7.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
   info(`[main-loop] Committed: ${commitSha}`);
-  await postFixSummary(config.repoOwner, config.repoName, config.prNumber, fixingState.iterationCount, allAppliedEdits, skippedFiles, config.githubToken);
+  await postFixSummary(config.repoOwner, config.repoName, config.prNumber, fixingState.iterationCount, allAppliedEdits, skippedItems, config.githubToken);
   const waitingState = {
     ...fixingState,
     status: "waiting_codex",

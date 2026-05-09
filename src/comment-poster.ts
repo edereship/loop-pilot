@@ -64,7 +64,7 @@ function escapeMarkdown(text: string): string {
  * Posts a summary comment after an auto-fix iteration is applied.
  *
  * @param edits - List of edit operations applied in this iteration
- * @param skippedFiles - Files that could not be fixed automatically
+ * @param skippedItems - Findings/files that could not be fixed automatically
  */
 export async function postFixSummary(
   owner: string,
@@ -72,7 +72,7 @@ export async function postFixSummary(
   pr: number,
   iteration: number,
   edits: EditOperation[],
-  skippedFiles: string[],
+  skippedItems: string[],
   token: string,
 ): Promise<number> {
   const editLines = edits
@@ -80,8 +80,8 @@ export async function postFixSummary(
     .join("\n");
 
   const skippedSection =
-    skippedFiles.length > 0
-      ? `\n\n**Files requiring manual intervention:**\n${skippedFiles.map((f) => `- \`${f}\``).join("\n")}`
+    skippedItems.length > 0
+      ? `\n\n**Findings requiring manual intervention:**\n${skippedItems.map((item) => `- ${escapeMarkdown(item)}`).join("\n")}`
       : "";
 
   const body = `**Auto-fix applied (iteration ${iteration})**\n\n${editLines}${skippedSection}`;

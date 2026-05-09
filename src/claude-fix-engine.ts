@@ -20,6 +20,7 @@ const EDIT_FILE_TOOL = {
       explanation: { type: "string" },
     },
     required: ["path", "old_code", "new_code", "explanation"],
+    additionalProperties: false,
   },
   strict: true,
 } as Anthropic.Tool & { strict: true };
