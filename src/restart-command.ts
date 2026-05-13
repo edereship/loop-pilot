@@ -124,7 +124,7 @@ export interface RestartCommandDeps {
     commentId: number,
     state: ReviewState,
     token: string,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   postComment: (
     owner: string,
     repo: string,

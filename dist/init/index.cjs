@@ -19329,19 +19329,25 @@ function deserializeState(commentBody) {
     return null;
   }
 }
+var StateUpdateConflictError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StateUpdateConflictError";
+  }
+};
 function parseStateCommentRecord(line) {
   function isRecord(value) {
-    return typeof value === "object" && value !== null && typeof value.id === "number" && typeof value.body === "string";
+    return typeof value === "object" && value !== null && typeof value.id === "number" && typeof value.body === "string" && typeof value.updated_at === "string";
   }
   try {
     const parsed = JSON.parse(line);
     if (isRecord(parsed)) {
-      return parsed;
+      return { id: parsed.id, body: parsed.body, updatedAt: parsed.updated_at };
     }
     if (typeof parsed === "string") {
       const nested = JSON.parse(parsed);
       if (isRecord(nested)) {
-        return nested;
+        return { id: nested.id, body: nested.body, updatedAt: nested.updated_at };
       }
     }
   } catch {
@@ -19371,7 +19377,7 @@ async function readState(owner, name, pr, token) {
     // but is not a state comment.
     // @json emits each match as a single-line JSON-encoded string so
     // split("\n") parsing below stays correct.
-    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
   ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -19385,9 +19391,9 @@ async function readState(owner, name, pr, token) {
   }
   const state = deserializeState(parsed.body);
   if (!state) {
-    return { found: false, corrupted: true, commentId: parsed.id };
+    return { found: false, corrupted: true, commentId: parsed.id, commentUpdatedAt: parsed.updatedAt };
   }
-  return { found: true, corrupted: false, state, commentId: parsed.id };
+  return { found: true, corrupted: false, state, commentId: parsed.id, commentUpdatedAt: parsed.updatedAt };
 }
 async function createStateComment(owner, name, pr, state, token) {
   const body = serializeState(state);
@@ -19407,16 +19413,61 @@ async function createStateComment(owner, name, pr, state, token) {
   }
   return commentId;
 }
-async function updateStateComment(owner, name, commentId, state, token) {
+async function updateStateComment(owner, name, commentId, state, token, options = {}) {
   const body = serializeState(state);
-  await execFileAsync("gh", [
+  const trimmedState = deserializeState(body);
+  if (!trimmedState) {
+    throw new Error("updateStateComment: serializeState produced an undeserializable payload");
+  }
+  const expectedUpdatedAt = options.expectedUpdatedAt;
+  if (expectedUpdatedAt !== void 0) {
+    const latest = await fetchStateComment(owner, name, commentId, token);
+    if (latest.updatedAt !== expectedUpdatedAt) {
+      throw new StateUpdateConflictError(`Hidden comment updated_at changed before PATCH (expected ${expectedUpdatedAt}, actual ${latest.updatedAt})`);
+    }
+  }
+  const patched = await patchStateComment(owner, name, commentId, body, token);
+  const patchedState = deserializeState(patched.body);
+  if (!patchedState || JSON.stringify(patchedState) !== JSON.stringify(trimmedState)) {
+    throw new Error("PATCH response did not contain the expected hidden comment state");
+  }
+  return { updatedAt: patched.updatedAt };
+}
+async function fetchStateComment(owner, name, commentId, token) {
+  const { stdout } = await execFileAsync("gh", [
+    "api",
+    `repos/${owner}/${name}/issues/comments/${commentId}`,
+    "--jq",
+    "{body: .body, updated_at: .updated_at} | @json"
+  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  return parseCommentSnapshot(stdout.trim(), "fetchStateComment");
+}
+async function patchStateComment(owner, name, commentId, body, token) {
+  const { stdout } = await execFileAsync("gh", [
     "api",
     "--method",
     "PATCH",
     `repos/${owner}/${name}/issues/comments/${commentId}`,
     "--field",
-    `body=${body}`
-  ], { env: buildGhEnv(token) });
+    `body=${body}`,
+    "--jq",
+    "{body: .body, updated_at: .updated_at} | @json"
+  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  return parseCommentSnapshot(stdout.trim(), "patchStateComment");
+}
+function parseCommentSnapshot(stdout, context) {
+  try {
+    const parsed = JSON.parse(stdout);
+    const value = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+    if (typeof value === "object" && value !== null && typeof value.body === "string" && typeof value.updated_at === "string") {
+      return {
+        body: value.body,
+        updatedAt: value.updated_at
+      };
+    }
+  } catch {
+  }
+  throw new Error(`${context}: unexpected response from GitHub API: ${stdout}`);
 }
 
 // dist/comment-poster.js

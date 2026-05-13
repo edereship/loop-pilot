@@ -13,6 +13,7 @@ const STOP_REASON_LABELS: Record<StopReason, string> = {
   test_failure: "CHECK_COMMAND failed after fix",
   manual_stop: "manual stop requested",
   state_corrupted: "hidden comment state corrupted",
+  state_conflict: "hidden comment state changed concurrently",
 };
 
 /**

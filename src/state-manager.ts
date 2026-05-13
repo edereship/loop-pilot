@@ -135,29 +135,47 @@ export function containsSerializedStateMarker(commentBody: string): boolean {
 }
 
 export type ReadStateResult =
-  | { found: true; corrupted: false; state: ReviewState; commentId: number }
+  | { found: true; corrupted: false; state: ReviewState; commentId: number; commentUpdatedAt: string }
   | { found: false; corrupted: false; commentId: null }
-  | { found: false; corrupted: true; commentId: number | null };
+  | { found: false; corrupted: true; commentId: number | null; commentUpdatedAt?: string };
 
-export function parseStateCommentRecord(line: string): { id: number; body: string } | null {
-  function isRecord(value: unknown): value is { id: number; body: string } {
+type StateCommentRecord = { id: number; body: string; updatedAt: string };
+
+export interface UpdateStateCommentOptions {
+  expectedUpdatedAt?: string;
+}
+
+export interface UpdateStateCommentResult {
+  updatedAt: string;
+}
+
+export class StateUpdateConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StateUpdateConflictError";
+  }
+}
+
+export function parseStateCommentRecord(line: string): StateCommentRecord | null {
+  function isRecord(value: unknown): value is { id: number; body: string; updated_at: string } {
     return (
       typeof value === "object" &&
       value !== null &&
       typeof (value as Record<string, unknown>).id === "number" &&
-      typeof (value as Record<string, unknown>).body === "string"
+      typeof (value as Record<string, unknown>).body === "string" &&
+      typeof (value as Record<string, unknown>).updated_at === "string"
     );
   }
 
   try {
     const parsed = JSON.parse(line) as unknown;
     if (isRecord(parsed)) {
-      return parsed;
+      return { id: parsed.id, body: parsed.body, updatedAt: parsed.updated_at };
     }
     if (typeof parsed === "string") {
       const nested = JSON.parse(parsed) as unknown;
       if (isRecord(nested)) {
-        return nested;
+        return { id: nested.id, body: nested.body, updatedAt: nested.updated_at };
       }
     }
   } catch {
@@ -205,7 +223,7 @@ export async function readState(
       // but is not a state comment.
       // @json emits each match as a single-line JSON-encoded string so
       // split("\n") parsing below stays correct.
-      `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`,
+      `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`,
     ],
     { env: buildGhEnv(token), maxBuffer: MAX_BUFFER },
   );
@@ -227,10 +245,10 @@ export async function readState(
 
   const state = deserializeState(parsed.body);
   if (!state) {
-    return { found: false, corrupted: true, commentId: parsed.id };
+    return { found: false, corrupted: true, commentId: parsed.id, commentUpdatedAt: parsed.updatedAt };
   }
 
-  return { found: true, corrupted: false, state, commentId: parsed.id };
+  return { found: true, corrupted: false, state, commentId: parsed.id, commentUpdatedAt: parsed.updatedAt };
 }
 
 /**
@@ -278,18 +296,109 @@ export async function updateStateComment(
   commentId: number,
   state: ReviewState,
   token: string,
-): Promise<void> {
+  options: UpdateStateCommentOptions = {},
+): Promise<UpdateStateCommentResult> {
   const body = serializeState(state);
-  await execFileAsync(
+  const trimmedState = deserializeState(body);
+  if (!trimmedState) {
+    throw new Error("updateStateComment: serializeState produced an undeserializable payload");
+  }
+  const expectedUpdatedAt = options.expectedUpdatedAt;
+
+  if (expectedUpdatedAt !== undefined) {
+    const latest = await fetchStateComment(owner, name, commentId, token);
+    if (latest.updatedAt !== expectedUpdatedAt) {
+      throw new StateUpdateConflictError(
+        `Hidden comment updated_at changed before PATCH (expected ${expectedUpdatedAt}, actual ${latest.updatedAt})`,
+      );
+    }
+  }
+
+  const patched = await patchStateComment(owner, name, commentId, body, token, expectedUpdatedAt);
+  const patchedState = deserializeState(patched.body);
+  if (!patchedState || JSON.stringify(patchedState) !== JSON.stringify(trimmedState)) {
+    throw new Error("PATCH response did not contain the expected hidden comment state");
+  }
+
+  return { updatedAt: patched.updatedAt };
+}
+
+async function fetchStateComment(
+  owner: string,
+  name: string,
+  commentId: number,
+  token: string,
+): Promise<{ body: string; updatedAt: string }> {
+  const { stdout } = await execFileAsync(
     "gh",
     [
       "api",
-      "--method",
-      "PATCH",
       `repos/${owner}/${name}/issues/comments/${commentId}`,
-      "--field",
-      `body=${body}`,
+      "--jq",
+      "{body: .body, updated_at: .updated_at} | @json",
     ],
-    { env: buildGhEnv(token) },
+    { env: buildGhEnv(token), maxBuffer: MAX_BUFFER },
   );
+  return parseCommentSnapshot(stdout.trim(), "fetchStateComment");
+}
+
+async function patchStateComment(
+  owner: string,
+  name: string,
+  commentId: number,
+  body: string,
+  token: string,
+  expectedUpdatedAt?: string,
+): Promise<{ body: string; updatedAt: string }> {
+  const args = [
+    "api",
+    "--method",
+    "PATCH",
+    `repos/${owner}/${name}/issues/comments/${commentId}`,
+    "--field",
+    `body=${body}`,
+    "--jq",
+    "{body: .body, updated_at: .updated_at} | @json",
+  ];
+
+  if (expectedUpdatedAt !== undefined) {
+    args.splice(1, 0, "--header", `If-Unmodified-Since: ${expectedUpdatedAt}`);
+  }
+
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("gh", args, { env: buildGhEnv(token), maxBuffer: MAX_BUFFER }));
+  } catch (err: unknown) {
+    // gh exits non-zero on HTTP 412 Precondition Failed (concurrent modification)
+    const message = err instanceof Error ? err.message : String(err);
+    if (expectedUpdatedAt !== undefined && (message.includes("412") || message.includes("Precondition Failed"))) {
+      throw new StateUpdateConflictError(
+        `Hidden comment was modified concurrently (If-Unmodified-Since: ${expectedUpdatedAt})`,
+      );
+    }
+    throw err;
+  }
+
+  return parseCommentSnapshot(stdout.trim(), "patchStateComment");
+}
+
+function parseCommentSnapshot(stdout: string, context: string): { body: string; updatedAt: string } {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    const value = typeof parsed === "string" ? JSON.parse(parsed) as unknown : parsed;
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as Record<string, unknown>).body === "string" &&
+      typeof (value as Record<string, unknown>).updated_at === "string"
+    ) {
+      return {
+        body: (value as { body: string; updated_at: string }).body,
+        updatedAt: (value as { body: string; updated_at: string }).updated_at,
+      };
+    }
+  } catch {
+    // Fall through to uniform error below.
+  }
+  throw new Error(`${context}: unexpected response from GitHub API: ${stdout}`);
 }

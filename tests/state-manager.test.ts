@@ -5,8 +5,18 @@ import {
   deserializeState,
   containsSerializedStateMarker,
   parseStateCommentRecord,
+  updateStateComment,
+  StateUpdateConflictError,
 } from "../src/state-manager.js";
 import type { ReviewState, FindingsHashEntry } from "../src/types.js";
+import { execFile } from "node:child_process";
+import { beforeEach, vi } from "vitest";
+
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn(),
+}));
+
+const mockedExecFile = vi.mocked(execFile);
 
 const STATE_MARKER = "auto-review-state";
 
@@ -16,6 +26,17 @@ function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
     ...overrides,
   };
 }
+
+function mockExecFileOnce(stdout: string): void {
+  mockedExecFile.mockImplementationOnce(((_file, _args, _options, callback) => {
+    callback(null, { stdout, stderr: "" });
+    return {} as ReturnType<typeof execFile>;
+  }) as typeof execFile);
+}
+
+beforeEach(() => {
+  mockedExecFile.mockReset();
+});
 
 describe("serializeState", () => {
   it("includes visible text so GitHub does not render it as an empty comment", () => {
@@ -137,20 +158,81 @@ describe("containsSerializedStateMarker", () => {
 describe("parseStateCommentRecord", () => {
   it("parses a single JSON object line emitted by gh --jq", () => {
     const body = serializeState(makeState({ status: "waiting_codex" }));
-    const line = JSON.stringify({ id: 123, body });
+    const line = JSON.stringify({ id: 123, body, updated_at: "2026-05-09T00:00:00Z" });
 
     const parsed = parseStateCommentRecord(line);
 
-    expect(parsed).toEqual({ id: 123, body });
+    expect(parsed).toEqual({ id: 123, body, updatedAt: "2026-05-09T00:00:00Z" });
   });
 
   it("parses a JSON-encoded string line for compatibility", () => {
     const body = serializeState(makeState({ status: "waiting_codex" }));
-    const line = JSON.stringify(JSON.stringify({ id: 456, body }));
+    const line = JSON.stringify(JSON.stringify({ id: 456, body, updated_at: "2026-05-09T00:00:01Z" }));
 
     const parsed = parseStateCommentRecord(line);
 
-    expect(parsed).toEqual({ id: 456, body });
+    expect(parsed).toEqual({ id: 456, body, updatedAt: "2026-05-09T00:00:01Z" });
+  });
+});
+
+describe("updateStateComment", () => {
+  it("does not patch when the hidden comment updated_at changed before PATCH", async () => {
+    const state = makeState({ status: "fixing" });
+    mockExecFileOnce(JSON.stringify({
+      id: 123,
+      updated_at: "2026-05-09T00:00:02Z",
+      body: serializeState(makeState({ status: "waiting_codex" })),
+    }));
+
+    await expect(
+      updateStateComment("owner", "repo", 123, state, "token", {
+        expectedUpdatedAt: "2026-05-09T00:00:01Z",
+      }),
+    ).rejects.toBeInstanceOf(StateUpdateConflictError);
+
+    expect(mockedExecFile).toHaveBeenCalledTimes(1);
+    expect(mockedExecFile.mock.calls[0][1]).toContain("repos/owner/repo/issues/comments/123");
+    expect(mockedExecFile.mock.calls[0][1]).not.toContain("PATCH");
+  });
+
+  it("fails immediately instead of retrying with a state derived from a stale read", async () => {
+    const state = makeState({ status: "fixing", iterationCount: 1 });
+    mockExecFileOnce(JSON.stringify({
+      id: 123,
+      updated_at: "2026-05-09T00:00:02Z",
+      body: serializeState(makeState({ status: "waiting_codex", iterationCount: 2 })),
+    }));
+
+    await expect(
+      updateStateComment("owner", "repo", 123, state, "token", {
+        expectedUpdatedAt: "2026-05-09T00:00:01Z",
+      }),
+    ).rejects.toBeInstanceOf(StateUpdateConflictError);
+
+    expect(mockedExecFile).toHaveBeenCalledTimes(1);
+    for (const call of mockedExecFile.mock.calls) {
+      expect(call[1]).not.toContain("PATCH");
+    }
+  });
+
+  it("fails when the PATCH response body does not contain the expected state", async () => {
+    const desired = makeState({ status: "fixing" });
+    mockExecFileOnce(JSON.stringify({
+      id: 123,
+      updated_at: "2026-05-09T00:00:01Z",
+      body: serializeState(makeState({ status: "waiting_codex" })),
+    }));
+    mockExecFileOnce(JSON.stringify({
+      id: 123,
+      updated_at: "2026-05-09T00:00:03Z",
+      body: serializeState(makeState({ status: "done" })),
+    }));
+
+    await expect(
+      updateStateComment("owner", "repo", 123, desired, "token", {
+        expectedUpdatedAt: "2026-05-09T00:00:01Z",
+      }),
+    ).rejects.toThrow("PATCH response did not contain the expected hidden comment state");
   });
 });
 

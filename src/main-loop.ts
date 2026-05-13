@@ -4,7 +4,12 @@ import { execFileSync } from "node:child_process";
 import Anthropic from "@anthropic-ai/sdk";
 import * as core from "@actions/core";
 import { loadConfig, loadInitConfig, DEFAULT_AUTO_REVIEW_LABEL } from "./config.js";
-import { createInitialState, readState, updateStateComment } from "./state-manager.js";
+import {
+  createInitialState,
+  readState,
+  StateUpdateConflictError,
+  updateStateComment,
+} from "./state-manager.js";
 import {
   fetchReviewComments,
   filterAndParseComments,
@@ -86,6 +91,48 @@ async function main(): Promise<void> {
     config.prNumber,
     config.githubToken
   );
+  let stateCommentUpdatedAt = stateResult.found || stateResult.corrupted
+    ? stateResult.commentUpdatedAt
+    : undefined;
+
+  async function updateStateCommentLocked(
+    targetCommentId: number,
+    nextState: ReviewState,
+    detail: string,
+  ): Promise<boolean> {
+    try {
+      const result = await updateStateComment(
+        config.repoOwner,
+        config.repoName,
+        targetCommentId,
+        nextState,
+        config.githubToken,
+        stateCommentUpdatedAt
+          ? { expectedUpdatedAt: stateCommentUpdatedAt }
+          : undefined,
+      );
+      stateCommentUpdatedAt = result.updatedAt;
+      return true;
+    } catch (error) {
+      if (!(error instanceof StateUpdateConflictError)) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      core.warning(`[main-loop] Hidden comment state conflict. ${message}`);
+      await postStopComment(
+        config.repoOwner,
+        config.repoName,
+        config.prNumber,
+        "state_conflict",
+        triggerCommentId,
+        0,
+        `${detail} Hidden comment was updated by another workflow run before this run could safely persist its state. Re-run after the active workflow finishes if needed.`,
+        config.githubToken,
+      );
+      return false;
+    }
+  }
 
   if (isRestartCommandLike(config.triggerCommentBody)) {
     const restartResult = await handleRestartCommand({
@@ -120,13 +167,11 @@ async function main(): Promise<void> {
         status: "stopped",
         stopReason: "state_corrupted",
       };
-      await updateStateComment(
-        config.repoOwner,
-        config.repoName,
+      if (!(await updateStateCommentLocked(
         stateResult.commentId,
         corruptedState,
-        config.githubToken
-      );
+        "Could not mark corrupted hidden state as stopped.",
+      ))) return;
     }
     await postStopComment(
       config.repoOwner,
@@ -196,13 +241,11 @@ async function main(): Promise<void> {
       status: "stopped",
       stopReason: "state_corrupted",
     };
-    await updateStateComment(
-      config.repoOwner,
-      config.repoName,
+    if (!(await updateStateCommentLocked(
       commentId,
       recoveredState,
-      config.githubToken
-    );
+      "Could not recover stale fixing state.",
+    ))) return;
     await postStopComment(
       config.repoOwner,
       config.repoName,
@@ -298,13 +341,11 @@ async function main(): Promise<void> {
       status: "done",
       stopReason: "no_findings",
     };
-    await updateStateComment(
-      config.repoOwner,
-      config.repoName,
+    if (!(await updateStateCommentLocked(
       commentId,
       doneState,
-      config.githubToken
-    );
+      "Could not mark auto-review as done.",
+    ))) return;
     await postCompletionComment(
       config.repoOwner,
       config.repoName,
@@ -325,13 +366,11 @@ async function main(): Promise<void> {
       status: "stopped",
       stopReason: "max_iterations",
     };
-    await updateStateComment(
-      config.repoOwner,
-      config.repoName,
+    if (!(await updateStateCommentLocked(
       commentId,
       stoppedState,
-      config.githubToken
-    );
+      "Could not stop after reaching the max iteration limit.",
+    ))) return;
     await postStopComment(
       config.repoOwner,
       config.repoName,
@@ -353,13 +392,11 @@ async function main(): Promise<void> {
       status: "stopped",
       stopReason: "loop_detected",
     };
-    await updateStateComment(
-      config.repoOwner,
-      config.repoName,
+    if (!(await updateStateCommentLocked(
       commentId,
       stoppedState,
-      config.githubToken
-    );
+      "Could not stop after detecting a findings loop.",
+    ))) return;
     await postStopComment(
       config.repoOwner,
       config.repoName,
@@ -391,13 +428,11 @@ async function main(): Promise<void> {
     lastFindingsHash: currentHash,
     findingsHashHistory: updatedHashHistory,
   };
-  await updateStateComment(
-    config.repoOwner,
-    config.repoName,
+  if (!(await updateStateCommentLocked(
     commentId,
     fixingState,
-    config.githubToken
-  );
+    "Could not claim the hidden comment state for fixing.",
+  ))) return;
 
   // Checkout PR branch using execFileSync to avoid shell injection
   if (prHeadRef) {
@@ -482,13 +517,11 @@ async function main(): Promise<void> {
       status: "stopped",
       stopReason: "claude_api_error",
     };
-    await updateStateComment(
-      config.repoOwner,
-      config.repoName,
+    if (!(await updateStateCommentLocked(
       commentId,
       stoppedState,
-      config.githubToken
-    );
+      "Could not stop after Claude produced no applicable edits.",
+    ))) return;
     await postStopComment(
       config.repoOwner,
       config.repoName,
@@ -520,13 +553,11 @@ async function main(): Promise<void> {
       status: "stopped",
       stopReason: "test_failure",
     };
-    await updateStateComment(
-      config.repoOwner,
-      config.repoName,
+    if (!(await updateStateCommentLocked(
       commentId,
       stoppedState,
-      config.githubToken
-    );
+      "Could not stop after CHECK_COMMAND failed.",
+    ))) return;
     await postTestFailureComment(
       config.repoOwner,
       config.repoName,
@@ -591,13 +622,11 @@ async function main(): Promise<void> {
     status: "waiting_codex",
     lastClaudeCommitSha: commitSha,
   };
-  await updateStateComment(
-    config.repoOwner,
-    config.repoName,
+  if (!(await updateStateCommentLocked(
     commentId,
     waitingState,
-    config.githubToken
-  );
+    "Could not return hidden comment state to waiting_codex after committing fixes.",
+  ))) return;
 
   core.info("[main-loop] Posting @codex review request...");
   try {
@@ -613,13 +642,11 @@ async function main(): Promise<void> {
       ...waitingState,
       lastCodexRequestCommentId: reviewRequestId,
     };
-    await updateStateComment(
-      config.repoOwner,
-      config.repoName,
+    if (!(await updateStateCommentLocked(
       commentId,
       updatedWaitingState,
-      config.githubToken
-    );
+      "Could not persist the Codex review request comment ID.",
+    ))) return;
 
     core.info(
       `[main-loop] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`
@@ -659,7 +686,8 @@ main().catch(async (error) => {
         crashConfig.repoName,
         crashStateResult.commentId,
         recoveredState,
-        crashConfig.githubToken
+        crashConfig.githubToken,
+        { expectedUpdatedAt: crashStateResult.commentUpdatedAt },
       );
     }
   } catch (recoveryError) {

@@ -29300,19 +29300,25 @@ function deserializeState(commentBody) {
     return null;
   }
 }
+var StateUpdateConflictError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "StateUpdateConflictError";
+  }
+};
 function parseStateCommentRecord(line) {
   function isRecord(value) {
-    return typeof value === "object" && value !== null && typeof value.id === "number" && typeof value.body === "string";
+    return typeof value === "object" && value !== null && typeof value.id === "number" && typeof value.body === "string" && typeof value.updated_at === "string";
   }
   try {
     const parsed = JSON.parse(line);
     if (isRecord(parsed)) {
-      return parsed;
+      return { id: parsed.id, body: parsed.body, updatedAt: parsed.updated_at };
     }
     if (typeof parsed === "string") {
       const nested = JSON.parse(parsed);
       if (isRecord(nested)) {
-        return nested;
+        return { id: nested.id, body: nested.body, updatedAt: nested.updated_at };
       }
     }
   } catch {
@@ -29342,7 +29348,7 @@ async function readState(owner, name, pr2, token) {
     // but is not a state comment.
     // @json emits each match as a single-line JSON-encoded string so
     // split("\n") parsing below stays correct.
-    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
   ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -29356,20 +29362,65 @@ async function readState(owner, name, pr2, token) {
   }
   const state = deserializeState(parsed.body);
   if (!state) {
-    return { found: false, corrupted: true, commentId: parsed.id };
+    return { found: false, corrupted: true, commentId: parsed.id, commentUpdatedAt: parsed.updatedAt };
   }
-  return { found: true, corrupted: false, state, commentId: parsed.id };
+  return { found: true, corrupted: false, state, commentId: parsed.id, commentUpdatedAt: parsed.updatedAt };
 }
-async function updateStateComment(owner, name, commentId, state, token) {
+async function updateStateComment(owner, name, commentId, state, token, options = {}) {
   const body = serializeState(state);
-  await execFileAsync("gh", [
+  const trimmedState = deserializeState(body);
+  if (!trimmedState) {
+    throw new Error("updateStateComment: serializeState produced an undeserializable payload");
+  }
+  const expectedUpdatedAt = options.expectedUpdatedAt;
+  if (expectedUpdatedAt !== void 0) {
+    const latest = await fetchStateComment(owner, name, commentId, token);
+    if (latest.updatedAt !== expectedUpdatedAt) {
+      throw new StateUpdateConflictError(`Hidden comment updated_at changed before PATCH (expected ${expectedUpdatedAt}, actual ${latest.updatedAt})`);
+    }
+  }
+  const patched = await patchStateComment(owner, name, commentId, body, token);
+  const patchedState = deserializeState(patched.body);
+  if (!patchedState || JSON.stringify(patchedState) !== JSON.stringify(trimmedState)) {
+    throw new Error("PATCH response did not contain the expected hidden comment state");
+  }
+  return { updatedAt: patched.updatedAt };
+}
+async function fetchStateComment(owner, name, commentId, token) {
+  const { stdout } = await execFileAsync("gh", [
+    "api",
+    `repos/${owner}/${name}/issues/comments/${commentId}`,
+    "--jq",
+    "{body: .body, updated_at: .updated_at} | @json"
+  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  return parseCommentSnapshot(stdout.trim(), "fetchStateComment");
+}
+async function patchStateComment(owner, name, commentId, body, token) {
+  const { stdout } = await execFileAsync("gh", [
     "api",
     "--method",
     "PATCH",
     `repos/${owner}/${name}/issues/comments/${commentId}`,
     "--field",
-    `body=${body}`
-  ], { env: buildGhEnv(token) });
+    `body=${body}`,
+    "--jq",
+    "{body: .body, updated_at: .updated_at} | @json"
+  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  return parseCommentSnapshot(stdout.trim(), "patchStateComment");
+}
+function parseCommentSnapshot(stdout, context) {
+  try {
+    const parsed = JSON.parse(stdout);
+    const value = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+    if (typeof value === "object" && value !== null && typeof value.body === "string" && typeof value.updated_at === "string") {
+      return {
+        body: value.body,
+        updatedAt: value.updated_at
+      };
+    }
+  } catch {
+  }
+  throw new Error(`${context}: unexpected response from GitHub API: ${stdout}`);
 }
 
 // dist/review-collector.js
@@ -30111,7 +30162,8 @@ var STOP_REASON_LABELS = {
   claude_api_error: "Claude API error",
   test_failure: "CHECK_COMMAND failed after fix",
   manual_stop: "manual stop requested",
-  state_corrupted: "hidden comment state corrupted"
+  state_corrupted: "hidden comment state corrupted",
+  state_conflict: "hidden comment state changed concurrently"
 };
 async function postComment(owner, name, pr2, body, token) {
   const { stdout } = await execFileAsync3("gh", [
@@ -30432,6 +30484,22 @@ async function main() {
     }
   }
   const stateResult = await readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  let stateCommentUpdatedAt = stateResult.found || stateResult.corrupted ? stateResult.commentUpdatedAt : void 0;
+  async function updateStateCommentLocked(targetCommentId, nextState, detail) {
+    try {
+      const result = await updateStateComment(config.repoOwner, config.repoName, targetCommentId, nextState, config.githubToken, stateCommentUpdatedAt ? { expectedUpdatedAt: stateCommentUpdatedAt } : void 0);
+      stateCommentUpdatedAt = result.updatedAt;
+      return true;
+    } catch (error2) {
+      if (!(error2 instanceof StateUpdateConflictError)) {
+        throw error2;
+      }
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      warning(`[main-loop] Hidden comment state conflict. ${message}`);
+      await postStopComment(config.repoOwner, config.repoName, config.prNumber, "state_conflict", triggerCommentId, 0, `${detail} Hidden comment was updated by another workflow run before this run could safely persist its state. Re-run after the active workflow finishes if needed.`, config.githubToken);
+      return false;
+    }
+  }
   if (isRestartCommandLike(config.triggerCommentBody)) {
     const restartResult = await handleRestartCommand({
       owner: config.repoOwner,
@@ -30461,7 +30529,8 @@ async function main() {
         status: "stopped",
         stopReason: "state_corrupted"
       };
-      await updateStateComment(config.repoOwner, config.repoName, stateResult.commentId, corruptedState, config.githubToken);
+      if (!await updateStateCommentLocked(stateResult.commentId, corruptedState, "Could not mark corrupted hidden state as stopped."))
+        return;
     }
     await postStopComment(config.repoOwner, config.repoName, config.prNumber, "state_corrupted", triggerCommentId, 0, "Hidden comment state JSON is corrupted. Manual re-initialization required.", config.githubToken);
     return;
@@ -30497,7 +30566,8 @@ async function main() {
       status: "stopped",
       stopReason: "state_corrupted"
     };
-    await updateStateComment(config.repoOwner, config.repoName, commentId, recoveredState, config.githubToken);
+    if (!await updateStateCommentLocked(commentId, recoveredState, "Could not recover stale fixing state."))
+      return;
     await postStopComment(config.repoOwner, config.repoName, config.prNumber, "state_corrupted", triggerCommentId, 0, "Previous fixing state timed out \u2014 recovered automatically", config.githubToken);
     return;
   }
@@ -30539,7 +30609,8 @@ async function main() {
       status: "done",
       stopReason: "no_findings"
     };
-    await updateStateComment(config.repoOwner, config.repoName, commentId, doneState, config.githubToken);
+    if (!await updateStateCommentLocked(commentId, doneState, "Could not mark auto-review as done."))
+      return;
     await postCompletionComment(config.repoOwner, config.repoName, config.prNumber, doneState.iterationCount, config.githubToken);
     return;
   }
@@ -30550,7 +30621,8 @@ async function main() {
       status: "stopped",
       stopReason: "max_iterations"
     };
-    await updateStateComment(config.repoOwner, config.repoName, commentId, stoppedState, config.githubToken);
+    if (!await updateStateCommentLocked(commentId, stoppedState, "Could not stop after reaching the max iteration limit."))
+      return;
     await postStopComment(config.repoOwner, config.repoName, config.prNumber, "max_iterations", triggerCommentId, findings.length, `Reached MAX_REVIEW_ITERATIONS (${config.maxReviewIterations})`, config.githubToken);
     return;
   }
@@ -30561,7 +30633,8 @@ async function main() {
       status: "stopped",
       stopReason: "loop_detected"
     };
-    await updateStateComment(config.repoOwner, config.repoName, commentId, stoppedState, config.githubToken);
+    if (!await updateStateCommentLocked(commentId, stoppedState, "Could not stop after detecting a findings loop."))
+      return;
     await postStopComment(config.repoOwner, config.repoName, config.prNumber, "loop_detected", triggerCommentId, findings.length, "Same findings hash detected in previous iteration", config.githubToken);
     return;
   }
@@ -30578,7 +30651,8 @@ async function main() {
     lastFindingsHash: currentHash,
     findingsHashHistory: updatedHashHistory
   };
-  await updateStateComment(config.repoOwner, config.repoName, commentId, fixingState, config.githubToken);
+  if (!await updateStateCommentLocked(commentId, fixingState, "Could not claim the hidden comment state for fixing."))
+    return;
   if (prHeadRef) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$/.test(prHeadRef) || prHeadRef.includes("..")) {
       throw new Error(`[main-loop] Invalid branch name: ${prHeadRef}`);
@@ -30637,7 +30711,8 @@ async function main() {
       status: "stopped",
       stopReason: "claude_api_error"
     };
-    await updateStateComment(config.repoOwner, config.repoName, commentId, stoppedState, config.githubToken);
+    if (!await updateStateCommentLocked(commentId, stoppedState, "Could not stop after Claude produced no applicable edits."))
+      return;
     await postStopComment(config.repoOwner, config.repoName, config.prNumber, "claude_api_error", triggerCommentId, findings.length, buildNoApplicableEditsDetail(skipReasons), config.githubToken);
     return;
   }
@@ -30650,7 +30725,8 @@ async function main() {
       status: "stopped",
       stopReason: "test_failure"
     };
-    await updateStateComment(config.repoOwner, config.repoName, commentId, stoppedState, config.githubToken);
+    if (!await updateStateCommentLocked(commentId, stoppedState, "Could not stop after CHECK_COMMAND failed."))
+      return;
     await postTestFailureComment(config.repoOwner, config.repoName, config.prNumber, checkResult.output, config.githubToken);
     return;
   }
@@ -30679,7 +30755,8 @@ ${commitBody}`
     status: "waiting_codex",
     lastClaudeCommitSha: commitSha
   };
-  await updateStateComment(config.repoOwner, config.repoName, commentId, waitingState, config.githubToken);
+  if (!await updateStateCommentLocked(commentId, waitingState, "Could not return hidden comment state to waiting_codex after committing fixes."))
+    return;
   info("[main-loop] Posting @codex review request...");
   try {
     const reviewRequestId = await postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
@@ -30687,7 +30764,8 @@ ${commitBody}`
       ...waitingState,
       lastCodexRequestCommentId: reviewRequestId
     };
-    await updateStateComment(config.repoOwner, config.repoName, commentId, updatedWaitingState, config.githubToken);
+    if (!await updateStateCommentLocked(commentId, updatedWaitingState, "Could not persist the Codex review request comment ID."))
+      return;
     info(`[main-loop] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`);
   } catch (phase4Error) {
     error(`[main-loop] Failed to post Codex review request: ${phase4Error instanceof Error ? phase4Error.message : String(phase4Error)}. State is waiting_codex. Manual '@codex review' comment may be needed.`);
@@ -30705,7 +30783,7 @@ main().catch(async (error2) => {
         status: "stopped",
         stopReason: "state_corrupted"
       };
-      await updateStateComment(crashConfig.repoOwner, crashConfig.repoName, crashStateResult.commentId, recoveredState, crashConfig.githubToken);
+      await updateStateComment(crashConfig.repoOwner, crashConfig.repoName, crashStateResult.commentId, recoveredState, crashConfig.githubToken, { expectedUpdatedAt: crashStateResult.commentUpdatedAt });
     }
   } catch (recoveryError) {
     error(`[main-loop] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
