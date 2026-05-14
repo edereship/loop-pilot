@@ -34,6 +34,7 @@ PoC の主要 E2E は PR #7 / TY-11 で確認済み。
 |-------------|------|
 | [Severity パーサー仕様](specs/severity-parser.md) | Codex のレビュー形式・severity 抽出の正規表現・フォールバック |
 | [Claude 修正エンジン仕様](specs/claude-fix-engine.md) | Claude API 呼び出し・edit_file ツール・適用ロジック・プロンプト・コスト概算・リトライ |
+| [Claude Code repair request 仕様](specs/claude-code-repair-request.md) | `claude-code-action` 向け repo-level repair payload / prompt の生成仕様（TY-235） |
 | [ループ検知](specs/loop-detection.md) | 同一指摘ループの検知アルゴリズム・ハッシュ計算・疑似コード |
 
 ### Operations — 運用
