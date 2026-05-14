@@ -55,7 +55,11 @@ export type StopReason =
   | "test_failure"
   | "manual_stop"
   | "state_corrupted"
-  | "state_conflict";
+  | "state_conflict"
+  | "action_timeout"
+  | "action_failure"
+  | "scope_violation"
+  | "max_turns_exceeded";
 
 /** Claude API に渡す PR コンテキスト */
 export interface PrContext {
