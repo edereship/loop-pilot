@@ -19226,6 +19226,19 @@ function requireInput(inputName, envName) {
   return value;
 }
 
+// dist/entrypoint.js
+function runIfNotVitest(fn, onError) {
+  if (process.env.VITEST === "true") {
+    return;
+  }
+  fn().catch(async (error2) => {
+    setFailed(error2 instanceof Error ? error2.message : String(error2));
+    if (onError) {
+      await onError(error2);
+    }
+  });
+}
+
 // dist/state-manager.js
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
@@ -19571,11 +19584,7 @@ async function runInit(config, deps = defaultDeps) {
 async function run() {
   await runInit(loadInitConfig());
 }
-if (process.env.VITEST !== "true") {
-  run().catch((error2) => {
-    setFailed(error2 instanceof Error ? error2.message : String(error2));
-  });
-}
+runIfNotVitest(run);
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   runInit

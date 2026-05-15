@@ -1,5 +1,6 @@
 import * as core from "@actions/core";
 import { loadInitConfig } from "./config.js";
+import { runIfNotVitest } from "./entrypoint.js";
 import {
   createInitialState,
   createStateComment,
@@ -87,8 +88,4 @@ async function run(): Promise<void> {
   await runInit(loadInitConfig());
 }
 
-if (process.env.VITEST !== "true") {
-  run().catch((error) => {
-    core.setFailed(error instanceof Error ? error.message : String(error));
-  });
-}
+runIfNotVitest(run);

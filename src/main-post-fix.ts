@@ -5,6 +5,7 @@ import {
   loadInitConfig,
   type Config,
 } from "./config.js";
+import { runIfNotVitest } from "./entrypoint.js";
 import {
   readState as defaultReadState,
   StateUpdateConflictError,
@@ -664,45 +665,41 @@ async function run(): Promise<void> {
   await runPostFix(loadInitConfig());
 }
 
-if (process.env.VITEST !== "true") {
-  run().catch(async (error) => {
-    core.setFailed(error instanceof Error ? error.message : String(error));
-
-    // Crash recovery: if pre-fix has claimed `fixing` and post-fix crashed
-    // before it could move the hidden state to a terminal value, leave
-    // future runs deadlocked behind the stale-fixing guard. Demote the
-    // state to stopped(state_corrupted) here so the next trigger can
-    // proceed (and so /restart-review --hard is not required).
-    try {
-      const crashConfig = loadInitConfig();
-      const crashStateResult = await defaultReadState(
+runIfNotVitest(run, async () => {
+  // Crash recovery: if pre-fix has claimed `fixing` and post-fix crashed
+  // before it could move the hidden state to a terminal value, leave
+  // future runs deadlocked behind the stale-fixing guard. Demote the
+  // state to stopped(state_corrupted) here so the next trigger can
+  // proceed (and so /restart-review --hard is not required).
+  try {
+    const crashConfig = loadInitConfig();
+    const crashStateResult = await defaultReadState(
+      crashConfig.repoOwner,
+      crashConfig.repoName,
+      crashConfig.prNumber,
+      crashConfig.githubToken,
+    );
+    if (crashStateResult.found && crashStateResult.state.status === "fixing") {
+      core.warning(
+        "[post-fix] Crash recovery: resetting fixing → stopped (state_corrupted)",
+      );
+      const recoveredState: ReviewState = {
+        ...crashStateResult.state,
+        status: "stopped",
+        stopReason: "state_corrupted",
+      };
+      await defaultUpdateStateComment(
         crashConfig.repoOwner,
         crashConfig.repoName,
-        crashConfig.prNumber,
+        crashStateResult.commentId,
+        recoveredState,
         crashConfig.githubToken,
-      );
-      if (crashStateResult.found && crashStateResult.state.status === "fixing") {
-        core.warning(
-          "[post-fix] Crash recovery: resetting fixing → stopped (state_corrupted)",
-        );
-        const recoveredState: ReviewState = {
-          ...crashStateResult.state,
-          status: "stopped",
-          stopReason: "state_corrupted",
-        };
-        await defaultUpdateStateComment(
-          crashConfig.repoOwner,
-          crashConfig.repoName,
-          crashStateResult.commentId,
-          recoveredState,
-          crashConfig.githubToken,
-          { expectedUpdatedAt: crashStateResult.commentUpdatedAt },
-        );
-      }
-    } catch (recoveryError) {
-      core.error(
-        `[post-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+        { expectedUpdatedAt: crashStateResult.commentUpdatedAt },
       );
     }
-  });
-}
+  } catch (recoveryError) {
+    core.error(
+      `[post-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+    );
+  }
+});

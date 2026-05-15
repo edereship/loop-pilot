@@ -6,6 +6,7 @@ import {
   DEFAULT_AUTO_REVIEW_LABEL,
   type Config,
 } from "./config.js";
+import { runIfNotVitest } from "./entrypoint.js";
 import {
   createInitialState,
   readState as defaultReadState,
@@ -669,42 +670,38 @@ async function run(): Promise<void> {
   await runPreFix(loadConfig());
 }
 
-if (process.env.VITEST !== "true") {
-  run().catch(async (error) => {
-    core.setFailed(error instanceof Error ? error.message : String(error));
-
-    // Crash recovery: if state was set to "fixing" before we crashed, demote
-    // it back to stopped(state_corrupted) so the next trigger can proceed.
-    try {
-      const crashConfig = loadInitConfig();
-      const crashStateResult = await defaultReadState(
+runIfNotVitest(run, async () => {
+  // Crash recovery: if state was set to "fixing" before we crashed, demote
+  // it back to stopped(state_corrupted) so the next trigger can proceed.
+  try {
+    const crashConfig = loadInitConfig();
+    const crashStateResult = await defaultReadState(
+      crashConfig.repoOwner,
+      crashConfig.repoName,
+      crashConfig.prNumber,
+      crashConfig.githubToken,
+    );
+    if (crashStateResult.found && crashStateResult.state.status === "fixing") {
+      core.warning(
+        "[pre-fix] Crash recovery: resetting fixing → stopped (state_corrupted)",
+      );
+      const recoveredState: ReviewState = {
+        ...crashStateResult.state,
+        status: "stopped",
+        stopReason: "state_corrupted",
+      };
+      await defaultUpdateStateComment(
         crashConfig.repoOwner,
         crashConfig.repoName,
-        crashConfig.prNumber,
+        crashStateResult.commentId,
+        recoveredState,
         crashConfig.githubToken,
-      );
-      if (crashStateResult.found && crashStateResult.state.status === "fixing") {
-        core.warning(
-          "[pre-fix] Crash recovery: resetting fixing → stopped (state_corrupted)",
-        );
-        const recoveredState: ReviewState = {
-          ...crashStateResult.state,
-          status: "stopped",
-          stopReason: "state_corrupted",
-        };
-        await defaultUpdateStateComment(
-          crashConfig.repoOwner,
-          crashConfig.repoName,
-          crashStateResult.commentId,
-          recoveredState,
-          crashConfig.githubToken,
-          { expectedUpdatedAt: crashStateResult.commentUpdatedAt },
-        );
-      }
-    } catch (recoveryError) {
-      core.error(
-        `[pre-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+        { expectedUpdatedAt: crashStateResult.commentUpdatedAt },
       );
     }
-  });
-}
+  } catch (recoveryError) {
+    core.error(
+      `[pre-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+    );
+  }
+});

@@ -19192,6 +19192,19 @@ function requireInput(inputName, envName) {
   return value;
 }
 
+// dist/entrypoint.js
+function runIfNotVitest(fn, onError) {
+  if (process.env.VITEST === "true") {
+    return;
+  }
+  fn().catch(async (error2) => {
+    setFailed(error2 instanceof Error ? error2.message : String(error2));
+    if (onError) {
+      await onError(error2);
+    }
+  });
+}
+
 // dist/state-manager.js
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
@@ -20070,26 +20083,23 @@ async function runPostFix(config, deps = defaultDeps, inputs = readPostFixInputs
 async function run() {
   await runPostFix(loadInitConfig());
 }
-if (process.env.VITEST !== "true") {
-  run().catch(async (error2) => {
-    setFailed(error2 instanceof Error ? error2.message : String(error2));
-    try {
-      const crashConfig = loadInitConfig();
-      const crashStateResult = await readState(crashConfig.repoOwner, crashConfig.repoName, crashConfig.prNumber, crashConfig.githubToken);
-      if (crashStateResult.found && crashStateResult.state.status === "fixing") {
-        warning("[post-fix] Crash recovery: resetting fixing \u2192 stopped (state_corrupted)");
-        const recoveredState = {
-          ...crashStateResult.state,
-          status: "stopped",
-          stopReason: "state_corrupted"
-        };
-        await updateStateComment(crashConfig.repoOwner, crashConfig.repoName, crashStateResult.commentId, recoveredState, crashConfig.githubToken, { expectedUpdatedAt: crashStateResult.commentUpdatedAt });
-      }
-    } catch (recoveryError) {
-      error(`[post-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+runIfNotVitest(run, async () => {
+  try {
+    const crashConfig = loadInitConfig();
+    const crashStateResult = await readState(crashConfig.repoOwner, crashConfig.repoName, crashConfig.prNumber, crashConfig.githubToken);
+    if (crashStateResult.found && crashStateResult.state.status === "fixing") {
+      warning("[post-fix] Crash recovery: resetting fixing \u2192 stopped (state_corrupted)");
+      const recoveredState = {
+        ...crashStateResult.state,
+        status: "stopped",
+        stopReason: "state_corrupted"
+      };
+      await updateStateComment(crashConfig.repoOwner, crashConfig.repoName, crashStateResult.commentId, recoveredState, crashConfig.githubToken, { expectedUpdatedAt: crashStateResult.commentUpdatedAt });
     }
-  });
-}
+  } catch (recoveryError) {
+    error(`[post-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+  }
+});
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   runPostFix
