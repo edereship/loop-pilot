@@ -20082,6 +20082,71 @@ ${INSTRUCTION_LINES.join("\n")}`);
   return sections.join("\n\n") + "\n";
 }
 
+// dist/check-command-allowlist.js
+var BASELINE_BASH_ALLOWED_TOOLS = [
+  "Bash(npm ci)",
+  "Bash(npm run check)",
+  "Bash(npm test)",
+  "Bash(npm run build)",
+  "Bash(git status)",
+  "Bash(git diff)",
+  "Bash(git log)"
+];
+var CHECK_COMMAND_BINARY_WHITELIST = [
+  "npm",
+  "pnpm",
+  "yarn",
+  "bun",
+  "npx",
+  "pnpx",
+  "pytest",
+  "python",
+  "python3",
+  "make",
+  "cargo",
+  "go",
+  "mise",
+  "task",
+  "just"
+];
+var CHECK_COMMAND_SAFE_CHAR_RE = /^[A-Za-z0-9 ._/=:@+\-]+$/;
+function validateCheckCommand(rawCommand) {
+  const command = rawCommand.trim();
+  if (command.length === 0) {
+    return { ok: false, reason: "empty command" };
+  }
+  if (!CHECK_COMMAND_SAFE_CHAR_RE.test(command)) {
+    return {
+      ok: false,
+      reason: "contains characters outside the safe set (shell metacharacter or quote)"
+    };
+  }
+  const firstToken = command.split(" ")[0] ?? "";
+  if (!CHECK_COMMAND_BINARY_WHITELIST.includes(firstToken)) {
+    return {
+      ok: false,
+      reason: `binary '${firstToken}' is not in the CHECK_COMMAND whitelist`
+    };
+  }
+  return { ok: true };
+}
+function deriveAllowedBashTools(checkCommand) {
+  const baseline = [...BASELINE_BASH_ALLOWED_TOOLS];
+  const trimmed = checkCommand.trim();
+  const validation = validateCheckCommand(trimmed);
+  if (!validation.ok) {
+    return { tools: baseline, rejection: validation.reason ?? "rejected" };
+  }
+  const entry = `Bash(${trimmed})`;
+  if (baseline.includes(entry)) {
+    return { tools: baseline, rejection: null };
+  }
+  return { tools: [...baseline, entry], rejection: null };
+}
+function serializeAllowedBashTools(tools) {
+  return tools.join(",");
+}
+
 // dist/main-pre-fix.js
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20325,6 +20390,10 @@ async function runPreFix(config, deps = defaultDeps) {
     previousCheckFailure: state.previousCheckFailure ?? null
   });
   const prompt = buildClaudeCodeRepairPrompt(repairRequest);
+  const allowedBashTools = deriveAllowedBashTools(config.checkCommand);
+  if (allowedBashTools.rejection !== null) {
+    deps.warning(`[pre-fix] CHECK_COMMAND '${config.checkCommand}' not added to Bash allowlist: ${allowedBashTools.rejection}. claude-code-action may fail to verify; set CHECK_COMMAND to a whitelisted binary (see docs/operations/security.md).`);
+  }
   deps.setOutput("should_run", "true");
   deps.setOutput("prompt", prompt);
   deps.setOutput("iteration", String(fixingState.iterationCount));
@@ -20334,6 +20403,7 @@ async function runPreFix(config, deps = defaultDeps) {
   deps.setOutput("comment_id", String(commentId));
   deps.setOutput("trigger_comment_id", String(triggerCommentId));
   deps.setOutput("findings_count", String(findings.length));
+  deps.setOutput("allowed_bash_tools", serializeAllowedBashTools(allowedBashTools.tools));
   deps.info(`[pre-fix] Phase 3 prep complete. iteration=${fixingState.iterationCount}, findings=${findings.length}.`);
 }
 async function run() {

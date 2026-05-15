@@ -106,6 +106,8 @@ outputs:
     description: "Trigger comment id, echoed for post-fix telemetry."
   findings_count:
     description: "Number of P0/P1/P2 findings forwarded to claude-code-action."
+  allowed_bash_tools:
+    description: "Comma-separated Bash(...) entries derived from CHECK_COMMAND for claude-code-action --allowedTools."
 
 runs:
   using: "node20"

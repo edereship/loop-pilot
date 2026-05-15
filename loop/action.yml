@@ -148,6 +148,15 @@ runs:
         # commands required for verification — git commit / git push are
         # intentionally excluded so post-fix retains exclusive commit authority.
         #
+        # The Bash allowlist is composed dynamically by pre-fix
+        # (`allowed_bash_tools`): a baseline (npm setup commands + git
+        # read-only) plus the CHECK_COMMAND when it passes the safety
+        # whitelist. This lets downstream repositories use non-npm
+        # CHECK_COMMAND (pnpm / yarn / pytest / make / …) without
+        # exhausting --max-turns on a permission-denied verification step
+        # (TY-238). Pre-fix rejects unsafe commands and falls back to the
+        # baseline; see src/check-command-allowlist.ts for the rules.
+        #
         # `--disallowedTools` explicitly blocks the MCP server tools that
         # could otherwise commit / push / delete files directly and bypass
         # the post-fix scope check + CHECK_COMMAND gate. The corresponding
@@ -159,7 +168,7 @@ runs:
         claude_args: >-
           --model ${{ inputs.claude-code-model }}
           --max-turns ${{ inputs.claude-code-max-turns }}
-          --allowedTools "Read,Glob,Grep,Edit,Write,TodoWrite,Bash(npm ci),Bash(npm run check),Bash(npm test),Bash(npm run build),Bash(git status),Bash(git diff),Bash(git log)"
+          --allowedTools "Read,Glob,Grep,Edit,Write,TodoWrite,${{ steps.pre.outputs.allowed_bash_tools }}"
           --disallowedTools "WebFetch,WebSearch,Task,NotebookEdit,mcp__github_file_ops__commit_files,mcp__github_file_ops__delete_files,mcp__github__create_or_update_file,mcp__github__push_files,mcp__github__delete_file,mcp__github__create_branch,mcp__github__create_pull_request,mcp__github__update_pull_request,mcp__github__merge_pull_request,mcp__github__fork_repository"
         # The Codex bot is the canonical Workflow B trigger
         # (pull_request_review.submitted from chatgpt-codex-connector[bot]),

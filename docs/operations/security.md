@@ -184,7 +184,7 @@ Read, Glob, Grep, Edit, Write, Bash(<allowlist>), TodoWrite
 
 ### 許可 Bash コマンド（allowlist）
 
-次の固定コマンドのみ許可する。それ以外の Bash 実行は不許可。
+**ベースライン**（常に許可）:
 
 ```
 npm ci
@@ -196,12 +196,24 @@ git diff
 git log
 ```
 
+**CHECK_COMMAND の動的追加**（TY-238）:
+
+`vars.CHECK_COMMAND` がベースライン未収載のコマンドを指す場合（例: `pnpm run check` / `pytest -xvs tests/` / `make check`）、pre-fix が安全性チェックを通過した場合のみ `Bash(<CHECK_COMMAND>)` をベースラインに **追加** する。これにより、claude-code-action は repair プロンプトで指示された最終 verification を実行できる。
+
+安全性チェック（`src/check-command-allowlist.ts` で実装）:
+
+1. **第一トークン whitelist**: `npm`, `pnpm`, `yarn`, `bun`, `npx`, `pnpx`, `pytest`, `python`, `python3`, `make`, `cargo`, `go`, `mise`, `task`, `just`
+2. **文字 whitelist**: `[A-Za-z0-9 ._/=:@+\-]` のみ許可。シェルメタ文字（`;`, `&`, `|`, `>`, `<`, `` ` ``, `$`, `(`, `)`, クォート, カンマ, 改行, バックスラッシュ, glob）は **全て拒否**
+
+拒否された CHECK_COMMAND は **追加されずベースラインに fallback** し、pre-fix が warning ログを出す。claude-code-action は CHECK_COMMAND を実行できず `--max-turns` 到達で停止する可能性が高いので、warning が出た場合は CHECK_COMMAND を whitelist に収まる形に修正する。
+
 明示的に禁止する操作:
 
 - `rm`, `mv`, `cp` — ファイル操作は `Edit` / `Write` 経由のみ
 - `curl`, `wget`, `nc` 等のネットワーク系
 - `chmod`, `chown` 等の権限変更
 - pipe / redirect 含む合成コマンド（監査困難なため）
+- `bash`, `sh`, `eval` — 任意シェル実行が可能なため、CHECK_COMMAND の第一トークンとしても不可
 
 `Read` / `Glob` / `Grep` が読み取りを担うので、`ls` / `cat` / `head` / `tail` は allowlist から外す。
 
@@ -276,6 +288,7 @@ permissions:
 - [TY-164](https://linear.app/team-yubune/issue/TY-164): モデル variable 化（TY-140 に吸収）
 - [TY-235](https://linear.app/team-yubune/issue/TY-235): repair request / prompt payload 生成
 - [TY-236](https://linear.app/team-yubune/issue/TY-236): 本節の規定を workflow 統合に反映
+- [TY-238](https://linear.app/team-yubune/issue/TY-238): CHECK_COMMAND 追従の Bash allowlist 化
 - [TY-145](https://linear.app/team-yubune/issue/TY-145): fork PR / branch protection 下での E2E 検証
 
 ---

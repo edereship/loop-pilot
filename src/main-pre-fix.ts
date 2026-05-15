@@ -36,6 +36,10 @@ import {
   buildClaudeCodeRepairRequest,
   buildClaudeCodeRepairPrompt,
 } from "./claude-code-repair-request.js";
+import {
+  deriveAllowedBashTools,
+  serializeAllowedBashTools,
+} from "./check-command-allowlist.js";
 import type { Finding, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
@@ -60,7 +64,8 @@ export type PreFixOutputName =
   | "head_sha"
   | "comment_id"
   | "trigger_comment_id"
-  | "findings_count";
+  | "findings_count"
+  | "allowed_bash_tools";
 
 export interface PreFixDeps {
   readState: typeof defaultReadState;
@@ -547,6 +552,17 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   });
   const prompt = buildClaudeCodeRepairPrompt(repairRequest);
 
+  // Promote CHECK_COMMAND into the claude-code-action Bash allowlist so the
+  // final verification step can run when the downstream repository uses a
+  // non-npm package manager (TY-238). Rejections fall back to the baseline
+  // and are surfaced as warnings so operators can fix CHECK_COMMAND.
+  const allowedBashTools = deriveAllowedBashTools(config.checkCommand);
+  if (allowedBashTools.rejection !== null) {
+    deps.warning(
+      `[pre-fix] CHECK_COMMAND '${config.checkCommand}' not added to Bash allowlist: ${allowedBashTools.rejection}. claude-code-action may fail to verify; set CHECK_COMMAND to a whitelisted binary (see docs/operations/security.md).`,
+    );
+  }
+
   deps.setOutput("should_run", "true");
   deps.setOutput("prompt", prompt);
   deps.setOutput("iteration", String(fixingState.iterationCount));
@@ -556,6 +572,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   deps.setOutput("comment_id", String(commentId));
   deps.setOutput("trigger_comment_id", String(triggerCommentId));
   deps.setOutput("findings_count", String(findings.length));
+  deps.setOutput(
+    "allowed_bash_tools",
+    serializeAllowedBashTools(allowedBashTools.tools),
+  );
 
   deps.info(
     `[pre-fix] Phase 3 prep complete. iteration=${fixingState.iterationCount}, findings=${findings.length}.`,

@@ -297,6 +297,9 @@ describe("runPreFix", () => {
     expect(deps.outputs.prompt).toContain("Token bypass in middleware");
     // previous tail surfaced in the prompt
     expect(deps.outputs.prompt).toContain("previous tail");
+    // Default CHECK_COMMAND is already in the baseline, so no extra entry.
+    expect(deps.outputs.allowed_bash_tools).toContain("Bash(npm run check)");
+    expect(deps.outputs.allowed_bash_tools).toContain("Bash(git diff)");
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
@@ -307,5 +310,71 @@ describe("runPreFix", () => {
       expect.any(Object),
     );
     expect(deps.checkoutBranch).toHaveBeenCalledWith("linear/TY-237");
+  });
+
+  it("appends CHECK_COMMAND to the Bash allowlist when using a non-npm package manager", async () => {
+    const findings: RawReviewComment[] = [
+      {
+        id: 301,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P1 Missing null guard\n\nA path can dereference null.",
+        path: "src/foo.ts",
+        line: 7,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      findings,
+    );
+
+    await runPreFix(
+      { ...baseConfig, checkCommand: "pnpm run check" },
+      deps,
+    );
+
+    expect(deps.outputs.should_run).toBe("true");
+    expect(deps.outputs.allowed_bash_tools).toContain("Bash(pnpm run check)");
+    expect(deps.warning).not.toHaveBeenCalled();
+  });
+
+  it("warns and falls back to baseline when CHECK_COMMAND is unsafe", async () => {
+    const findings: RawReviewComment[] = [
+      {
+        id: 302,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P1 Issue\n\nSomething.",
+        path: "src/bar.ts",
+        line: 1,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      findings,
+    );
+
+    await runPreFix(
+      { ...baseConfig, checkCommand: "npm run check; rm -rf /" },
+      deps,
+    );
+
+    expect(deps.outputs.should_run).toBe("true");
+    expect(deps.outputs.allowed_bash_tools).not.toContain("rm -rf");
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining("not added to Bash allowlist"),
+    );
   });
 });
