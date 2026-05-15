@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { buildGhEnv } from "./gh-env.js";
-import type { EditOperation, StopReason } from "./types.js";
+import type { StopReason } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,41 +66,7 @@ function escapeMarkdown(text: string): string {
 }
 
 /**
- * Posts a summary comment after an auto-fix iteration is applied.
- *
- * @param edits - List of edit operations applied in this iteration
- * @param skippedItems - Findings/files that could not be fixed automatically
- */
-export async function postFixSummary(
-  owner: string,
-  name: string,
-  pr: number,
-  iteration: number,
-  edits: EditOperation[],
-  skippedItems: string[],
-  token: string,
-): Promise<number> {
-  const editLines = edits
-    .map((edit) => `- \`${edit.path}\`: ${escapeMarkdown(edit.explanation)}`)
-    .join("\n");
-
-  const skippedSection =
-    skippedItems.length > 0
-      ? `\n\n**Findings requiring manual intervention:**\n${skippedItems.map((item) => `- ${escapeMarkdown(item)}`).join("\n")}`
-      : "";
-
-  const body = `**Auto-fix applied (iteration ${iteration})**\n\n${editLines}${skippedSection}`;
-
-  return postComment(owner, name, pr, body, token);
-}
-
-/**
  * Posts a summary comment after a successful claude-code-action repair iteration.
- *
- * Unlike `postFixSummary`, this variant takes only the changed file paths and
- * an optional free-form note from claude-code-action's execution output, since
- * the repair flow no longer surfaces per-edit explanations from the Anthropic
- * SDK.
  */
 export async function postClaudeCodeActionFixSummary(
   owner: string,

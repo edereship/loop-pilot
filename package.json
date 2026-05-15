@@ -17,8 +17,7 @@
     "bundle": "npm run build && npm run bundle:init && npm run bundle:pre-fix && npm run bundle:post-fix"
   },
   "dependencies": {
-    "@actions/core": "^3.0.1",
-    "@anthropic-ai/sdk": "^0.39.0"
+    "@actions/core": "^3.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",

@@ -14,14 +14,6 @@ export interface ParsedComment {
   body: string;
 }
 
-/** Claude が返す edit_file ツール呼び出し */
-export interface EditOperation {
-  path: string;
-  oldCode: string;
-  newCode: string;
-  explanation: string;
-}
-
 /** PR の hidden comment に保存する状態 */
 export interface ReviewState {
   iterationCount: number;
