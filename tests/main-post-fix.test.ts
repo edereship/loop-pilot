@@ -13,8 +13,6 @@ const baseConfig: Config = {
   maxReviewIterations: 20,
   debounceSeconds: 0,
   checkCommand: "npm run check",
-  maxFilesPerIteration: 10,
-  maxInputTokensPerFile: 30000,
   codexBotLogin: "chatgpt-codex-connector[bot]",
   stabilizeIntervalSeconds: 1,
   stabilizeCount: 1,
@@ -290,7 +288,6 @@ describe("runPostFix", () => {
       99,
       2,
       ["src/foo.ts", "src/new-helper.ts", "tests/new-helper.test.ts"],
-      null,
       "github-token",
     );
   });

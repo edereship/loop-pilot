@@ -151,17 +151,6 @@ export function deserializeState(commentBody: string): ReviewState | null {
   }
 }
 
-export function containsSerializedStateMarker(commentBody: string): boolean {
-  // Anchor on the visible header so documentation/linkback comments that quote
-  // the marker inline (e.g., inside backticks) are not misidentified as state
-  // comments. The marker check defends against the rare case where someone
-  // writes a comment that legitimately starts with the visible text.
-  return (
-    commentBody.startsWith(STATE_COMMENT_VISIBLE_TEXT) &&
-    commentBody.includes(STATE_COMMENT_OPEN)
-  );
-}
-
 export type ReadStateResult =
   | { found: true; corrupted: false; state: ReviewState; commentId: number; commentUpdatedAt: string }
   | { found: false; corrupted: false; commentId: null }

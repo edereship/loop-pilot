@@ -56,14 +56,6 @@ inputs:
     description: "Shell command to run after applying fixes (test/lint/typecheck)"
     required: false
     default: "npm run check"
-  max-files-per-iteration:
-    description: "Compatibility input; not consumed by the claude-code-action loop."
-    required: false
-    default: "10"
-  max-input-tokens-per-file:
-    description: "Compatibility input; not consumed by the claude-code-action loop."
-    required: false
-    default: "30000"
   codex-bot-login:
     description: "GitHub login of the Codex bot"
     required: false
@@ -132,8 +124,6 @@ runs:
         max-review-iterations: ${{ inputs.max-review-iterations }}
         debounce-seconds: ${{ inputs.debounce-seconds }}
         check-command: ${{ inputs.check-command }}
-        max-files-per-iteration: ${{ inputs.max-files-per-iteration }}
-        max-input-tokens-per-file: ${{ inputs.max-input-tokens-per-file }}
         codex-bot-login: ${{ inputs.codex-bot-login }}
         codex-review-marker: ${{ inputs.codex-review-marker }}
         stabilize-interval-seconds: ${{ inputs.stabilize-interval-seconds }}

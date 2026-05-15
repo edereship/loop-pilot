@@ -19126,8 +19126,6 @@ function loadBaseConfig() {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
-    maxFilesPerIteration: intInput("max-files-per-iteration", "MAX_FILES_PER_ITERATION", 10),
-    maxInputTokensPerFile: intInput("max-input-tokens-per-file", "MAX_INPUT_TOKENS_PER_FILE", 3e4),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
@@ -19698,18 +19696,11 @@ async function postComment(owner, name, pr, body, token) {
   }
   return commentId;
 }
-function escapeMarkdown(text) {
-  return text.replace(/[\r\n]+/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/`{3,}/g, "``").trim();
-}
-async function postClaudeCodeActionFixSummary(owner, name, pr, iteration, changedPaths, summaryNote, token) {
+async function postClaudeCodeActionFixSummary(owner, name, pr, iteration, changedPaths, token) {
   const fileLines = changedPaths.length > 0 ? changedPaths.map((path) => `- \`${path}\``).join("\n") : "_(no files changed)_";
-  const noteSection = summaryNote ? `
-
-**Repair summary:**
-${escapeMarkdown(summaryNote)}` : "";
   const body = `**Auto-fix applied (iteration ${iteration})**
 
-${fileLines}${noteSection}`;
+${fileLines}`;
   return postComment(owner, name, pr, body, token);
 }
 async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token) {
@@ -20051,7 +20042,7 @@ async function runPostFix(config, deps = defaultDeps, inputs = readPostFixInputs
   } else {
     deps.warning("[post-fix] No staged changes after `git add`. Skipping commit; treating as no-op.");
   }
-  await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, null, config.githubToken);
+  await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, config.githubToken);
   const waitingState = {
     ...state,
     status: "waiting_codex",

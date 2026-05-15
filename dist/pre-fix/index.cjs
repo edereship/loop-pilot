@@ -19168,8 +19168,6 @@ function loadBaseConfig() {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
-    maxFilesPerIteration: intInput("max-files-per-iteration", "MAX_FILES_PER_ITERATION", 10),
-    maxInputTokensPerFile: intInput("max-input-tokens-per-file", "MAX_INPUT_TOKENS_PER_FILE", 3e4),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),

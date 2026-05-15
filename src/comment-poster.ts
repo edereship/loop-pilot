@@ -55,18 +55,6 @@ async function postComment(
 }
 
 /**
- * Escape a user/AI-generated string for safe embedding in Markdown.
- * Strips Markdown link syntax and backtick sequences to prevent injection.
- */
-function escapeMarkdown(text: string): string {
-  return text
-    .replace(/[\r\n]+/g, " ")        // collapse newlines
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")  // strip [text](url) → text
-    .replace(/`{3,}/g, "``")          // prevent code fence breakout
-    .trim();
-}
-
-/**
  * Posts a summary comment after a successful claude-code-action repair iteration.
  */
 export async function postClaudeCodeActionFixSummary(
@@ -75,7 +63,6 @@ export async function postClaudeCodeActionFixSummary(
   pr: number,
   iteration: number,
   changedPaths: string[],
-  summaryNote: string | null,
   token: string,
 ): Promise<number> {
   const fileLines =
@@ -83,11 +70,7 @@ export async function postClaudeCodeActionFixSummary(
       ? changedPaths.map((path) => `- \`${path}\``).join("\n")
       : "_(no files changed)_";
 
-  const noteSection = summaryNote
-    ? `\n\n**Repair summary:**\n${escapeMarkdown(summaryNote)}`
-    : "";
-
-  const body = `**Auto-fix applied (iteration ${iteration})**\n\n${fileLines}${noteSection}`;
+  const body = `**Auto-fix applied (iteration ${iteration})**\n\n${fileLines}`;
 
   return postComment(owner, name, pr, body, token);
 }

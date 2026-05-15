@@ -46,14 +46,6 @@ inputs:
     description: "Shell command to run after applying fixes (test/lint/typecheck)"
     required: false
     default: "npm run check"
-  max-files-per-iteration:
-    description: "Maximum files to fix per iteration (kept for compatibility; not used by claude-code-action loop)"
-    required: false
-    default: "10"
-  max-input-tokens-per-file:
-    description: "Maximum estimated input tokens per file (kept for compatibility)"
-    required: false
-    default: "30000"
   codex-bot-login:
     description: "GitHub login of the Codex bot"
     required: false

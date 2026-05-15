@@ -11,8 +11,6 @@ const baseConfig: Config = {
   maxReviewIterations: 20,
   debounceSeconds: 0,
   checkCommand: "npm run check",
-  maxFilesPerIteration: 10,
-  maxInputTokensPerFile: 30000,
   codexBotLogin: "chatgpt-codex-connector[bot]",
   stabilizeIntervalSeconds: 1,
   stabilizeCount: 1,

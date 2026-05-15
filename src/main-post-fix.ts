@@ -610,7 +610,6 @@ export async function runPostFix(
     config.prNumber,
     inputs.iteration,
     modifiedFiles,
-    null,
     config.githubToken,
   );
 
