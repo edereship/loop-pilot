@@ -7,6 +7,16 @@
 
 PR #7 で実測済み。Codex の `Codex Review: Didn't find any major issues.` コメントを受け、Workflow B が `done / no_findings` に更新し、完了コメントを投稿した。
 
+**オプション: `done / no_findings` 到達時の自動マージ (TY-245):**
+
+Repository variable `AUTO_REVIEW_AUTO_MERGE=true` を設定すると、`done / no_findings` への遷移直後に `gh pr merge --auto --squash` を呼び出し、GitHub native auto-merge を有効化する。GitHub 側で required status checks 通過後にマージされるため、ブランチ保護下でも安全に動作する。
+
+- デフォルト `false`（従来挙動・人手マージ維持）
+- 発火するのは `done / no_findings` のみ。`max_iterations` / `loop_detected` / `claude_api_error` 等の停止では絶対にマージしない
+- マージ方式は **squash 固定**
+- `gh pr merge --auto` 自体が失敗した場合（権限不足、auto-merge 設定が repo で無効など）はワークフローは success のまま warning ログのみ。人手マージ運用は維持される
+- `done` 後に人間が新たに commit を push した場合は、auto-merge 有効のまま CI 通過時にマージされる（GitHub native auto-merge の仕様）。再レビューしたい運用では `AUTO_REVIEW_AUTO_MERGE=false` のまま使う
+
 ### 強制停止
 - iteration_count >= `MAX_REVIEW_ITERATIONS`
 

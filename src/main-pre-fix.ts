@@ -24,6 +24,7 @@ import {
   postStopComment as defaultPostStopComment,
   postInitIncompleteComment as defaultPostInitIncompleteComment,
 } from "./comment-poster.js";
+import { enableAutoMergeSquash as defaultEnableAutoMergeSquash } from "./pr-merger.js";
 import {
   fetchPrLabels as defaultFetchPrLabels,
   isAutoReviewAllowed,
@@ -78,6 +79,7 @@ export interface PreFixDeps {
   postCompletionComment: typeof defaultPostCompletionComment;
   postStopComment: typeof defaultPostStopComment;
   postInitIncompleteComment: typeof defaultPostInitIncompleteComment;
+  enableAutoMergeSquash: typeof defaultEnableAutoMergeSquash;
   fetchPrLabels: typeof defaultFetchPrLabels;
   handleRestartCommand: typeof defaultHandleRestartCommand;
   setSecret: (secret: string) => void;
@@ -101,6 +103,7 @@ const defaultDeps: PreFixDeps = {
   postCompletionComment: defaultPostCompletionComment,
   postStopComment: defaultPostStopComment,
   postInitIncompleteComment: defaultPostInitIncompleteComment,
+  enableAutoMergeSquash: defaultEnableAutoMergeSquash,
   fetchPrLabels: defaultFetchPrLabels,
   handleRestartCommand: defaultHandleRestartCommand,
   setSecret: (secret) => core.setSecret(secret),
@@ -483,6 +486,15 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       doneState.iterationCount,
       config.githubToken,
     );
+    if (config.autoMergeOnClean) {
+      await deps.enableAutoMergeSquash(
+        config.repoOwner,
+        config.repoName,
+        config.prNumber,
+        config.githubToken,
+        { info: deps.info, warning: deps.warning },
+      );
+    }
     return;
   }
 

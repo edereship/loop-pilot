@@ -10838,7 +10838,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify6 } = require("node:util");
+    var { promisify: promisify7 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10878,7 +10878,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify6(this[kOriginalClose])();
+        await promisify7(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -10891,7 +10891,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify6 } = require("node:util");
+    var { promisify: promisify7 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10931,7 +10931,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify6(this[kOriginalClose])();
+        await promisify7(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -18639,7 +18639,7 @@ __export(main_pre_fix_exports, {
   runPreFix: () => runPreFix
 });
 module.exports = __toCommonJS(main_pre_fix_exports);
-var import_node_child_process6 = require("node:child_process");
+var import_node_child_process7 = require("node:child_process");
 
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
@@ -19188,7 +19188,8 @@ function loadBaseConfig() {
     autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
     autoReviewRestartRoles: input("auto-review-restart-roles", "AUTO_REVIEW_RESTART_ROLES", "author,write,maintain,admin"),
     claudeCodeModelBase: input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE),
-    claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED)
+    claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED),
+    autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false)
   };
 }
 function input(inputName, envName, defaultValue) {
@@ -19756,12 +19757,26 @@ async function postCodexReviewRequest(owner, name, pr, token) {
   return postComment(owner, name, pr, "@codex review", token);
 }
 
-// dist/pr-labels.js
+// dist/pr-merger.js
 var import_node_child_process4 = require("node:child_process");
 var import_node_util4 = require("node:util");
 var execFileAsync4 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
+async function enableAutoMergeSquash(owner, name, pr, token, log) {
+  try {
+    await execFileAsync4("gh", ["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`], { env: buildGhEnv(token) });
+    log.info(`[pr-merger] Auto-merge (squash) enabled for PR #${pr}.`);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    log.warning(`[pr-merger] Failed to enable auto-merge for PR #${pr} (non-fatal): ${message}`);
+  }
+}
+
+// dist/pr-labels.js
+var import_node_child_process5 = require("node:child_process");
+var import_node_util5 = require("node:util");
+var execFileAsync5 = (0, import_node_util5.promisify)(import_node_child_process5.execFile);
 var fetchPrLabels = async (owner, name, pr, token) => {
-  const { stdout } = await execFileAsync4("gh", [
+  const { stdout } = await execFileAsync5("gh", [
     "api",
     `repos/${owner}/${name}/issues/${pr}/labels`,
     "--paginate",
@@ -19778,9 +19793,9 @@ function isAutoReviewAllowed(requiredLabel, currentLabels) {
 }
 
 // dist/restart-command.js
-var import_node_child_process5 = require("node:child_process");
-var import_node_util5 = require("node:util");
-var execFileAsync5 = (0, import_node_util5.promisify)(import_node_child_process5.execFile);
+var import_node_child_process6 = require("node:child_process");
+var import_node_util6 = require("node:util");
+var execFileAsync6 = (0, import_node_util6.promisify)(import_node_child_process6.execFile);
 function normalizeBody(body) {
   return body.replace(/[\r\n]+$/, "");
 }
@@ -19906,7 +19921,7 @@ function restartRejectionMessage(reason) {
   }
 }
 async function getPrAuthor(owner, repo, prNumber, token) {
-  const { stdout } = await execFileAsync5("gh", ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"], { env: buildGhEnv(token) });
+  const { stdout } = await execFileAsync6("gh", ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"], { env: buildGhEnv(token) });
   return stdout.trim();
 }
 var BUILTIN_PERMISSIONS = /* @__PURE__ */ new Set([
@@ -19930,7 +19945,7 @@ function pickPermission(roleName, permission) {
 }
 async function getCollaboratorPermission(owner, repo, user, token) {
   try {
-    const { stdout } = await execFileAsync5("gh", [
+    const { stdout } = await execFileAsync6("gh", [
       "api",
       `repos/${owner}/${repo}/collaborators/${user}/permission`,
       "--jq",
@@ -19947,7 +19962,7 @@ async function getCollaboratorPermission(owner, repo, user, token) {
   }
 }
 async function postComment2(owner, repo, prNumber, body, token) {
-  const { stdout } = await execFileAsync5("gh", [
+  const { stdout } = await execFileAsync6("gh", [
     "api",
     `repos/${owner}/${repo}/issues/${prNumber}/comments`,
     "-X",
@@ -19960,7 +19975,7 @@ async function postComment2(owner, repo, prNumber, body, token) {
   return Number.parseInt(stdout.trim(), 10);
 }
 async function addEyesReaction(owner, repo, commentId, token) {
-  await execFileAsync5("gh", [
+  await execFileAsync6("gh", [
     "api",
     `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
     "-X",
@@ -20221,6 +20236,7 @@ var defaultDeps = {
   postCompletionComment,
   postStopComment,
   postInitIncompleteComment,
+  enableAutoMergeSquash,
   fetchPrLabels,
   handleRestartCommand,
   setSecret: (secret) => setSecret(secret),
@@ -20232,14 +20248,14 @@ var defaultDeps = {
   now: () => /* @__PURE__ */ new Date(),
   readHeadSha: () => {
     try {
-      return (0, import_node_child_process6.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+      return (0, import_node_child_process7.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
     } catch (error2) {
       warning(`[pre-fix] Could not read HEAD sha: ${error2 instanceof Error ? error2.message : String(error2)}`);
       return "";
     }
   },
   checkoutBranch: (ref) => {
-    (0, import_node_child_process6.execFileSync)("git", ["checkout", ref], { stdio: "inherit" });
+    (0, import_node_child_process7.execFileSync)("git", ["checkout", ref], { stdio: "inherit" });
   }
 };
 async function runPreFix(config, deps = defaultDeps) {
@@ -20404,6 +20420,9 @@ async function runPreFix(config, deps = defaultDeps) {
     if (!await updateStateCommentLocked(commentId, doneState, "Could not mark auto-review as done."))
       return;
     await deps.postCompletionComment(config.repoOwner, config.repoName, config.prNumber, doneState.iterationCount, config.githubToken);
+    if (config.autoMergeOnClean) {
+      await deps.enableAutoMergeSquash(config.repoOwner, config.repoName, config.prNumber, config.githubToken, { info: deps.info, warning: deps.warning });
+    }
     return;
   }
   if (state.iterationCount >= config.maxReviewIterations) {

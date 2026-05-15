@@ -173,6 +173,7 @@ jobs:
           claude-code-model-base: ${{ vars.CLAUDE_CODE_MODEL_BASE || 'claude-sonnet-4-6' }}
           claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-7' }}
           claude-code-max-turns: ${{ vars.CLAUDE_CODE_MAX_TURNS || '40' }}
+          auto-merge-on-clean: ${{ vars.AUTO_REVIEW_AUTO_MERGE || 'false' }}
 
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact

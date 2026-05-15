@@ -108,6 +108,10 @@ inputs:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false
     default: ""
+  auto-merge-on-clean:
+    description: "Set to 'true' to enable GitHub native auto-merge (squash) when the loop terminates with done/no_findings. Default 'false' preserves manual merge."
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -140,6 +144,7 @@ runs:
         github-repository: ${{ inputs.github-repository }}
         claude-code-model-base: ${{ inputs.claude-code-model-base }}
         claude-code-model-escalated: ${{ inputs.claude-code-model-escalated }}
+        auto-merge-on-clean: ${{ inputs.auto-merge-on-clean }}
 
     - name: Claude Code Action (repo-level repair)
       id: claude

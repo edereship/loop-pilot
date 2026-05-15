@@ -35,6 +35,10 @@ export interface Config {
   //   variables to the same value to operate without tiering.
   claudeCodeModelBase: string;
   claudeCodeModelEscalated: string;
+  // Opt-in PR auto-merge (TY-245). When true, the loop calls
+  // `gh pr merge --auto --squash` after a `done / no_findings` transition.
+  // Other stop reasons never enable auto-merge.
+  autoMergeOnClean: boolean;
 }
 
 const DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
@@ -115,6 +119,7 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
       "CLAUDE_CODE_MODEL_ESCALATED",
       DEFAULT_CLAUDE_CODE_MODEL_ESCALATED,
     ),
+    autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
   };
 }
 

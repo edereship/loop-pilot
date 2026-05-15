@@ -56,6 +56,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 | `CODEX_REVIEW_REQUEST_TOKEN` | `@codex review` 投稿専用の接続済みユーザー PAT。未設定時は `GITHUB_TOKEN` に fallback | なし | 接続済みユーザーの Fine-grained PAT |
 | `AUTO_REVIEW_LABEL` | 起動ラベル名（カスタマイズ用）。デフォルトのラベル必須モードでこのラベルが付いた PR のみ Workflow A/B が起動する。未設定/空文字なら `auto-review-fix` をフォールバック使用（レビュー＋自動修正までを行うため命名は `auto-review-fix`） | `auto-review-fix` | 未設定（フォールバックで `auto-review-fix` を要求） |
 | `AUTO_REVIEW_FULL_AUTO` | `true` を設定すると label gate を無効化し、すべての非 fork ready PR で起動する（完全自動化、PoC 互換挙動） | `false`（ラベル必須） | 未設定（ラベル必須） |
+| `AUTO_REVIEW_AUTO_MERGE` | `true` を設定すると `done / no_findings` 到達時に GitHub native auto-merge (squash) を有効化する（TY-245）。他の停止理由ではマージしない。失敗時は warning のみで人手マージ運用を維持 | `false`（人手マージ） | 未設定（人手マージ） |
 
 > 運用注意: `AUTO_REVIEW_FULL_AUTO=true` 時はラベルの付け外しで開始/停止を制御できない。停止したい場合は `AUTO_REVIEW_FULL_AUTO=false` に戻すか、workflow を無効化する。
 

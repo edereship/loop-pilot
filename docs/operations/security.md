@@ -73,8 +73,8 @@ PR #7 の実環境では上記値で Codex review を検知できた。未設定
 Claude に PR ブランチの checkout と push 権限を与えるため、以下を制限する。
 
 **必要な権限:**
-- `contents: write`（commit / push）
-- `pull-requests: write`（コメント投稿）
+- `contents: write`（commit / push、および `AUTO_REVIEW_AUTO_MERGE=true` の場合は `gh pr merge --auto --squash` 呼び出し）
+- `pull-requests: write`（コメント投稿、および auto-merge オプション有効時のマージキュー登録）
 - `issues: write`（hidden comment の読み書き）
 
 PR #7 では、Repository UI で default workflow permission を write に変更できない環境でも、workflow YAML の明示的 `permissions: contents: write` により同一リポジトリ PR branch への commit/push が成功した。

@@ -33,6 +33,7 @@ const baseConfig: Config = {
   autoReviewRestartRoles: "author,write,maintain,admin",
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
+  autoMergeOnClean: false,
 };
 
 function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
@@ -56,6 +57,7 @@ function makeDeps(
     postCompletionComment: vi.fn().mockResolvedValue(1),
     postStopComment: vi.fn().mockResolvedValue(2),
     postInitIncompleteComment: vi.fn().mockResolvedValue(3),
+    enableAutoMergeSquash: vi.fn().mockResolvedValue(undefined),
     fetchPrLabels: vi.fn().mockResolvedValue(["auto-review-fix"]),
     handleRestartCommand: vi.fn().mockResolvedValue({ handled: false }),
     setSecret: vi.fn(),
@@ -192,6 +194,31 @@ describe("runPreFix", () => {
       expect.any(Object),
     );
     expect(deps.postCompletionComment).toHaveBeenCalled();
+    expect(deps.enableAutoMergeSquash).not.toHaveBeenCalled();
+  });
+
+  it("enables auto-merge on done/no_findings when AUTO_REVIEW_AUTO_MERGE is true", async () => {
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      [],
+    );
+
+    await runPreFix({ ...baseConfig, autoMergeOnClean: true }, deps);
+
+    expect(deps.postCompletionComment).toHaveBeenCalled();
+    expect(deps.enableAutoMergeSquash).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "github-token",
+      expect.objectContaining({ info: expect.any(Function), warning: expect.any(Function) }),
+    );
   });
 
   it("stops when iteration count is at the configured maximum", async () => {
@@ -216,7 +243,7 @@ describe("runPreFix", () => {
       findings,
     );
 
-    await runPreFix(baseConfig, deps);
+    await runPreFix({ ...baseConfig, autoMergeOnClean: true }, deps);
 
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
@@ -228,6 +255,8 @@ describe("runPreFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalled();
+    // auto-merge must only fire on done/no_findings, not max_iterations.
+    expect(deps.enableAutoMergeSquash).not.toHaveBeenCalled();
   });
 
   it("propagates checkoutBranch failure so claude-code-action does not run on the wrong ref", async () => {
