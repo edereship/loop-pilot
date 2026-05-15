@@ -330,6 +330,12 @@ TY-241 で base = Sonnet / escalated = Opus の階層化を導入したため、
 
 ---
 
+## Action runtime
+
+ローカル composite action (`init`, `loop/pre-fix`, `loop/post-fix`) は Node.js 24 で動作する。`actions/checkout` と `actions/upload-artifact` は v5 を使用する（TY-246）。GitHub Actions ランナーから Node.js 20 が削除される 2026-09-16 までに完了する必要があった対応。
+
+---
+
 ## 関連ドキュメント
 
 - [イベント設計](../architecture/event-design.md) — push 権限の注意点
