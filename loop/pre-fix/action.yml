@@ -86,16 +86,12 @@ inputs:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false
     default: ""
-  claude-code-model:
-    description: "Legacy single-model override. Empty enables the base/escalated tiering."
-    required: false
-    default: ""
   claude-code-model-base:
-    description: "Base tier model used when no escalation signal fires."
+    description: "Base tier model used when no escalation signal fires. Set this equal to claude-code-model-escalated to operate without tiering."
     required: false
     default: "claude-sonnet-4-6"
   claude-code-model-escalated:
-    description: "Escalated tier model used on P0 finding or after a CHECK_COMMAND failure."
+    description: "Escalated tier model used on P0 finding, repeated finding, or after a CHECK_COMMAND failure."
     required: false
     default: "claude-opus-4-7"
 

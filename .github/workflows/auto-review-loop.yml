@@ -164,10 +164,8 @@ jobs:
           auto-review-label: ${{ vars.AUTO_REVIEW_LABEL || '' }}
           auto-review-full-auto: ${{ vars.AUTO_REVIEW_FULL_AUTO || 'false' }}
           auto-review-restart-roles: ${{ vars.AUTO_REVIEW_RESTART_ROLES || 'author,write,maintain,admin' }}
-          # CLAUDE_CODE_MODEL: legacy single-model override (TY-241).
-          # When set, disables tiering. Leave unset to use the
-          # Sonnet-default + Opus-escalation policy.
-          claude-code-model: ${{ vars.CLAUDE_CODE_MODEL || '' }}
+          # Model tiering (TY-241, simplified in TY-242).
+          # Set BASE === ESCALATED to operate without tiering.
           claude-code-model-base: ${{ vars.CLAUDE_CODE_MODEL_BASE || 'claude-sonnet-4-6' }}
           claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-7' }}
           claude-code-max-turns: ${{ vars.CLAUDE_CODE_MAX_TURNS || '40' }}

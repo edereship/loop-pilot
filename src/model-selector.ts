@@ -5,11 +5,9 @@ export type EscalationReason =
   | "previous_check_failure"
   | "repeated_finding";
 
-export type ModelTier = "override" | "base" | "escalated";
+export type ModelTier = "base" | "escalated";
 
 export interface ModelSelectionInput {
-  /** Hard override from vars.CLAUDE_CODE_MODEL. Empty string disables override. */
-  override: string;
   /** Base tier model (default Sonnet) used when no escalation signal fires. */
   baseModel: string;
   /** Escalated tier model (default Opus) used when an escalation signal fires. */
@@ -33,14 +31,6 @@ export interface ModelSelection {
 }
 
 export function selectModel(input: ModelSelectionInput): ModelSelection {
-  if (input.override !== "") {
-    return {
-      model: input.override,
-      tier: "override",
-      escalationReasons: [],
-    };
-  }
-
   const reasons: EscalationReason[] = [];
   if (input.findings.some((f) => f.severity === "P0")) {
     reasons.push("p0_finding");

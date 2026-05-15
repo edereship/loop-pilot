@@ -90,7 +90,7 @@ GitHub Actions 内で `sleep $DEBOUNCE_SECONDS` を使う場合、**ランナー
 #### 4-2. anthropics/claude-code-action@v1
 - `prompt: ${{ steps.pre.outputs.prompt }}` で起動
 - `claude_args`: `--model ${{ steps.pre.outputs.model }}` / `--max-turns 40` / `--allowedTools "Read,Glob,Grep,Edit,Write,TodoWrite,Bash(npm ci),Bash(npm run check),Bash(npm test),Bash(npm run build),Bash(git status),Bash(git diff),Bash(git log)"` / `--disallowedTools "WebFetch,WebSearch,Task,NotebookEdit"`
-- pre-fix が iteration ごとに `selectModel` (TY-241) で base (`CLAUDE_CODE_MODEL_BASE`、default Sonnet) または escalated (`CLAUDE_CODE_MODEL_ESCALATED`、default Opus) を選択する。`CLAUDE_CODE_MODEL` が設定されている場合は hard override として常時その値を使用
+- pre-fix が iteration ごとに `selectModel` (TY-241 / TY-242) で base (`CLAUDE_CODE_MODEL_BASE`、default Sonnet) または escalated (`CLAUDE_CODE_MODEL_ESCALATED`、default Opus) を選択する。固定モデル運用は `BASE === ESCALATED` で表現する (専用 override 変数は持たない)
 - `git commit` / `git push` を **bash allowlist に含めない**ことで、commit 権限は post-fix に閉じる
 - `allowed_bots: ""`（直接呼び出しのみ、bot コメント由来の trigger 経路は使わない）
 

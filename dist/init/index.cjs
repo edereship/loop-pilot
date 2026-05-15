@@ -19179,7 +19179,6 @@ function loadBaseConfig() {
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
     autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
     autoReviewRestartRoles: input("auto-review-restart-roles", "AUTO_REVIEW_RESTART_ROLES", "author,write,maintain,admin"),
-    claudeCodeModelOverride: input("claude-code-model", "CLAUDE_CODE_MODEL", ""),
     claudeCodeModelBase: input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE),
     claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED)
   };

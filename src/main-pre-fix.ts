@@ -522,7 +522,6 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     (previousEntry.modelTier ?? "escalated") === "base";
 
   const selection = selectModel({
-    override: config.claudeCodeModelOverride,
     baseModel: config.claudeCodeModelBase,
     escalatedModel: config.claudeCodeModelEscalated,
     findings,
@@ -536,14 +535,9 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
         : ""),
   );
 
-  // For loop-detection purposes we collapse `override` to `escalated`: the
-  // override path is a fixed model, so seeing the same hash again has no
-  // further escalation step available.
-  const storedTier: "base" | "escalated" =
-    selection.tier === "base" ? "base" : "escalated";
   const updatedHashHistory: typeof state.findingsHashHistory = [
     ...state.findingsHashHistory,
-    { iteration: newIteration, hash: currentHash, modelTier: storedTier },
+    { iteration: newIteration, hash: currentHash, modelTier: selection.tier },
   ];
 
   const fixingState: ReviewState = {

@@ -11,7 +11,6 @@ const finding = (severity: "P0" | "P1" | "P2"): Finding => ({
 });
 
 const defaultInput = {
-  override: "",
   baseModel: "claude-sonnet-4-6",
   escalatedModel: "claude-opus-4-7",
   findings: [],
@@ -20,20 +19,6 @@ const defaultInput = {
 };
 
 describe("selectModel", () => {
-  it("returns override tier when override is set, regardless of escalation signals", () => {
-    const result = selectModel({
-      ...defaultInput,
-      override: "claude-haiku-4-5-20251001",
-      findings: [finding("P0")],
-      previousCheckFailure: "boom",
-    });
-    expect(result).toEqual({
-      model: "claude-haiku-4-5-20251001",
-      tier: "override",
-      escalationReasons: [],
-    });
-  });
-
   it("returns base tier when no escalation signals", () => {
     const result = selectModel({
       ...defaultInput,
@@ -101,16 +86,6 @@ describe("selectModel", () => {
     expect(result.model).toBe("claude-sonnet-4-6");
   });
 
-  it("override takes precedence even with empty findings", () => {
-    const result = selectModel({
-      ...defaultInput,
-      override: "claude-opus-4-7",
-      findings: [],
-    });
-    expect(result.tier).toBe("override");
-    expect(result.model).toBe("claude-opus-4-7");
-  });
-
   it("escalates with repeated_finding when repeatedFinding is true", () => {
     const result = selectModel({
       ...defaultInput,
@@ -142,15 +117,14 @@ describe("selectModel", () => {
     });
   });
 
-  it("override still wins when repeatedFinding is true", () => {
+  it("BASE === ESCALATED yields a fixed model even at the escalated tier", () => {
     const result = selectModel({
       ...defaultInput,
-      override: "claude-haiku-4-5-20251001",
-      findings: [finding("P1")],
-      repeatedFinding: true,
+      baseModel: "claude-opus-4-7",
+      escalatedModel: "claude-opus-4-7",
+      findings: [finding("P0")],
     });
-    expect(result.tier).toBe("override");
-    expect(result.model).toBe("claude-haiku-4-5-20251001");
-    expect(result.escalationReasons).toEqual([]);
+    expect(result.tier).toBe("escalated");
+    expect(result.model).toBe("claude-opus-4-7");
   });
 });

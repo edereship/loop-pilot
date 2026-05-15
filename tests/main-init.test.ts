@@ -29,7 +29,6 @@ const baseConfig: Config = {
   autoReviewLabel: "",
   autoReviewFullAuto: false,
   autoReviewRestartRoles: "author,write,maintain,admin",
-  claudeCodeModelOverride: "",
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
 };

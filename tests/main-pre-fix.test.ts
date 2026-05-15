@@ -31,7 +31,6 @@ const baseConfig: Config = {
   autoReviewLabel: "auto-review-fix",
   autoReviewFullAuto: false,
   autoReviewRestartRoles: "author,write,maintain,admin",
-  claudeCodeModelOverride: "",
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
 };
@@ -377,40 +376,6 @@ describe("runPreFix", () => {
 
     expect(deps.outputs.should_run).toBe("true");
     expect(deps.outputs.model).toBe("claude-sonnet-4-6");
-  });
-
-  it("honors claudeCodeModelOverride even with escalation signals", async () => {
-    const findings: RawReviewComment[] = [
-      {
-        id: 321,
-        user: { login: "chatgpt-codex-connector[bot]" },
-        body: "P0 Critical\n\nReally bad.",
-        path: "src/foo.ts",
-        line: 12,
-        createdAt: "2026-05-14T11:30:00Z",
-      },
-    ];
-    const deps = makeDeps(
-      {
-        found: true,
-        corrupted: false,
-        commentId: 100,
-        commentUpdatedAt: "2026-05-14T11:00:00Z",
-        state: makeState({
-          status: "waiting_codex",
-          previousCheckFailure: "boom",
-        }),
-      },
-      findings,
-    );
-
-    await runPreFix(
-      { ...baseConfig, claudeCodeModelOverride: "claude-haiku-4-5-20251001" },
-      deps,
-    );
-
-    expect(deps.outputs.should_run).toBe("true");
-    expect(deps.outputs.model).toBe("claude-haiku-4-5-20251001");
   });
 
   it("escalates to the escalated tier when the previous base-tier iteration produced the same findings hash (TY-243)", async () => {

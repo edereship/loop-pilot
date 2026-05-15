@@ -92,16 +92,12 @@ inputs:
     description: "Comma-separated roles allowed to run /restart-review."
     required: false
     default: "author,write,maintain,admin"
-  claude-code-model:
-    description: "Hard-override model. When non-empty, disables tiering and uses this exact model for every iteration (back-compat with the pre-TY-241 single-model setup). Empty enables base/escalated tiering."
-    required: false
-    default: ""
   claude-code-model-base:
-    description: "Base tier model used when no escalation signal fires. See docs/operations/security.md (model selection)."
+    description: "Base tier model used when no escalation signal fires. See docs/operations/security.md (model selection). Set this equal to claude-code-model-escalated to operate without tiering."
     required: false
     default: "claude-sonnet-4-6"
   claude-code-model-escalated:
-    description: "Escalated tier model used when a P0 finding is present or the previous iteration's CHECK_COMMAND failed."
+    description: "Escalated tier model used when a P0 finding is present, the previous iteration's CHECK_COMMAND failed, or the same findings hash repeats at the base tier."
     required: false
     default: "claude-opus-4-7"
   claude-code-max-turns:
@@ -142,7 +138,6 @@ runs:
         auto-review-full-auto: ${{ inputs.auto-review-full-auto }}
         auto-review-restart-roles: ${{ inputs.auto-review-restart-roles }}
         github-repository: ${{ inputs.github-repository }}
-        claude-code-model: ${{ inputs.claude-code-model }}
         claude-code-model-base: ${{ inputs.claude-code-model-base }}
         claude-code-model-escalated: ${{ inputs.claude-code-model-escalated }}
 

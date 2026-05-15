@@ -19187,7 +19187,6 @@ function loadBaseConfig() {
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
     autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
     autoReviewRestartRoles: input("auto-review-restart-roles", "AUTO_REVIEW_RESTART_ROLES", "author,write,maintain,admin"),
-    claudeCodeModelOverride: input("claude-code-model", "CLAUDE_CODE_MODEL", ""),
     claudeCodeModelBase: input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE),
     claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED)
   };
@@ -20171,13 +20170,6 @@ function serializeAllowedBashTools(tools) {
 
 // dist/model-selector.js
 function selectModel(input2) {
-  if (input2.override !== "") {
-    return {
-      model: input2.override,
-      tier: "override",
-      escalationReasons: []
-    };
-  }
   const reasons = [];
   if (input2.findings.some((f) => f.severity === "P0")) {
     reasons.push("p0_finding");
@@ -20415,7 +20407,6 @@ async function runPreFix(config, deps = defaultDeps) {
   const previousEntry = state.findingsHashHistory.length > 0 ? state.findingsHashHistory[state.findingsHashHistory.length - 1] : null;
   const repeatedFinding = previousEntry !== null && previousEntry.hash === currentHash && (previousEntry.modelTier ?? "escalated") === "base";
   const selection = selectModel({
-    override: config.claudeCodeModelOverride,
     baseModel: config.claudeCodeModelBase,
     escalatedModel: config.claudeCodeModelEscalated,
     findings,
@@ -20423,10 +20414,9 @@ async function runPreFix(config, deps = defaultDeps) {
     repeatedFinding
   });
   deps.info(`[pre-fix] Model tier=${selection.tier} model=${selection.model}` + (selection.escalationReasons.length > 0 ? ` reasons=${selection.escalationReasons.join(",")}` : ""));
-  const storedTier = selection.tier === "base" ? "base" : "escalated";
   const updatedHashHistory = [
     ...state.findingsHashHistory,
-    { iteration: newIteration, hash: currentHash, modelTier: storedTier }
+    { iteration: newIteration, hash: currentHash, modelTier: selection.tier }
   ];
   const fixingState = {
     ...updatedStateBase,
