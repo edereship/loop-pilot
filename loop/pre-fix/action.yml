@@ -120,5 +120,5 @@ outputs:
     description: "Claude model selected by the tiering policy. Forwarded to claude-code-action's --model."
 
 runs:
-  using: "node20"
+  using: "node24"
   main: "../../dist/pre-fix/index.cjs"

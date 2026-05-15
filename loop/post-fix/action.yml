@@ -47,5 +47,5 @@ inputs:
     default: ""
 
 runs:
-  using: "node20"
+  using: "node24"
   main: "../../dist/post-fix/index.cjs"

@@ -130,7 +130,7 @@ jobs:
           echo "::error::Fork PR detected or source repo unknown. Auto-review is disabled for fork PRs."
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.pr.outputs.head_ref }}
           fetch-depth: 0
@@ -185,7 +185,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: codex-comments-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_number }}
