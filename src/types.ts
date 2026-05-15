@@ -37,6 +37,13 @@ export interface ReviewState {
 export interface FindingsHashEntry {
   iteration: number;
   hash: string;
+  /**
+   * Model tier used to attempt repair for this iteration's findings.
+   * Optional for backward compatibility with state comments written before
+   * TY-243; missing values are treated as "escalated" so legacy state still
+   * stops on hash repetition instead of silently bypassing loop detection.
+   */
+  modelTier?: "base" | "escalated";
 }
 
 export type ReviewStatus =

@@ -1,6 +1,9 @@
 import type { Finding } from "./types.js";
 
-export type EscalationReason = "p0_finding" | "previous_check_failure";
+export type EscalationReason =
+  | "p0_finding"
+  | "previous_check_failure"
+  | "repeated_finding";
 
 export type ModelTier = "override" | "base" | "escalated";
 
@@ -15,6 +18,12 @@ export interface ModelSelectionInput {
   findings: Finding[];
   /** Tail of the previous iteration's CHECK_COMMAND failure, null when none. */
   previousCheckFailure: string | null;
+  /**
+   * True when the previous iteration ran the base tier and produced the same
+   * findings hash we are about to retry (TY-243). The caller derives this from
+   * `findingsHashHistory`; `selectModel` stays a pure function.
+   */
+  repeatedFinding: boolean;
 }
 
 export interface ModelSelection {
@@ -38,6 +47,9 @@ export function selectModel(input: ModelSelectionInput): ModelSelection {
   }
   if (input.previousCheckFailure !== null && input.previousCheckFailure !== "") {
     reasons.push("previous_check_failure");
+  }
+  if (input.repeatedFinding) {
+    reasons.push("repeated_finding");
   }
 
   if (reasons.length > 0) {

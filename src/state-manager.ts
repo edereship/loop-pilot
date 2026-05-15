@@ -51,6 +51,17 @@ function validateState(obj: unknown): obj is ReviewState {
     if (typeof entry !== "object" || entry === null) return false;
     const e = entry as Record<string, unknown>;
     if (typeof e.iteration !== "number" || typeof e.hash !== "string") return false;
+    // modelTier was added by TY-243. Missing is tolerated for backward
+    // compatibility (treated as `"escalated"` by `loop-detector`); present
+    // values must be one of the known tiers.
+    if (
+      "modelTier" in e &&
+      e.modelTier !== undefined &&
+      e.modelTier !== "base" &&
+      e.modelTier !== "escalated"
+    ) {
+      return false;
+    }
   }
 
   return true;

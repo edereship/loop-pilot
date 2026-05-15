@@ -20,7 +20,27 @@ const anotherFinding: Finding = {
 };
 
 describe("isLoop", () => {
-  it("returns true when current findings hash matches a hash in history", () => {
+  it("returns true when the last entry's tier is escalated and hash matches", () => {
+    const currentFindings: Finding[] = [baseFinding];
+    const currentHash = computeFindingsHash(currentFindings);
+    const findingsHashHistory: FindingsHashEntry[] = [
+      { iteration: 1, hash: currentHash, modelTier: "escalated" },
+    ];
+
+    expect(isLoop(currentFindings, findingsHashHistory)).toBe(true);
+  });
+
+  it("returns false when the last entry's tier is base and hash matches (escalation opportunity)", () => {
+    const currentFindings: Finding[] = [baseFinding];
+    const currentHash = computeFindingsHash(currentFindings);
+    const findingsHashHistory: FindingsHashEntry[] = [
+      { iteration: 1, hash: currentHash, modelTier: "base" },
+    ];
+
+    expect(isLoop(currentFindings, findingsHashHistory)).toBe(false);
+  });
+
+  it("treats missing modelTier as escalated (legacy state)", () => {
     const currentFindings: Finding[] = [baseFinding];
     const currentHash = computeFindingsHash(currentFindings);
     const findingsHashHistory: FindingsHashEntry[] = [
@@ -37,13 +57,28 @@ describe("isLoop", () => {
     const hashA = computeFindingsHash(findingsA);
     const hashB = computeFindingsHash(findingsB);
 
-    // History represents iteration 1 (A) and iteration 2 (B)
     const findingsHashHistory: FindingsHashEntry[] = [
-      { iteration: 1, hash: hashA },
-      { iteration: 2, hash: hashB },
+      { iteration: 1, hash: hashA, modelTier: "base" },
+      { iteration: 2, hash: hashB, modelTier: "base" },
     ];
 
-    // At iteration 3, we see findings A again
+    // At iteration 3, we see findings A again — non-last match means real loop
+    // regardless of the last entry's tier.
+    expect(isLoop(findingsA, findingsHashHistory)).toBe(true);
+  });
+
+  it("returns true when current hash matches an older entry even if last entry is base with a different hash", () => {
+    const findingsA: Finding[] = [baseFinding];
+    const findingsB: Finding[] = [anotherFinding];
+
+    const hashA = computeFindingsHash(findingsA);
+    const hashB = computeFindingsHash(findingsB);
+
+    const findingsHashHistory: FindingsHashEntry[] = [
+      { iteration: 1, hash: hashA, modelTier: "escalated" },
+      { iteration: 2, hash: hashB, modelTier: "base" },
+    ];
+
     expect(isLoop(findingsA, findingsHashHistory)).toBe(true);
   });
 
@@ -56,7 +91,7 @@ describe("isLoop", () => {
     const differentHash = computeFindingsHash([differentFinding]);
 
     const findingsHashHistory: FindingsHashEntry[] = [
-      { iteration: 1, hash: differentHash },
+      { iteration: 1, hash: differentHash, modelTier: "base" },
     ];
 
     expect(isLoop(currentFindings, findingsHashHistory)).toBe(false);
@@ -69,31 +104,17 @@ describe("isLoop", () => {
     expect(isLoop(currentFindings, findingsHashHistory)).toBe(false);
   });
 
-  it("returns true when current hash matches any entry in a longer history", () => {
-    const findingsA: Finding[] = [baseFinding];
-    const findingsB: Finding[] = [anotherFinding];
-    const findingsC: Finding[] = [
-      {
-        severity: "P1",
-        path: "src/baz.ts",
-        line: 5,
-        title: "Type error",
-        body: "Type `string` is not assignable to type `number`.",
-      },
-    ];
+  it("base → escalated retry chain: escalated repeat stops on the next match", () => {
+    const findings: Finding[] = [baseFinding];
+    const hash = computeFindingsHash(findings);
 
-    const hashA = computeFindingsHash(findingsA);
-    const hashB = computeFindingsHash(findingsB);
-    const hashC = computeFindingsHash(findingsC);
-
-    // History: A (iter 1), B (iter 2), C (iter 3)
+    // After the base-tier retry has been promoted, the same hash recorded at
+    // the escalated tier means we are out of escalation steps.
     const findingsHashHistory: FindingsHashEntry[] = [
-      { iteration: 1, hash: hashA },
-      { iteration: 2, hash: hashB },
-      { iteration: 3, hash: hashC },
+      { iteration: 1, hash, modelTier: "base" },
+      { iteration: 2, hash, modelTier: "escalated" },
     ];
 
-    // At iteration 4, we see B again
-    expect(isLoop(findingsB, findingsHashHistory)).toBe(true);
+    expect(isLoop(findings, findingsHashHistory)).toBe(true);
   });
 });

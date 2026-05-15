@@ -507,9 +507,43 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   // ─── Phase 3 (first half): Transition to "fixing" ────────────────────────
   const currentHash = computeFindingsHash(findings);
   const newIteration = state.iterationCount + 1;
-  const updatedHashHistory = [
+
+  // TY-243: when the previous iteration produced the same findings hash at
+  // the base tier, `isLoop` lets us through so we can retry at the escalated
+  // tier. Mark the upcoming iteration as `repeated_finding` so `selectModel`
+  // picks the escalated model.
+  const previousEntry =
+    state.findingsHashHistory.length > 0
+      ? state.findingsHashHistory[state.findingsHashHistory.length - 1]
+      : null;
+  const repeatedFinding =
+    previousEntry !== null &&
+    previousEntry.hash === currentHash &&
+    (previousEntry.modelTier ?? "escalated") === "base";
+
+  const selection = selectModel({
+    override: config.claudeCodeModelOverride,
+    baseModel: config.claudeCodeModelBase,
+    escalatedModel: config.claudeCodeModelEscalated,
+    findings,
+    previousCheckFailure: state.previousCheckFailure ?? null,
+    repeatedFinding,
+  });
+  deps.info(
+    `[pre-fix] Model tier=${selection.tier} model=${selection.model}` +
+      (selection.escalationReasons.length > 0
+        ? ` reasons=${selection.escalationReasons.join(",")}`
+        : ""),
+  );
+
+  // For loop-detection purposes we collapse `override` to `escalated`: the
+  // override path is a fixed model, so seeing the same hash again has no
+  // further escalation step available.
+  const storedTier: "base" | "escalated" =
+    selection.tier === "base" ? "base" : "escalated";
+  const updatedHashHistory: typeof state.findingsHashHistory = [
     ...state.findingsHashHistory,
-    { iteration: newIteration, hash: currentHash },
+    { iteration: newIteration, hash: currentHash, modelTier: storedTier },
   ];
 
   const fixingState: ReviewState = {
@@ -564,20 +598,6 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       `[pre-fix] CHECK_COMMAND '${config.checkCommand}' not added to Bash allowlist: ${allowedBashTools.rejection}. claude-code-action may fail to verify; set CHECK_COMMAND to a whitelisted binary (see docs/operations/security.md).`,
     );
   }
-
-  const selection = selectModel({
-    override: config.claudeCodeModelOverride,
-    baseModel: config.claudeCodeModelBase,
-    escalatedModel: config.claudeCodeModelEscalated,
-    findings,
-    previousCheckFailure: state.previousCheckFailure ?? null,
-  });
-  deps.info(
-    `[pre-fix] Model tier=${selection.tier} model=${selection.model}` +
-      (selection.escalationReasons.length > 0
-        ? ` reasons=${selection.escalationReasons.join(",")}`
-        : ""),
-  );
 
   deps.setOutput("should_run", "true");
   deps.setOutput("prompt", prompt);

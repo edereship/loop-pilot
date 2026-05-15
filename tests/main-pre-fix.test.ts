@@ -3,6 +3,8 @@ import type { Config } from "../src/config.js";
 import { runPreFix, type PreFixDeps, type PreFixOutputName } from "../src/main-pre-fix.js";
 import { createInitialState } from "../src/state-manager.js";
 import type { ReadStateResult } from "../src/state-manager.js";
+import { computeFindingsHash } from "../src/findings-hash.js";
+import { filterAndParseComments } from "../src/review-collector.js";
 import type { RawReviewComment, ReviewState } from "../src/types.js";
 
 const baseConfig: Config = {
@@ -409,6 +411,163 @@ describe("runPreFix", () => {
 
     expect(deps.outputs.should_run).toBe("true");
     expect(deps.outputs.model).toBe("claude-haiku-4-5-20251001");
+  });
+
+  it("escalates to the escalated tier when the previous base-tier iteration produced the same findings hash (TY-243)", async () => {
+    const comments: RawReviewComment[] = [
+      {
+        id: 510,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P1 Lingering null guard\n\nPath still dereferences null.",
+        path: "src/foo.ts",
+        line: 7,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const parsed = filterAndParseComments(
+      comments,
+      "chatgpt-codex-connector[bot]",
+      null,
+    );
+    const hash = computeFindingsHash(parsed);
+
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          iterationCount: 1,
+          findingsHashHistory: [
+            { iteration: 1, hash, modelTier: "base" },
+          ],
+          lastFindingsHash: hash,
+        }),
+      },
+      comments,
+    );
+
+    await runPreFix(baseConfig, deps);
+
+    expect(deps.outputs.should_run).toBe("true");
+    expect(deps.outputs.model).toBe("claude-opus-4-7");
+    expect(deps.postStopComment).not.toHaveBeenCalled();
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "fixing",
+        iterationCount: 2,
+        findingsHashHistory: [
+          { iteration: 1, hash, modelTier: "base" },
+          { iteration: 2, hash, modelTier: "escalated" },
+        ],
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
+  it("stops with loop_detected when the previous escalated-tier iteration produced the same findings hash (TY-243)", async () => {
+    const comments: RawReviewComment[] = [
+      {
+        id: 511,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P0 Critical auth bypass\n\nStill broken after escalated attempt.",
+        path: "src/auth.ts",
+        line: 14,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const parsed = filterAndParseComments(
+      comments,
+      "chatgpt-codex-connector[bot]",
+      null,
+    );
+    const hash = computeFindingsHash(parsed);
+
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          iterationCount: 2,
+          findingsHashHistory: [
+            { iteration: 1, hash, modelTier: "base" },
+            { iteration: 2, hash, modelTier: "escalated" },
+          ],
+          lastFindingsHash: hash,
+        }),
+      },
+      comments,
+    );
+
+    await runPreFix(baseConfig, deps);
+
+    expect(deps.outputs.should_run).toBe("false");
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({ status: "stopped", stopReason: "loop_detected" }),
+      "github-token",
+      expect.any(Object),
+    );
+    expect(deps.postStopComment).toHaveBeenCalled();
+  });
+
+  it("treats legacy history entries without modelTier as escalated (loop_detected) (TY-243)", async () => {
+    const comments: RawReviewComment[] = [
+      {
+        id: 512,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P1 Same finding\n\nNothing changed.",
+        path: "src/baz.ts",
+        line: 5,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const parsed = filterAndParseComments(
+      comments,
+      "chatgpt-codex-connector[bot]",
+      null,
+    );
+    const hash = computeFindingsHash(parsed);
+
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          iterationCount: 1,
+          // Pre-TY-243 entry: no modelTier present.
+          findingsHashHistory: [{ iteration: 1, hash }],
+          lastFindingsHash: hash,
+        }),
+      },
+      comments,
+    );
+
+    await runPreFix(baseConfig, deps);
+
+    expect(deps.outputs.should_run).toBe("false");
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({ status: "stopped", stopReason: "loop_detected" }),
+      "github-token",
+      expect.any(Object),
+    );
   });
 
   it("warns and falls back to baseline when CHECK_COMMAND is unsafe", async () => {

@@ -19286,6 +19286,9 @@ function validateState(obj) {
     const e = entry;
     if (typeof e.iteration !== "number" || typeof e.hash !== "string")
       return false;
+    if ("modelTier" in e && e.modelTier !== void 0 && e.modelTier !== "base" && e.modelTier !== "escalated") {
+      return false;
+    }
   }
   return true;
 }

@@ -16,6 +16,7 @@ const defaultInput = {
   escalatedModel: "claude-opus-4-7",
   findings: [],
   previousCheckFailure: null,
+  repeatedFinding: false,
 };
 
 describe("selectModel", () => {
@@ -108,5 +109,48 @@ describe("selectModel", () => {
     });
     expect(result.tier).toBe("override");
     expect(result.model).toBe("claude-opus-4-7");
+  });
+
+  it("escalates with repeated_finding when repeatedFinding is true", () => {
+    const result = selectModel({
+      ...defaultInput,
+      findings: [finding("P1")],
+      repeatedFinding: true,
+    });
+    expect(result).toEqual({
+      model: "claude-opus-4-7",
+      tier: "escalated",
+      escalationReasons: ["repeated_finding"],
+    });
+  });
+
+  it("lists all three escalation reasons when all signals fire together", () => {
+    const result = selectModel({
+      ...defaultInput,
+      findings: [finding("P0")],
+      previousCheckFailure: "tsc failed",
+      repeatedFinding: true,
+    });
+    expect(result).toEqual({
+      model: "claude-opus-4-7",
+      tier: "escalated",
+      escalationReasons: [
+        "p0_finding",
+        "previous_check_failure",
+        "repeated_finding",
+      ],
+    });
+  });
+
+  it("override still wins when repeatedFinding is true", () => {
+    const result = selectModel({
+      ...defaultInput,
+      override: "claude-haiku-4-5-20251001",
+      findings: [finding("P1")],
+      repeatedFinding: true,
+    });
+    expect(result.tier).toBe("override");
+    expect(result.model).toBe("claude-haiku-4-5-20251001");
+    expect(result.escalationReasons).toEqual([]);
   });
 });

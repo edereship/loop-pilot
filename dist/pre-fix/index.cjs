@@ -19294,6 +19294,9 @@ function validateState(obj) {
     const e = entry;
     if (typeof e.iteration !== "number" || typeof e.hash !== "string")
       return false;
+    if ("modelTier" in e && e.modelTier !== void 0 && e.modelTier !== "base" && e.modelTier !== "escalated") {
+      return false;
+    }
   }
   return true;
 }
@@ -19672,8 +19675,22 @@ function stableHash(input2) {
 
 // dist/loop-detector.js
 function isLoop(currentFindings, findingsHashHistory) {
+  if (findingsHashHistory.length === 0) {
+    return false;
+  }
   const currentHash = computeFindingsHash(currentFindings);
-  return findingsHashHistory.some((entry) => entry.hash === currentHash);
+  const lastIndex = findingsHashHistory.length - 1;
+  const lastEntry = findingsHashHistory[lastIndex];
+  for (let i = 0; i < lastIndex; i += 1) {
+    if (findingsHashHistory[i].hash === currentHash) {
+      return true;
+    }
+  }
+  if (lastEntry.hash !== currentHash) {
+    return false;
+  }
+  const lastTier = lastEntry.modelTier ?? "escalated";
+  return lastTier !== "base";
 }
 
 // dist/comment-poster.js
@@ -20168,6 +20185,9 @@ function selectModel(input2) {
   if (input2.previousCheckFailure !== null && input2.previousCheckFailure !== "") {
     reasons.push("previous_check_failure");
   }
+  if (input2.repeatedFinding) {
+    reasons.push("repeated_finding");
+  }
   if (reasons.length > 0) {
     return {
       model: input2.escalatedModel,
@@ -20392,9 +20412,21 @@ async function runPreFix(config, deps = defaultDeps) {
   }
   const currentHash = computeFindingsHash(findings);
   const newIteration = state.iterationCount + 1;
+  const previousEntry = state.findingsHashHistory.length > 0 ? state.findingsHashHistory[state.findingsHashHistory.length - 1] : null;
+  const repeatedFinding = previousEntry !== null && previousEntry.hash === currentHash && (previousEntry.modelTier ?? "escalated") === "base";
+  const selection = selectModel({
+    override: config.claudeCodeModelOverride,
+    baseModel: config.claudeCodeModelBase,
+    escalatedModel: config.claudeCodeModelEscalated,
+    findings,
+    previousCheckFailure: state.previousCheckFailure ?? null,
+    repeatedFinding
+  });
+  deps.info(`[pre-fix] Model tier=${selection.tier} model=${selection.model}` + (selection.escalationReasons.length > 0 ? ` reasons=${selection.escalationReasons.join(",")}` : ""));
+  const storedTier = selection.tier === "base" ? "base" : "escalated";
   const updatedHashHistory = [
     ...state.findingsHashHistory,
-    { iteration: newIteration, hash: currentHash }
+    { iteration: newIteration, hash: currentHash, modelTier: storedTier }
   ];
   const fixingState = {
     ...updatedStateBase,
@@ -20429,14 +20461,6 @@ async function runPreFix(config, deps = defaultDeps) {
   if (allowedBashTools.rejection !== null) {
     deps.warning(`[pre-fix] CHECK_COMMAND '${config.checkCommand}' not added to Bash allowlist: ${allowedBashTools.rejection}. claude-code-action may fail to verify; set CHECK_COMMAND to a whitelisted binary (see docs/operations/security.md).`);
   }
-  const selection = selectModel({
-    override: config.claudeCodeModelOverride,
-    baseModel: config.claudeCodeModelBase,
-    escalatedModel: config.claudeCodeModelEscalated,
-    findings,
-    previousCheckFailure: state.previousCheckFailure ?? null
-  });
-  deps.info(`[pre-fix] Model tier=${selection.tier} model=${selection.model}` + (selection.escalationReasons.length > 0 ? ` reasons=${selection.escalationReasons.join(",")}` : ""));
   deps.setOutput("should_run", "true");
   deps.setOutput("prompt", prompt);
   deps.setOutput("iteration", String(fixingState.iterationCount));
