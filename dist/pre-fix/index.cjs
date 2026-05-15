@@ -19708,7 +19708,8 @@ var STOP_REASON_LABELS = {
   action_timeout: "Claude Code Action workflow timeout",
   action_failure: "Claude Code Action exited with a non-zero status",
   scope_violation: "repair touched paths or exceeded the size budget allowed for auto-fix",
-  max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget"
+  max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
+  codex_usage_limit: "Codex reported usage / quota limits; no review was performed"
 };
 async function postComment(owner, name, pr, body, token) {
   const { stdout } = await execFileAsync3("gh", [
@@ -20194,6 +20195,20 @@ function selectModel(input2) {
   };
 }
 
+// dist/codex-status.js
+var USAGE_LIMIT_PATTERNS = [
+  /reached your codex usage limits?(?: for code reviews?)?/i,
+  /codex usage limits? (?:reached|exceeded)/i,
+  /you have (?:exceeded|reached) (?:the )?codex usage limits?/i,
+  /codex quota (?:limits? (?:reached|exceeded)|exceeded)/i
+];
+function isCodexUsageLimitMessage(body) {
+  if (typeof body !== "string" || body.length === 0) {
+    return false;
+  }
+  return USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(body));
+}
+
 // dist/main-pre-fix.js
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20341,6 +20356,19 @@ async function runPreFix(config, deps = defaultDeps) {
   }
   if (triggerCommentId !== 0 && state.lastProcessedReviewId === triggerCommentId) {
     deps.info(`[pre-fix] Trigger comment ${triggerCommentId} already processed. Skipping.`);
+    return;
+  }
+  if (config.triggerUserLogin === config.codexBotLogin && isCodexUsageLimitMessage(config.triggerCommentBody)) {
+    deps.info("[pre-fix] Codex usage limit detected in trigger body. Stopping.");
+    const stoppedState = {
+      ...state,
+      lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
+      status: "stopped",
+      stopReason: "codex_usage_limit"
+    };
+    if (!await updateStateCommentLocked(commentId, stoppedState, "Could not stop after detecting Codex usage limit."))
+      return;
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_usage_limit", triggerCommentId, 0, "Codex replied with a usage-limit notice instead of a review. Wait for quota to reset (or upgrade), then run /restart-review.", config.githubToken);
     return;
   }
   deps.info(`[pre-fix] Debouncing ${config.debounceSeconds}s...`);

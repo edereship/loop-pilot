@@ -19677,7 +19677,8 @@ var STOP_REASON_LABELS = {
   action_timeout: "Claude Code Action workflow timeout",
   action_failure: "Claude Code Action exited with a non-zero status",
   scope_violation: "repair touched paths or exceeded the size budget allowed for auto-fix",
-  max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget"
+  max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
+  codex_usage_limit: "Codex reported usage / quota limits; no review was performed"
 };
 async function postComment(owner, name, pr, body, token) {
   const { stdout } = await execFileAsync2("gh", [

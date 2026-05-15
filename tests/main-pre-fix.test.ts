@@ -535,6 +535,86 @@ describe("runPreFix", () => {
     );
   });
 
+  it("stops with codex_usage_limit when the Codex bot trigger body is a usage-limit notice (TY-229)", async () => {
+    const usageLimitBody = "You have reached your Codex usage limits for code reviews.";
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T11:00:00Z",
+      state: makeState({ status: "waiting_codex" }),
+    });
+
+    await runPreFix(
+      {
+        ...baseConfig,
+        triggerCommentBody: usageLimitBody,
+        triggerUserLogin: baseConfig.codexBotLogin,
+      },
+      deps,
+    );
+
+    expect(deps.outputs.should_run).toBe("false");
+    expect(deps.fetchReviewComments).not.toHaveBeenCalled();
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "codex_usage_limit",
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "codex_usage_limit",
+      baseConfig.triggerCommentId,
+      0,
+      expect.stringContaining("/restart-review"),
+      "github-token",
+    );
+  });
+
+  it("ignores a usage-limit phrase posted by a non-Codex user (TY-229)", async () => {
+    const usageLimitBody = "You have reached your Codex usage limits for code reviews.";
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T11:00:00Z",
+      state: makeState({ status: "waiting_codex" }),
+    });
+
+    await runPreFix(
+      {
+        ...baseConfig,
+        triggerCommentBody: usageLimitBody,
+        triggerUserLogin: "human-user",
+      },
+      deps,
+    );
+
+    // Without the Codex bot login, the trigger is treated as a normal
+    // comment and the usual collection path runs (which returns
+    // no_findings here because no mock comments are supplied).
+    expect(deps.fetchReviewComments).toHaveBeenCalled();
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "done",
+        stopReason: "no_findings",
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
   it("warns and falls back to baseline when CHECK_COMMAND is unsafe", async () => {
     const findings: RawReviewComment[] = [
       {

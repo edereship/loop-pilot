@@ -31,6 +31,7 @@ PR #7 の実環境では上記値で Codex review を検知できた。未設定
 - `vars.CODEX_BOT_LOGIN` も非空チェック後にだけ login と比較する
 - fallback の `chatgpt-codex-connector[bot]` と `Codex Review` は明示的に別条件として残す
 - 通常ユーザーの PR コメント/レビューや、Codex bot 以外の投稿では Workflow B が起動しない
+- **TY-229**: Codex bot からの quota / usage-limit 通知はレビューマーカーを含まないため、trigger filter は `'Codex usage limit'` / `'Codex quota'` 部分文字列も明示的に許可する。これにより pre-fix が `codex_usage_limit` で停止できる。新しい wording バリアントを `src/codex-status.ts` に追加する場合は、本 yml の `contains()` 部分文字列も更新する
 
 ## ラベル付き PR のみ起動する運用（default-strict + full-auto opt-out）
 

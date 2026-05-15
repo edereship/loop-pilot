@@ -41,6 +41,7 @@ import {
   serializeAllowedBashTools,
 } from "./check-command-allowlist.js";
 import { selectModel } from "./model-selector.js";
+import { isCodexUsageLimitMessage } from "./codex-status.js";
 import type { Finding, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
@@ -365,6 +366,45 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   ) {
     deps.info(
       `[pre-fix] Trigger comment ${triggerCommentId} already processed. Skipping.`,
+    );
+    return;
+  }
+
+  // ─── Codex usage-limit short-circuit (TY-229) ────────────────────────────
+  // When Codex hits its quota it replies to the @codex review request with a
+  // notice instead of a real review. Without this check we'd debounce, fetch
+  // zero inline comments, and mark the auto-review `done / no_findings` —
+  // silently masking a quota-induced stop. Detect it here and stop with a
+  // dedicated reason so PR readers and `/restart-review` users understand
+  // the loop did not actually succeed.
+  if (
+    config.triggerUserLogin === config.codexBotLogin &&
+    isCodexUsageLimitMessage(config.triggerCommentBody)
+  ) {
+    deps.info("[pre-fix] Codex usage limit detected in trigger body. Stopping.");
+    const stoppedState: ReviewState = {
+      ...state,
+      lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
+      status: "stopped",
+      stopReason: "codex_usage_limit",
+    };
+    if (
+      !(await updateStateCommentLocked(
+        commentId,
+        stoppedState,
+        "Could not stop after detecting Codex usage limit.",
+      ))
+    )
+      return;
+    await deps.postStopComment(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      "codex_usage_limit",
+      triggerCommentId,
+      0,
+      "Codex replied with a usage-limit notice instead of a review. Wait for quota to reset (or upgrade), then run /restart-review.",
+      config.githubToken,
     );
     return;
   }

@@ -1,0 +1,32 @@
+/**
+ * Heuristics for detecting non-review status messages that Codex posts in
+ * place of a real review — currently scoped to usage-limit / quota-exceeded
+ * notices. These look like ordinary bot comments but contain no findings, so
+ * without explicit detection the loop would mis-classify them as
+ * `no_findings` and mark the auto-review `done`.
+ *
+ * The patterns are anchored to phrases observed in production (see
+ * `tests/fixtures/codex-usage-limit.txt`) and tolerate small wording drift
+ * (singular/plural, "code review" vs "reviews").
+ *
+ * **Keep aligned with `.github/workflows/auto-review-loop.yml`.** The
+ * workflow trigger filter (TY-229) admits Codex bot messages containing
+ * `"Codex usage limit"` or `"Codex quota"` as substrings (case-insensitive).
+ * Patterns added here that do not contain one of those substrings will not
+ * fire in production because the workflow drops the message before
+ * `runPreFix` runs.
+ */
+
+const USAGE_LIMIT_PATTERNS: readonly RegExp[] = [
+  /reached your codex usage limits?(?: for code reviews?)?/i,
+  /codex usage limits? (?:reached|exceeded)/i,
+  /you have (?:exceeded|reached) (?:the )?codex usage limits?/i,
+  /codex quota (?:limits? (?:reached|exceeded)|exceeded)/i,
+];
+
+export function isCodexUsageLimitMessage(body: string): boolean {
+  if (typeof body !== "string" || body.length === 0) {
+    return false;
+  }
+  return USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(body));
+}

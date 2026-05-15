@@ -65,7 +65,8 @@ export type StopReason =
   | "action_timeout"
   | "action_failure"
   | "scope_violation"
-  | "max_turns_exceeded";
+  | "max_turns_exceeded"
+  | "codex_usage_limit";
 
 /** Claude API に渡す PR コンテキスト */
 export interface PrContext {
