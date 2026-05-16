@@ -19154,8 +19154,15 @@ function loadBaseConfig() {
     claudeCodeModelBase: input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE),
     claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED),
     autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
-    severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD)
+    severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
+    hardBlockOverride: stringListInput("auto-review-hard-block-override", "AUTO_REVIEW_HARD_BLOCK_OVERRIDE")
   };
+}
+function stringListInput(inputName, envName) {
+  const raw = input(inputName, envName, "");
+  if (raw === "")
+    return [];
+  return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 function severityThresholdInput(inputName, envName, defaultValue) {
   const raw = input(inputName, envName, "").trim().toUpperCase();
@@ -19690,7 +19697,8 @@ var DEFAULT_SCOPE_POLICY = {
     /^package-lock\.json$/,
     /^tsconfig\.json$/,
     /^\.[^/]+$/
-  ]
+  ],
+  hardBlockOverride: []
 };
 function isUnsafePath(path) {
   if (path.length === 0)
@@ -19707,14 +19715,18 @@ function checkScope(files, policy = DEFAULT_SCOPE_POLICY) {
   const disallowed = [];
   const binary = [];
   let totalLines = 0;
+  const overrideSet = new Set(policy.hardBlockOverride);
   for (const file of files) {
     if (isUnsafePath(file.path)) {
       traversal.push(file.path);
       continue;
     }
     if (policy.hardBlockPatterns.some((re) => re.test(file.path))) {
-      blocked.push(file.path);
-      continue;
+      const overridable = !file.path.startsWith(".github/") && overrideSet.has(file.path);
+      if (!overridable) {
+        blocked.push(file.path);
+        continue;
+      }
     }
     const isAllowed = policy.allowedPathPrefixes.some((prefix) => file.path.startsWith(prefix));
     if (!isAllowed) {
@@ -20360,7 +20372,13 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     }
     return;
   }
-  const scopeResult = checkScope(changedFiles);
+  if (config.hardBlockOverride.length > 0) {
+    deps.info(`[scope-check] hard-block override paths: [${config.hardBlockOverride.join(", ")}]`);
+  }
+  const scopeResult = checkScope(changedFiles, {
+    ...DEFAULT_SCOPE_POLICY,
+    hardBlockOverride: config.hardBlockOverride
+  });
   if (!scopeResult.ok) {
     deps.warning(`[post-fix] Scope violation: ${scopeResult.message}`);
     try {

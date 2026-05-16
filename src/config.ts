@@ -54,6 +54,12 @@ export interface Config {
   // logs. Default `P2` preserves prior behavior. Invalid values fall back to `P2`
   // with a warning.
   severityThreshold: Severity;
+  // Hard-block path override (TY-255). Comma-separated repo-relative paths
+  // that opt out of `DEFAULT_SCOPE_POLICY.hardBlockPatterns` so claude-code-action
+  // is allowed to touch them (e.g., `package.json,tsconfig.json`). Empty default
+  // keeps the strict security boundary; paths under `.github/` are always blocked
+  // regardless of this list, since CI rewrites would defeat the scope check.
+  hardBlockOverride: readonly string[];
 }
 
 export const DEFAULT_SEVERITY_THRESHOLD: Severity = "P2";
@@ -167,7 +173,24 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey" | "claudeCodeOauthToke
       "AUTO_REVIEW_SEVERITY_THRESHOLD",
       DEFAULT_SEVERITY_THRESHOLD,
     ),
+    hardBlockOverride: stringListInput(
+      "auto-review-hard-block-override",
+      "AUTO_REVIEW_HARD_BLOCK_OVERRIDE",
+    ),
   };
+}
+
+/**
+ * カンマ区切りのパスリストを読み出す。前後の空白はトリムし、空エントリは捨てる。
+ * 未設定 / 空文字は空配列を返す。
+ */
+function stringListInput(inputName: string, envName: string): readonly string[] {
+  const raw = input(inputName, envName, "");
+  if (raw === "") return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 /**

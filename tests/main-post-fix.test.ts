@@ -36,6 +36,8 @@ const baseConfig: Config = {
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
   autoMergeOnClean: false,
+  severityThreshold: "P2",
+  hardBlockOverride: [],
 };
 
 const baseInputs: PostFixInputs = {
@@ -474,6 +476,96 @@ describe("runPostFix", () => {
       expect.objectContaining({ status: "waiting_codex" }),
       "github-token",
       expect.any(Object),
+    );
+  });
+
+  it("propagates hardBlockOverride into the scope check and logs the configured paths (TY-255)", async () => {
+    // `package.json` is hard-blocked by default. With the override active it
+    // should clear the hard-block check; here we still expect a stop because
+    // `package.json` is outside `allowedPathPrefixes` (override skips only
+    // the hard-block stage, by design).
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: () => "3\t1\tpackage.json\n",
+      },
+    );
+
+    await runPostFix(
+      { ...baseConfig, hardBlockOverride: ["package.json"] },
+      deps,
+      baseInputs,
+    );
+
+    expect(deps.info).toHaveBeenCalledWith(
+      "[scope-check] hard-block override paths: [package.json]",
+    );
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "scope_violation",
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+    // The reason must be `disallowed_path`, NOT `hard_block_path` — the
+    // override successfully skipped the hard-block stage.
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "scope_violation",
+      1234,
+      0,
+      expect.stringContaining("allow-list"),
+      "github-token",
+    );
+  });
+
+  it("still hard-blocks .github/ even when listed in hardBlockOverride (TY-255)", async () => {
+    // The CI-rewrite escape hatch must stay closed: even when ops put a
+    // `.github/` path in the override list, the scope check refuses it with
+    // `hard_block_path` rather than letting it through.
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: () => "1\t0\t.github/workflows/auto-review-loop.yml\n",
+      },
+    );
+
+    await runPostFix(
+      {
+        ...baseConfig,
+        hardBlockOverride: [".github/workflows/auto-review-loop.yml"],
+      },
+      deps,
+      baseInputs,
+    );
+
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "scope_violation",
+      1234,
+      0,
+      expect.stringContaining(".github/workflows/auto-review-loop.yml"),
+      "github-token",
     );
   });
 

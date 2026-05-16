@@ -187,6 +187,112 @@ describe("checkScope (custom policy)", () => {
   });
 });
 
+describe("checkScope (hardBlockOverride / TY-255)", () => {
+  it("default policy keeps hard-block behavior unchanged", () => {
+    // Sanity check: with no override paths (the default), package.json /
+    // tsconfig.json / dotfiles all fall under hard_block_path just like before.
+    const result = checkScope([file("package.json", 1, 0)]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("hard_block_path");
+  });
+
+  it("allows an opted-in path to pass the hard-block check", () => {
+    const policy: ScopeCheckPolicy = {
+      ...DEFAULT_SCOPE_POLICY,
+      // package.json itself is not under any allowed prefix, so we also need
+      // to extend allowedPathPrefixes to actually let the file through. The
+      // override only skips hard-block — the allow-list still applies.
+      allowedPathPrefixes: ["src/", "tests/", "docs/", "package.json"],
+      hardBlockOverride: ["package.json"],
+    };
+    const result = checkScope([file("package.json", 1, 1)], policy);
+    expect(result.ok).toBe(true);
+  });
+
+  it("override falls back to disallowed_path when the path is not in the allow-list", () => {
+    // The spec says "skip hard-block, then proceed to allowedPathPrefixes":
+    // overriding alone is not enough — operators must also bring the path
+    // under an allowed prefix. Document that here so a future refactor
+    // doesn't silently widen the allow-list via the override.
+    const policy: ScopeCheckPolicy = {
+      ...DEFAULT_SCOPE_POLICY,
+      hardBlockOverride: ["package.json"],
+    };
+    const result = checkScope([file("package.json", 1, 0)], policy);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("disallowed_path");
+  });
+
+  it("does not affect paths that are not in the override list", () => {
+    const policy: ScopeCheckPolicy = {
+      ...DEFAULT_SCOPE_POLICY,
+      hardBlockOverride: ["package.json"],
+    };
+    const result = checkScope([file("tsconfig.json", 1, 0)], policy);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toEqual(["tsconfig.json"]);
+    }
+  });
+
+  it("always blocks .github/ even when listed in the override (CI rewrite escape hatch)", () => {
+    // .github/ is intentionally non-overridable: letting the agent edit
+    // workflow YAML would let it disable the rest of the scope check from
+    // inside its own diff. The override entry is silently ignored for
+    // .github/-prefixed paths.
+    const policy: ScopeCheckPolicy = {
+      ...DEFAULT_SCOPE_POLICY,
+      hardBlockOverride: [".github/workflows/foo.yml"],
+    };
+    const result = checkScope(
+      [file(".github/workflows/foo.yml", 1, 0)],
+      policy,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toEqual([".github/workflows/foo.yml"]);
+    }
+  });
+
+  it("requires an exact path match (prefix-only entries do not opt in nested files)", () => {
+    // The override is matched literally against `file.path` (Set#has), not
+    // as a prefix. Operators who want to opt every dotfile in must list each
+    // one explicitly.
+    const policy: ScopeCheckPolicy = {
+      ...DEFAULT_SCOPE_POLICY,
+      hardBlockOverride: ["package"],
+    };
+    const result = checkScope([file("package.json", 1, 0)], policy);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("hard_block_path");
+  });
+
+  it("lets multiple override entries through while still blocking non-listed ones", () => {
+    const policy: ScopeCheckPolicy = {
+      ...DEFAULT_SCOPE_POLICY,
+      allowedPathPrefixes: [
+        "src/",
+        "tests/",
+        "docs/",
+        "package.json",
+        "tsconfig.json",
+      ],
+      hardBlockOverride: ["package.json", "tsconfig.json"],
+    };
+    const ok = checkScope(
+      [file("package.json", 1, 0), file("tsconfig.json", 1, 0)],
+      policy,
+    );
+    expect(ok.ok).toBe(true);
+
+    const blocked = checkScope([file("package-lock.json", 1, 0)], policy);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.reason).toBe("hard_block_path");
+  });
+});
+
 describe("parseGitNumstat", () => {
   it("parses a basic three-line output", () => {
     const output = [

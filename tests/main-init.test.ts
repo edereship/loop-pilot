@@ -33,6 +33,7 @@ const baseConfig: Config = {
   claudeCodeModelEscalated: "claude-opus-4-7",
   autoMergeOnClean: false,
   severityThreshold: "P2",
+  hardBlockOverride: [],
 };
 
 function makeState(overrides: Partial<ReviewState> = {}): ReviewState {

@@ -117,6 +117,10 @@ inputs:
     description: "Severity threshold for the auto-fix pipeline. One of P0|P1|P2|P3. Default 'P2' preserves prior behavior (TY-256)."
     required: false
     default: "P2"
+  auto-review-hard-block-override:
+    description: "Comma-separated repo-relative paths to opt out of the post-fix hard-block list (TY-255). Example: 'package.json,tsconfig.json'. Paths under '.github/' are always blocked even when listed here. Empty default keeps the strict boundary."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -215,3 +219,4 @@ runs:
         action-outcome: ${{ steps.claude.outcome }}
         action-execution-file: ${{ steps.claude.outputs.execution_file }}
         github-repository: ${{ inputs.github-repository }}
+        auto-review-hard-block-override: ${{ inputs.auto-review-hard-block-override }}

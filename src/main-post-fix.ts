@@ -16,6 +16,7 @@ import { runCheckCommand as defaultRunCheckCommand } from "./check-runner.js";
 import {
   parseGitNumstat,
   checkScope,
+  DEFAULT_SCOPE_POLICY,
   type ChangedFile,
   type ScopeCheckResult,
 } from "./scope-checker.js";
@@ -442,7 +443,15 @@ export async function runPostFix(
     return;
   }
 
-  const scopeResult: ScopeCheckResult = checkScope(changedFiles);
+  if (config.hardBlockOverride.length > 0) {
+    deps.info(
+      `[scope-check] hard-block override paths: [${config.hardBlockOverride.join(", ")}]`,
+    );
+  }
+  const scopeResult: ScopeCheckResult = checkScope(changedFiles, {
+    ...DEFAULT_SCOPE_POLICY,
+    hardBlockOverride: config.hardBlockOverride,
+  });
   if (!scopeResult.ok) {
     deps.warning(`[post-fix] Scope violation: ${scopeResult.message}`);
     try {

@@ -19257,8 +19257,15 @@ function loadBaseConfig() {
     claudeCodeModelBase: input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE),
     claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED),
     autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
-    severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD)
+    severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
+    hardBlockOverride: stringListInput("auto-review-hard-block-override", "AUTO_REVIEW_HARD_BLOCK_OVERRIDE")
   };
+}
+function stringListInput(inputName, envName) {
+  const raw = input(inputName, envName, "");
+  if (raw === "")
+    return [];
+  return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 function severityThresholdInput(inputName, envName, defaultValue) {
   const raw = input(inputName, envName, "").trim().toUpperCase();

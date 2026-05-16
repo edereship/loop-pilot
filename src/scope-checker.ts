@@ -32,6 +32,17 @@ export interface ScopeCheckPolicy {
    * block, regardless of allowedPathPrefixes.
    */
   hardBlockPatterns: readonly RegExp[];
+  /**
+   * Repo-relative paths (exact match against `file.path`) that opt out of
+   * `hardBlockPatterns` (TY-255). Used when ops explicitly want to let
+   * claude-code-action touch `package.json` / `tsconfig.json` etc. Default
+   * `[]` keeps the strict boundary intact.
+   *
+   * `.github/` paths are always blocked even when listed here, because
+   * CI rewrites would let an agent disable the rest of the scope check
+   * from inside the diff itself.
+   */
+  hardBlockOverride: readonly string[];
 }
 
 export const DEFAULT_SCOPE_POLICY: ScopeCheckPolicy = {
@@ -47,6 +58,7 @@ export const DEFAULT_SCOPE_POLICY: ScopeCheckPolicy = {
     /^tsconfig\.json$/,
     /^\.[^/]+$/,
   ],
+  hardBlockOverride: [],
 };
 
 export type ScopeViolationReason =
@@ -103,6 +115,8 @@ export function checkScope(
   const binary: string[] = [];
   let totalLines = 0;
 
+  const overrideSet = new Set(policy.hardBlockOverride);
+
   for (const file of files) {
     if (isUnsafePath(file.path)) {
       traversal.push(file.path);
@@ -110,8 +124,16 @@ export function checkScope(
     }
 
     if (policy.hardBlockPatterns.some((re) => re.test(file.path))) {
-      blocked.push(file.path);
-      continue;
+      // TY-255: allow the diff if ops opted this exact path into the
+      // override list. `.github/` is never overridable — letting a repair
+      // edit workflow YAML would let the agent disable the rest of the
+      // scope check from inside its own diff.
+      const overridable =
+        !file.path.startsWith(".github/") && overrideSet.has(file.path);
+      if (!overridable) {
+        blocked.push(file.path);
+        continue;
+      }
     }
 
     const isAllowed = policy.allowedPathPrefixes.some((prefix) =>

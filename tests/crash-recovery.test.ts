@@ -40,6 +40,7 @@ const crashConfig: Config = {
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
   severityThreshold: "P2",
+  hardBlockOverride: [],
 };
 
 function makeFixingState(): ReviewState {

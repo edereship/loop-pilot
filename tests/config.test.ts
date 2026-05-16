@@ -91,3 +91,44 @@ describe("loadConfig — Claude authentication (TY-260)", () => {
     expect(config.claudeCodeOauthToken).toBe("");
   });
 });
+
+describe("loadInitConfig — hard-block override (TY-255)", () => {
+  let restore: (() => void) | null = null;
+
+  beforeEach(() => {
+    restore = withEnv({
+      ...REQUIRED_ENV,
+      AUTO_REVIEW_HARD_BLOCK_OVERRIDE: undefined,
+    });
+  });
+
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  it("defaults to an empty list when the variable is unset", () => {
+    expect(loadInitConfig().hardBlockOverride).toEqual([]);
+  });
+
+  it("treats an empty string as no override (variable defined but blank)", () => {
+    process.env.AUTO_REVIEW_HARD_BLOCK_OVERRIDE = "";
+    expect(loadInitConfig().hardBlockOverride).toEqual([]);
+  });
+
+  it("parses comma-separated paths and trims surrounding whitespace", () => {
+    process.env.AUTO_REVIEW_HARD_BLOCK_OVERRIDE = " package.json , tsconfig.json ";
+    expect(loadInitConfig().hardBlockOverride).toEqual([
+      "package.json",
+      "tsconfig.json",
+    ]);
+  });
+
+  it("discards empty entries from stray separators", () => {
+    process.env.AUTO_REVIEW_HARD_BLOCK_OVERRIDE = "package.json,,tsconfig.json,";
+    expect(loadInitConfig().hardBlockOverride).toEqual([
+      "package.json",
+      "tsconfig.json",
+    ]);
+  });
+});

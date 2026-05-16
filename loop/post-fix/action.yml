@@ -49,6 +49,10 @@ inputs:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false
     default: ""
+  auto-review-hard-block-override:
+    description: "Comma-separated repo-relative paths to opt out of the hard-block list (TY-255). Example: 'package.json,tsconfig.json'. Paths under '.github/' are always blocked even when listed here."
+    required: false
+    default: ""
 
 runs:
   using: "node24"
