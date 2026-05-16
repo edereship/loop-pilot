@@ -25,7 +25,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 | TY-140 | High | 必須 / 運用判断 | Claude API retry / cost limit / spending guard |
 | TY-143 | High | 必須 / 認証判断 | 本番用 token / GitHub App / machine user 運用 |
 | TY-145 | High | 必須 / E2E 検証 | 外部 fork PR と branch protection 下での本番 E2E |
-| TY-141 | Medium | 条件付き必須 / 仕様判断 | large file と cross-file finding の対応方針 |
+| TY-141 | Medium | 完了 / トラッキング | repo-level repair 移行トラック（旧 large file / cross-file finding 対応方針）。claude-code-action 採用で解決（TY-234 / TY-235 / TY-140 / TY-236）。徹底レビュー時 E2E は TY-233 で継続 |
 | TY-142 | Medium | 仕様判断 | debounce / concurrency / `issue_comment` 互換 trigger 方針 |
 | TY-144 | Medium | 運用改善 | `/restart-review` と hidden state recovery |
 
@@ -42,8 +42,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 - [ ] `CHECK_COMMAND` の各プロジェクトへの適用（`package.json` の `check` スクリプト整備。TY-145 の移植先 E2E で確認）
 - [ ] Claude API 呼び出しのバッチ化検討（findings が少ないファイル同士をまとめて1回の API 呼び出しで処理し、コスト効率を改善する。TY-140）
 - [ ] hidden comment の競合対策（楽観ロック + TOCTOU 対策の実装。方針は [状態管理](../architecture/flow-and-state.md#hidden-comment-の競合書き込みリスク) に記載済み。PoC では concurrency 制御で代替。TY-139）
-- [ ] large file の扱いを決める。PoC では文字数ベースの `MAX_INPUT_TOKENS_PER_FILE` 超過時にスキップし、chunking は未実装（TY-141）
-- [ ] cross-file finding の扱いを決める。PoC はファイル単位で閉じた修正のみ対応（TY-141）
+- [x] large file / cross-file finding 対応（TY-141）。旧 `claude-fix-engine` の単一ファイル `edit_file` 方式を廃止し、`anthropics/claude-code-action@v1` ベースの repo-level repair に移行（TY-234 / TY-235 / TY-140 / TY-236 / TY-237 PR #33）。Codex finding の path/line は entry point として扱い、Claude Code Action が関連ファイル・呼び出し元・型定義・テストを探索した上で修正する。PoC 由来の `MAX_INPUT_TOKENS_PER_FILE` chunking 前提は廃止。徹底レビュー有効時の E2E は [TY-233](https://linear.app/team-yubune/issue/TY-233) で継続。
 - [ ] 互換用 `issue_comment` トリガー経由で修正 commit/push まで進むケースを検証する、または本番では `pull_request_review` のみを正式対応にする（TY-142）
 - [ ] `DEBOUNCE_SECONDS=0` への短縮可否を決める。PR #7 ではデフォルト待機での安定動作のみ確認済み（TY-142）
 - [ ] `concurrency` キューの実運用リスクを判断する。GitHub Actions の待機キュー制約により、短時間の複数 review では中間 run が置き換えられる可能性がある（TY-142 / TY-139）
@@ -87,7 +86,7 @@ TY-145 の 2026-05-16 検証結果は [Production E2E Validation Notes](../opera
 
 - Slack 通知、ラベル連携以外の外部連携、管理 UI
 - 外部 DB / 外部キュー化。ただし `concurrency` キュー制約が本番要件に合わない場合は TY-142 で再判断する
-- 完全な cross-file 修正エンジン化。初期移植では TY-141 で手動対応ポリシーまたは限定実装を決める
+- ~~完全な cross-file 修正エンジン化。初期移植では TY-141 で手動対応ポリシーまたは限定実装を決める~~ → TY-141 / TY-236 で `claude-code-action` 採用により解決済み。`docs/specs/claude-code-repair-request.md` 参照
 - `/restart-review` の完全自動化。初期移植時は手動復旧で代替可能だが、TY-144 で運用改善として追跡する
 
 ---

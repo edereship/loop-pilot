@@ -77,7 +77,7 @@ GitHub Actions 内で `sleep $DEBOUNCE_SECONDS` を使う場合、**ランナー
 >
 > 旧 [Claude 修正エンジン仕様](../specs/claude-fix-engine.md)（Anthropic SDK + `edit_file` 直適用）は TY-236 / TY-237 で superseded。
 
-**PoC 実測:** PR #7 で旧 `claude-fix-engine` 経路が単一 edit + `CHECK_COMMAND` + commit/push まで成功。新しい claude-code-action 経路の dogfood 結果は本 PR の merge 後に追記する。
+**PoC 実測:** PR #7 で旧 `claude-fix-engine` 経路が単一 edit + `CHECK_COMMAND` + commit/push まで成功。新しい claude-code-action 経路は TY-237 / PR #33 で main マージ済み、その後 PR #58（`tests/check-command-allowlist` の意図的 regression）で auto-fix loop の dogfood を実施し TY-232 を完了。徹底的なコードレビュー有効時の E2E は [TY-233](https://linear.app/team-yubune/issue/TY-233) で継続。
 
 `Run auto-fix loop` ステップは `loop/action.yml`（composite）で 3 つに分かれる。`fixing` 状態は **pre-fix の冒頭で確定し、post-fix の終端で `waiting_codex`（成功）か `stopped`（失敗）に遷移する** ため、`fixing` の窓は composite の 1 invocation 内に閉じる。
 
