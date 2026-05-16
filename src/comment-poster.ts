@@ -1,3 +1,4 @@
+import * as core from "@actions/core";
 import { ghApi } from "./gh.js";
 import {
   upsertStatusComment,
@@ -78,6 +79,95 @@ async function applyStatusUpdate(
 }
 
 /**
+ * Terminal auto-review events (`done` / `stopped` / `init_incomplete`) for
+ * which we post an additional top-level PR comment alongside the status
+ * comment upsert. Iteration progress events are intentionally excluded — they
+ * stay aggregated in the status comment (TY-228 / TY-259).
+ */
+export type TerminalNotificationKind =
+  | { kind: "done"; iterations: number }
+  | { kind: "stopped"; stopReason: StopReason; remainingFindings: number }
+  | { kind: "init_incomplete" };
+
+/**
+ * Build the GitHub permalink to a specific issue comment on a PR. Used so
+ * terminal notifications can link back to the consolidated status comment
+ * for full history.
+ */
+export function buildStatusCommentPermalink(
+  owner: string,
+  name: string,
+  pr: number,
+  statusCommentId: number,
+): string {
+  return `https://github.com/${owner}/${name}/pull/${pr}#issuecomment-${statusCommentId}`;
+}
+
+/**
+ * Render the markdown body for a terminal-notification top-level comment.
+ * Exported for tests; production code goes through `postTerminalNotification`.
+ */
+export function buildTerminalNotificationBody(
+  kind: TerminalNotificationKind,
+  permalink: string,
+): string {
+  switch (kind.kind) {
+    case "done":
+      return [
+        `✅ **Auto-review completed** — no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
+        "",
+        `See the [status comment](${permalink}) for the full history.`,
+      ].join("\n");
+    case "stopped": {
+      const label = STOP_REASON_LABELS[kind.stopReason];
+      return [
+        `🛑 **Auto-review stopped** — ${label}.`,
+        "",
+        `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.`,
+        `See the [status comment](${permalink}) for the full history.`,
+      ].join("\n");
+    }
+    case "init_incomplete":
+      return [
+        "⚠️ **Auto-review initialization incomplete**",
+        "",
+        "Re-run Workflow A or manually post `@codex review`.",
+        `See the [status comment](${permalink}) for context.`,
+      ].join("\n");
+  }
+}
+
+/**
+ * Best-effort: post a new top-level PR comment summarizing a terminal
+ * auto-review event. The status comment remains the single source of truth;
+ * this helper exists solely to restore GitHub notifications, which `edit`
+ * operations on the status comment do not trigger (TY-259).
+ *
+ * Failures are swallowed with a warning so they never roll back the
+ * caller's status-comment upsert. Callers continue to return the status
+ * comment ID regardless of whether the notification succeeded.
+ */
+export async function postTerminalNotification(
+  owner: string,
+  name: string,
+  pr: number,
+  statusCommentId: number,
+  kind: TerminalNotificationKind,
+  token: string,
+): Promise<void> {
+  try {
+    const permalink = buildStatusCommentPermalink(owner, name, pr, statusCommentId);
+    const body = buildTerminalNotificationBody(kind, permalink);
+    await postComment(owner, name, pr, body, token);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.warning(
+      `[comment-poster] Failed to post terminal notification: ${message}`,
+    );
+  }
+}
+
+/**
  * Records a successful claude-code-action repair iteration in the PR's
  * auto-review status comment (creating it if missing). Returns the status
  * comment's ID.
@@ -125,7 +215,7 @@ export async function postCompletionComment(
   iterations: number,
   token: string,
 ): Promise<number> {
-  return applyStatusUpdate(
+  const statusCommentId = await applyStatusUpdate(
     owner,
     name,
     pr,
@@ -141,6 +231,15 @@ export async function postCompletionComment(
     },
     token,
   );
+  await postTerminalNotification(
+    owner,
+    name,
+    pr,
+    statusCommentId,
+    { kind: "done", iterations },
+    token,
+  );
+  return statusCommentId;
 }
 
 /**
@@ -171,7 +270,7 @@ export async function postStopComment(
     `Detail: ${detail}`,
   ].join("\n");
 
-  return applyStatusUpdate(
+  const statusCommentId = await applyStatusUpdate(
     owner,
     name,
     pr,
@@ -183,6 +282,15 @@ export async function postStopComment(
     },
     token,
   );
+  await postTerminalNotification(
+    owner,
+    name,
+    pr,
+    statusCommentId,
+    { kind: "stopped", stopReason, remainingFindings },
+    token,
+  );
+  return statusCommentId;
 }
 
 /**
@@ -231,7 +339,7 @@ export async function postInitIncompleteComment(
   pr: number,
   token: string,
 ): Promise<number> {
-  return applyStatusUpdate(
+  const statusCommentId = await applyStatusUpdate(
     owner,
     name,
     pr,
@@ -246,6 +354,15 @@ export async function postInitIncompleteComment(
     },
     token,
   );
+  await postTerminalNotification(
+    owner,
+    name,
+    pr,
+    statusCommentId,
+    { kind: "init_incomplete" },
+    token,
+  );
+  return statusCommentId;
 }
 
 /**

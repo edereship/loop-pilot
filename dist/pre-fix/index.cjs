@@ -19726,7 +19726,7 @@ function filterAndParseComments(comments, botLogin, lastReceivedAt, threshold) {
   };
 }
 function shouldStabilizeReviewComments(comments, botLogin, lastReceivedAt, triggerSummaryBody, threshold) {
-  return countRelevantBotComments(comments, botLogin, lastReceivedAt) === 0 && summaryMayContainFindings(triggerSummaryBody, threshold);
+  return countRelevantBotComments(comments, botLogin, lastReceivedAt, threshold) === 0 && summaryMayContainFindings(triggerSummaryBody, threshold);
 }
 async function stabilizeReviewComments(initialComments, options) {
   const stablePolls = Math.max(1, options.stablePolls);
@@ -19736,7 +19736,7 @@ async function stabilizeReviewComments(initialComments, options) {
     return initialComments;
   }
   let latestComments = initialComments;
-  let lastCount = countRelevantBotComments(latestComments, options.botLogin, options.lastReceivedAt);
+  let lastCount = countRelevantBotComments(latestComments, options.botLogin, options.lastReceivedAt, options.severityThreshold);
   let stableCount = 0;
   let waitedMs = 0;
   options.log?.(`[review-collector] No Codex inline comments yet; waiting for count to stabilize (${stablePolls} polls).`);
@@ -19744,7 +19744,7 @@ async function stabilizeReviewComments(initialComments, options) {
     await options.sleep(intervalMs);
     waitedMs += intervalMs;
     const nextComments = await options.fetchComments();
-    const nextCount = countRelevantBotComments(nextComments, options.botLogin, options.lastReceivedAt);
+    const nextCount = countRelevantBotComments(nextComments, options.botLogin, options.lastReceivedAt, options.severityThreshold);
     if (nextCount === lastCount) {
       stableCount += 1;
     } else {
@@ -19757,15 +19757,19 @@ async function stabilizeReviewComments(initialComments, options) {
   options.log?.(`[review-collector] Stabilization finished after ${waitedMs}ms with ${lastCount} Codex inline comment(s).`);
   return latestComments;
 }
-function countRelevantBotComments(comments, botLogin, lastReceivedAt) {
-  return comments.filter((comment) => comment.user.login === botLogin && (lastReceivedAt === null || comment.createdAt > lastReceivedAt)).length;
+function countRelevantBotComments(comments, botLogin, lastReceivedAt, threshold) {
+  return comments.filter((comment) => {
+    if (comment.user.login !== botLogin)
+      return false;
+    if (lastReceivedAt !== null && !(comment.createdAt > lastReceivedAt))
+      return false;
+    const parsed = parseSeverity(comment.body);
+    return parsed.severity !== null && isAtLeastSeverity(parsed.severity, threshold);
+  }).length;
 }
 function summaryMayContainFindings(body, threshold) {
   const normalized = body.toLowerCase();
   const noFindingsPatterns = [
-    // "No P0/P1 findings", "No P0/P1/P2 findings", "No P0/P1/P2/P3 findings",
-    // and any other slash-separated P[0-3] combination Codex may use.
-    /\bno\s+(?:p[0-3]\s*\/\s*)+p[0-3]\s+findings?\b/i,
     /\bno\s+findings?\b/i,
     /\b0\s+findings?\b/i,
     /\bno\s+issues?\b/i,
@@ -19774,6 +19778,16 @@ function summaryMayContainFindings(body, threshold) {
   ];
   if (noFindingsPatterns.some((pattern) => pattern.test(body))) {
     return false;
+  }
+  const specificNoFindingsMatches = [
+    ...body.matchAll(/\bno\s+(p[0-3](?:\s*\/\s*p[0-3])*)\s+findings?\b/gi)
+  ];
+  if (specificNoFindingsMatches.length > 0) {
+    const negatedSeverities = new Set(specificNoFindingsMatches.flatMap((m) => (m[1].match(/p[0-3]/gi) ?? []).map((s) => s.toUpperCase())));
+    const hasUnNegatedInScopeSignal = ["P0", "P1", "P2", "P3"].filter((s) => isAtLeastSeverity(s, threshold) && !negatedSeverities.has(s)).some((s) => new RegExp(`\\b${s}\\b`, "i").test(body));
+    if (!hasUnNegatedInScopeSignal) {
+      return false;
+    }
   }
   const severitySignal = isAtLeastSeverity("P0", threshold) && /\bp0\b/i.test(body) || isAtLeastSeverity("P1", threshold) && /\bp1\b/i.test(body) || isAtLeastSeverity("P2", threshold) && /\bp2\b/i.test(body) || isAtLeastSeverity("P3", threshold) && /\bp3\b/i.test(body);
   const mentionsAnySeverity = /\bp[0-3]\b/i.test(body);
@@ -20070,13 +20084,54 @@ function entry(kind, title, body) {
 async function applyStatusUpdate2(owner, name, pr, update, token) {
   return upsertStatusComment(owner, name, pr, update, token);
 }
+function buildStatusCommentPermalink(owner, name, pr, statusCommentId) {
+  return `https://github.com/${owner}/${name}/pull/${pr}#issuecomment-${statusCommentId}`;
+}
+function buildTerminalNotificationBody(kind, permalink) {
+  switch (kind.kind) {
+    case "done":
+      return [
+        `\u2705 **Auto-review completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
+        "",
+        `See the [status comment](${permalink}) for the full history.`
+      ].join("\n");
+    case "stopped": {
+      const label = STOP_REASON_LABELS[kind.stopReason];
+      return [
+        `\u{1F6D1} **Auto-review stopped** \u2014 ${label}.`,
+        "",
+        `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.`,
+        `See the [status comment](${permalink}) for the full history.`
+      ].join("\n");
+    }
+    case "init_incomplete":
+      return [
+        "\u26A0\uFE0F **Auto-review initialization incomplete**",
+        "",
+        "Re-run Workflow A or manually post `@codex review`.",
+        `See the [status comment](${permalink}) for context.`
+      ].join("\n");
+  }
+}
+async function postTerminalNotification(owner, name, pr, statusCommentId, kind, token) {
+  try {
+    const permalink = buildStatusCommentPermalink(owner, name, pr, statusCommentId);
+    const body = buildTerminalNotificationBody(kind, permalink);
+    await postComment(owner, name, pr, body, token);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    warning(`[comment-poster] Failed to post terminal notification: ${message}`);
+  }
+}
 async function postCompletionComment(owner, name, pr, iterations, token) {
-  return applyStatusUpdate2(owner, name, pr, {
+  const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: "Completed",
     openFindings: 0,
     nextAction: "All in-scope findings (at or above the configured severity threshold) have been resolved.",
     newEntry: entry("completed", `Auto-review completed (${iterations} iterations)`, "All in-scope findings (at or above the configured severity threshold) have been resolved.")
   }, token);
+  await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "done", iterations }, token);
+  return statusCommentId;
 }
 async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token) {
   const formattedReason = STOP_REASON_LABELS[stopReason];
@@ -20086,19 +20141,23 @@ async function postStopComment(owner, name, pr, stopReason, reviewId, remainingF
     `Open in-scope findings remaining: ${remainingFindings}`,
     `Detail: ${detail}`
   ].join("\n");
-  return applyStatusUpdate2(owner, name, pr, {
+  const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: `Stopped \u2014 ${formattedReason}`,
     openFindings: remainingFindings,
     nextAction: "Manual intervention required.",
     newEntry: entry("stopped", `Automation stopped \u2014 ${formattedReason}`, body)
   }, token);
+  await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "stopped", stopReason, remainingFindings }, token);
+  return statusCommentId;
 }
 async function postInitIncompleteComment(owner, name, pr, token) {
-  return applyStatusUpdate2(owner, name, pr, {
+  const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: "Init incomplete",
     nextAction: "Re-run Workflow A or manually post '@codex review'.",
     newEntry: entry("init_incomplete", "Auto-review initialization incomplete", "Workflow A may have failed before posting the initial review request.")
   }, token);
+  await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "init_incomplete" }, token);
+  return statusCommentId;
 }
 async function postCodexReviewRequest(owner, name, pr, token) {
   return postComment(owner, name, pr, "@codex review", token);

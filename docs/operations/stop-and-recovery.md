@@ -44,14 +44,39 @@ Codex が `@codex review` 要求に対して通常のレビュー結果ではな
 
 ## 停止時コメント例
 
+auto-review の終了系イベント (`done` / `stopped` / `init_incomplete`) では **2 つの場所** に情報が出る:
+
+1. **集約 status コメント** (`src/status-comment.ts` / TY-228): PR ごとに 1 件、History セクションに stopped/done エントリを append
+2. **新規 top-level コメント** (`postTerminalNotification` / TY-259): GitHub 通知を発火させるために、terminal 遷移時のみ別途投稿される
+
+### 1. 集約 status コメントの History エントリ例
+
 ```text
-Automation stopped.
+### Automation stopped — reached max iterations (MAX_REVIEW_ITERATIONS)
+*2026-05-16T12:34:56Z*
 
 Reason: reached max iterations (MAX_REVIEW_ITERATIONS)
 Last processed Codex review: #987654321
-Open P0/P1 findings remaining: 1
-Recommendation: manual intervention required.
+Open in-scope findings remaining: 1
+Detail: ...
 ```
+
+### 2. 新規 top-level コメント (通知用) 例
+
+```markdown
+🛑 **Auto-review stopped** — reached max iterations (MAX_REVIEW_ITERATIONS).
+
+Open in-scope findings remaining: 1. Manual intervention required.
+See the [status comment](https://github.com/<owner>/<repo>/pull/<N>#issuecomment-<id>) for the full history.
+```
+
+```markdown
+✅ **Auto-review completed** — no findings remaining (3 iterations).
+
+See the [status comment](https://github.com/<owner>/<repo>/pull/<N>#issuecomment-<id>) for the full history.
+```
+
+通知用コメントの post は best-effort (`core.warning` で失敗を出すのみ、status コメントの戻り値は維持される)。iteration 進捗 (`auto_fix_applied`) は通知を発火しない (TY-228 維持)。
 
 ---
 

@@ -20074,6 +20074,45 @@ function entry(kind, title, body) {
 async function applyStatusUpdate2(owner, name, pr, update, token) {
   return upsertStatusComment(owner, name, pr, update, token);
 }
+function buildStatusCommentPermalink(owner, name, pr, statusCommentId) {
+  return `https://github.com/${owner}/${name}/pull/${pr}#issuecomment-${statusCommentId}`;
+}
+function buildTerminalNotificationBody(kind, permalink) {
+  switch (kind.kind) {
+    case "done":
+      return [
+        `\u2705 **Auto-review completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
+        "",
+        `See the [status comment](${permalink}) for the full history.`
+      ].join("\n");
+    case "stopped": {
+      const label = STOP_REASON_LABELS[kind.stopReason];
+      return [
+        `\u{1F6D1} **Auto-review stopped** \u2014 ${label}.`,
+        "",
+        `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.`,
+        `See the [status comment](${permalink}) for the full history.`
+      ].join("\n");
+    }
+    case "init_incomplete":
+      return [
+        "\u26A0\uFE0F **Auto-review initialization incomplete**",
+        "",
+        "Re-run Workflow A or manually post `@codex review`.",
+        `See the [status comment](${permalink}) for context.`
+      ].join("\n");
+  }
+}
+async function postTerminalNotification(owner, name, pr, statusCommentId, kind, token) {
+  try {
+    const permalink = buildStatusCommentPermalink(owner, name, pr, statusCommentId);
+    const body = buildTerminalNotificationBody(kind, permalink);
+    await postComment(owner, name, pr, body, token);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    warning(`[comment-poster] Failed to post terminal notification: ${message}`);
+  }
+}
 async function postClaudeCodeActionFixSummary(owner, name, pr, iteration, changedPaths, lastCommit, token) {
   const fileLines = changedPaths.length > 0 ? changedPaths.map((path) => `- \`${path}\``).join("\n") : "_(no files changed)_";
   return applyStatusUpdate2(owner, name, pr, {
@@ -20091,12 +20130,14 @@ async function postStopComment(owner, name, pr, stopReason, reviewId, remainingF
     `Open in-scope findings remaining: ${remainingFindings}`,
     `Detail: ${detail}`
   ].join("\n");
-  return applyStatusUpdate2(owner, name, pr, {
+  const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: `Stopped \u2014 ${formattedReason}`,
     openFindings: remainingFindings,
     nextAction: "Manual intervention required.",
     newEntry: entry("stopped", `Automation stopped \u2014 ${formattedReason}`, body)
   }, token);
+  await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "stopped", stopReason, remainingFindings }, token);
+  return statusCommentId;
 }
 async function postTestFailureComment(owner, name, pr, checkOutput, token) {
   const safeOutput = checkOutput.replace(/`{3,}/g, "``");
