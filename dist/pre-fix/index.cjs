@@ -19505,6 +19505,30 @@ function parseCommentSnapshot(stdout, context) {
   throw new Error(`${context}: unexpected response from GitHub API: ${stdout}`);
 }
 
+// dist/crash-recovery.js
+var defaultDeps = {
+  loadInitConfig,
+  readState,
+  updateStateComment
+};
+async function demoteFixingOnCrash(label, deps = defaultDeps) {
+  try {
+    const crashConfig = deps.loadInitConfig();
+    const crashStateResult = await deps.readState(crashConfig.repoOwner, crashConfig.repoName, crashConfig.prNumber, crashConfig.githubToken);
+    if (crashStateResult.found && crashStateResult.state.status === "fixing") {
+      warning(`[${label}] Crash recovery: resetting fixing \u2192 stopped (state_corrupted)`);
+      const recoveredState = {
+        ...crashStateResult.state,
+        status: "stopped",
+        stopReason: "state_corrupted"
+      };
+      await deps.updateStateComment(crashConfig.repoOwner, crashConfig.repoName, crashStateResult.commentId, recoveredState, crashConfig.githubToken, { expectedUpdatedAt: crashStateResult.commentUpdatedAt });
+    }
+  } catch (recoveryError) {
+    error(`[${label}] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+  }
+}
+
 // dist/review-collector.js
 var import_node_child_process2 = require("node:child_process");
 var import_node_util2 = require("node:util");
@@ -20226,7 +20250,7 @@ function isCodexUsageLimitMessage(body) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-var defaultDeps = {
+var defaultDeps2 = {
   readState,
   updateStateComment,
   fetchReviewComments,
@@ -20256,7 +20280,7 @@ var defaultDeps = {
     (0, import_node_child_process7.execFileSync)("git", ["checkout", ref], { stdio: "inherit" });
   }
 };
-async function runPreFix(config, deps = defaultDeps) {
+async function runPreFix(config, deps = defaultDeps2) {
   deps.setSecret(config.anthropicApiKey);
   deps.setSecret(config.githubToken);
   deps.setSecret(config.codexReviewRequestToken);
@@ -20512,23 +20536,7 @@ async function runPreFix(config, deps = defaultDeps) {
 async function run() {
   await runPreFix(loadConfig());
 }
-runIfNotVitest(run, async () => {
-  try {
-    const crashConfig = loadInitConfig();
-    const crashStateResult = await readState(crashConfig.repoOwner, crashConfig.repoName, crashConfig.prNumber, crashConfig.githubToken);
-    if (crashStateResult.found && crashStateResult.state.status === "fixing") {
-      warning("[pre-fix] Crash recovery: resetting fixing \u2192 stopped (state_corrupted)");
-      const recoveredState = {
-        ...crashStateResult.state,
-        status: "stopped",
-        stopReason: "state_corrupted"
-      };
-      await updateStateComment(crashConfig.repoOwner, crashConfig.repoName, crashStateResult.commentId, recoveredState, crashConfig.githubToken, { expectedUpdatedAt: crashStateResult.commentUpdatedAt });
-    }
-  } catch (recoveryError) {
-    error(`[pre-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
-  }
-});
+runIfNotVitest(run, () => demoteFixingOnCrash("pre-fix"));
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   runPreFix

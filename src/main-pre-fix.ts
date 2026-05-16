@@ -2,11 +2,11 @@ import { execFileSync } from "node:child_process";
 import * as core from "@actions/core";
 import {
   loadConfig,
-  loadInitConfig,
   DEFAULT_AUTO_REVIEW_LABEL,
   type Config,
 } from "./config.js";
 import { runIfNotVitest } from "./entrypoint.js";
+import { demoteFixingOnCrash } from "./crash-recovery.js";
 import {
   createInitialState,
   readState as defaultReadState,
@@ -670,38 +670,4 @@ async function run(): Promise<void> {
   await runPreFix(loadConfig());
 }
 
-runIfNotVitest(run, async () => {
-  // Crash recovery: if state was set to "fixing" before we crashed, demote
-  // it back to stopped(state_corrupted) so the next trigger can proceed.
-  try {
-    const crashConfig = loadInitConfig();
-    const crashStateResult = await defaultReadState(
-      crashConfig.repoOwner,
-      crashConfig.repoName,
-      crashConfig.prNumber,
-      crashConfig.githubToken,
-    );
-    if (crashStateResult.found && crashStateResult.state.status === "fixing") {
-      core.warning(
-        "[pre-fix] Crash recovery: resetting fixing → stopped (state_corrupted)",
-      );
-      const recoveredState: ReviewState = {
-        ...crashStateResult.state,
-        status: "stopped",
-        stopReason: "state_corrupted",
-      };
-      await defaultUpdateStateComment(
-        crashConfig.repoOwner,
-        crashConfig.repoName,
-        crashStateResult.commentId,
-        recoveredState,
-        crashConfig.githubToken,
-        { expectedUpdatedAt: crashStateResult.commentUpdatedAt },
-      );
-    }
-  } catch (recoveryError) {
-    core.error(
-      `[pre-fix] Crash recovery failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
-    );
-  }
-});
+runIfNotVitest(run, () => demoteFixingOnCrash("pre-fix"));
