@@ -10838,7 +10838,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify3 } = require("node:util");
+    var { promisify: promisify2 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10878,7 +10878,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify3(this[kOriginalClose])();
+        await promisify2(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -10891,7 +10891,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify3 } = require("node:util");
+    var { promisify: promisify2 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10931,7 +10931,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify3(this[kOriginalClose])();
+        await promisify2(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -19833,12 +19833,9 @@ async function postCodexReviewRequest(owner, name, pr, token) {
 }
 
 // dist/pr-merger.js
-var import_node_child_process3 = require("node:child_process");
-var import_node_util2 = require("node:util");
-var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process3.execFile);
 async function enableAutoMergeSquash(owner, name, pr, token, log) {
   try {
-    await execFileAsync2("gh", ["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`], { env: buildGhEnv(token) });
+    await ghApi(["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`], token);
     log.info(`[pr-merger] Auto-merge (squash) enabled for PR #${pr}.`);
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);

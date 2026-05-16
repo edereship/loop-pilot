@@ -1,8 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { buildGhEnv } from "./gh-env.js";
-
-const execFileAsync = promisify(execFile);
+import { ghApi } from "./gh.js";
 
 export interface MergerLogger {
   info: (message: string) => void;
@@ -27,10 +23,9 @@ export async function enableAutoMergeSquash(
   log: MergerLogger,
 ): Promise<void> {
   try {
-    await execFileAsync(
-      "gh",
+    await ghApi(
       ["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`],
-      { env: buildGhEnv(token) },
+      token,
     );
     log.info(`[pr-merger] Auto-merge (squash) enabled for PR #${pr}.`);
   } catch (error) {
