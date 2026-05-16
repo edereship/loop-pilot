@@ -159,8 +159,6 @@ jobs:
           max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           debounce-seconds: ${{ vars.DEBOUNCE_SECONDS || '90' }}
           check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}
-          max-files-per-iteration: ${{ vars.MAX_FILES_PER_ITERATION || '10' }}
-          max-input-tokens-per-file: ${{ vars.MAX_INPUT_TOKENS_PER_FILE || '30000' }}
           codex-bot-login: ${{ vars.CODEX_BOT_LOGIN || 'chatgpt-codex-connector[bot]' }}
           codex-review-marker: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
           stabilize-interval-seconds: ${{ vars.STABILIZE_INTERVAL_SECONDS || '10' }}
@@ -186,7 +184,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: codex-comments-${{ github.event.issue.number || github.event.pull_request.number }}-${{ github.run_number }}

@@ -19794,6 +19794,9 @@ var STATUS_COMMENT_DATA_OPEN = `<!-- ${STATUS_COMMENT_MARKER}-data`;
 var STATUS_COMMENT_DATA_CLOSE = "-->";
 var STATUS_COMMENT_VISIBLE_HEADER = "## Auto-review status";
 var MAX_ENTRIES = 30;
+var MAX_ENTRY_BODY_LENGTH = 16e3;
+var ENTRY_BODY_TRUNCATION_MARKER = "\n\n_(output truncated \u2014 exceeded size limit)_";
+var GITHUB_COMMENT_BODY_LIMIT = 65536;
 function createInitialStatusSnapshot() {
   return {
     current: "\u2014",
@@ -19809,7 +19812,7 @@ function renderEntry(entry2) {
 
 ${entry2.body}`;
 }
-function renderStatusCommentBody(snapshot) {
+function renderStatusCommentBodyUnchecked(snapshot) {
   const header = [
     STATUS_COMMENT_OPEN,
     STATUS_COMMENT_VISIBLE_HEADER,
@@ -19832,7 +19835,7 @@ function renderStatusCommentBody(snapshot) {
   ].join("\n");
   const data = [
     STATUS_COMMENT_DATA_OPEN,
-    JSON.stringify(snapshot),
+    JSON.stringify(snapshot).replace(/-->/g, "--\\>"),
     STATUS_COMMENT_DATA_CLOSE
   ].join("\n");
   return `${header}
@@ -19840,24 +19843,36 @@ ${history}
 ${data}
 `;
 }
-function parseStatusCommentBody(body) {
-  const dataStart = body.indexOf(STATUS_COMMENT_DATA_OPEN);
-  if (dataStart === -1)
-    return null;
-  const afterOpen = body.slice(dataStart + STATUS_COMMENT_DATA_OPEN.length);
-  const closeIdx = afterOpen.indexOf(STATUS_COMMENT_DATA_CLOSE);
-  if (closeIdx === -1)
-    return null;
-  const jsonRaw = afterOpen.slice(0, closeIdx).trim();
-  let parsed;
-  try {
-    parsed = JSON.parse(jsonRaw);
-  } catch {
-    return null;
+function renderStatusCommentBody(snapshot) {
+  for (let count = snapshot.entries.length; count >= 0; count--) {
+    const effective = count === snapshot.entries.length ? snapshot : { ...snapshot, entries: snapshot.entries.slice(0, count) };
+    const body = renderStatusCommentBodyUnchecked(effective);
+    if (body.length <= GITHUB_COMMENT_BODY_LIMIT)
+      return body;
   }
-  if (!isStatusSnapshot(parsed))
-    return null;
-  return parsed;
+  return renderStatusCommentBodyUnchecked({ ...snapshot, entries: [] });
+}
+function parseStatusCommentBody(body) {
+  let result = null;
+  let searchFrom = 0;
+  while (true) {
+    const dataStart = body.indexOf(STATUS_COMMENT_DATA_OPEN, searchFrom);
+    if (dataStart === -1)
+      break;
+    const afterOpen = body.slice(dataStart + STATUS_COMMENT_DATA_OPEN.length);
+    const closeIdx = afterOpen.indexOf(STATUS_COMMENT_DATA_CLOSE);
+    if (closeIdx !== -1) {
+      const jsonRaw = afterOpen.slice(0, closeIdx).trim().replace(/--\\>/g, "-->");
+      try {
+        const parsed = JSON.parse(jsonRaw);
+        if (isStatusSnapshot(parsed))
+          result = parsed;
+      } catch {
+      }
+    }
+    searchFrom = dataStart + 1;
+  }
+  return result;
 }
 function isStatusSnapshot(value) {
   if (typeof value !== "object" || value === null)
@@ -19888,8 +19903,14 @@ function isStatusSnapshot(value) {
   }
   return true;
 }
+function capEntryBody(body) {
+  if (body.length <= MAX_ENTRY_BODY_LENGTH)
+    return body;
+  return body.slice(0, MAX_ENTRY_BODY_LENGTH - ENTRY_BODY_TRUNCATION_MARKER.length) + ENTRY_BODY_TRUNCATION_MARKER;
+}
 function applyStatusUpdate(snapshot, update) {
-  const entries = update.newEntry ? [update.newEntry, ...snapshot.entries].slice(0, MAX_ENTRIES) : snapshot.entries;
+  const cappedEntry = update.newEntry ? { ...update.newEntry, body: capEntryBody(update.newEntry.body) } : void 0;
+  const entries = cappedEntry ? [cappedEntry, ...snapshot.entries].slice(0, MAX_ENTRIES) : snapshot.entries;
   return {
     current: update.current ?? snapshot.current,
     lastCommit: update.lastCommit === void 0 ? snapshot.lastCommit : update.lastCommit,
@@ -19919,8 +19940,9 @@ async function findStatusComment(owner, name, pr, token) {
   for (let i = lines.length - 1; i >= 0; i--) {
     try {
       const parsed = JSON.parse(lines[i]);
-      if (isStatusCommentRecord(parsed))
-        return parsed;
+      const value = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+      if (isStatusCommentRecord(value))
+        return value;
     } catch {
       continue;
     }
@@ -20017,11 +20039,12 @@ function entry(kind, title, body) {
 async function applyStatusUpdate2(owner, name, pr, update, token) {
   return upsertStatusComment(owner, name, pr, update, token);
 }
-async function postClaudeCodeActionFixSummary(owner, name, pr, iteration, changedPaths, token) {
+async function postClaudeCodeActionFixSummary(owner, name, pr, iteration, changedPaths, lastCommit, token) {
   const fileLines = changedPaths.length > 0 ? changedPaths.map((path) => `- \`${path}\``).join("\n") : "_(no files changed)_";
   return applyStatusUpdate2(owner, name, pr, {
     current: `Fixing \u2014 iteration ${iteration} applied`,
     nextAction: "Awaiting next Codex review.",
+    lastCommit,
     newEntry: entry("auto_fix_applied", `Iteration ${iteration} \u2014 Auto-fix applied`, fileLines)
   }, token);
 }
@@ -20327,7 +20350,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   } else {
     deps.warning("[post-fix] No staged changes after `git add`. Skipping commit; treating as no-op.");
   }
-  await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, config.githubToken);
+  await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, commitSha || void 0, config.githubToken);
   const waitingState = {
     ...state,
     status: "waiting_codex",
