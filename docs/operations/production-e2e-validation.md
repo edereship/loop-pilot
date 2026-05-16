@@ -176,6 +176,27 @@ The final Codex re-review on the repair commit was also blocked by Codex usage
 limits, so the public-repo run did not reach a fresh `done / no_findings` state
 after branch protection was enabled.
 
+TY-257 then validated the dedicated push-token path in the same disposable
+public repository:
+
+- PR: <https://github.com/racoma-dev/auto-review-fix-test/pull/3>
+- Initial failing commit: `8d281ae762578f08acc6c4abefb6802d5b8690e2`
+- Auto-fix run: <https://github.com/racoma-dev/auto-review-fix-test/actions/runs/25958760165>
+- Auto-fix commit: `40d409057bad00438da80e0b4aa41acbdeb92a15`
+- Required check run on repair commit: <https://github.com/racoma-dev/auto-review-fix-test/actions/runs/25958804353>
+- Final no-findings run: <https://github.com/racoma-dev/auto-review-fix-test/actions/runs/25958829233>
+
+Observed result:
+
+- `AUTO_REVIEW_PUSH_TOKEN` was configured as a Repository secret.
+- the initial PR `check` failed for the seeded regression;
+- the auto-fix loop repaired the regression and pushed the repair commit;
+- GitHub Actions created a new `check` run on the repair commit;
+- the repair commit `check` passed;
+- Codex returned no major issues on the repair commit;
+- the state reached `done / no_findings`;
+- the PR became `mergeStateStatus=CLEAN`.
+
 ## Required Checks And `CHECK_COMMAND`
 
 `CHECK_COMMAND` is currently:

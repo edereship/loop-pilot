@@ -60,7 +60,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 - [ ] `CODEX_REVIEW_REQUEST_TOKEN` の運用方式決定（個人 PAT 継続ではなく、専用 machine user または GitHub App token への置き換えを検討。TY-143）
 - [x] Fork PR 起動防止の実装
 - [x] 外部 fork PR を使った起動防止 E2E 検証（TY-145）。2026-05-16 に disposable public repo `racoma-dev/auto-review-fix-test` の fork PR #1 で、Workflow A が起動せず、手動レビュー後の Workflow B も fork guard で checkout / auto-fix / push 前に停止することを確認済み。手順と証跡は [Production E2E Validation Notes](../operations/production-e2e-validation.md#external-fork-pr-validation) を参照
-- [ ] branch protection / required checks 下での commit/push 可否確認（TY-145 / TY-257）。2026-05-16 に disposable public repo PR #2 で auto-fix push 自体は成功したが、`GITHUB_TOKEN` による repair commit push 後に必須CI `check` が再実行されず、PR は required check で blocked のままになった。production では `AUTO_REVIEW_PUSH_TOKEN` に machine user PAT / GitHub App token を設定し、repair commit 上で required checks が作られることを再確認する。詳細は [Production E2E Validation Notes](../operations/production-e2e-validation.md#branch-protection-and-rulesets) を参照
+- [x] branch protection / required checks 下での commit/push 可否確認（TY-145 / TY-257）。2026-05-16 に disposable public repo PR #2 で `GITHUB_TOKEN` repair push 後に必須CI `check` が再実行されないことを確認し、TY-257 で `AUTO_REVIEW_PUSH_TOKEN` を追加した。その後 PR #3 で dedicated push token により repair commit 上の `check` が再実行され、`done / no_findings` と `mergeStateStatus=CLEAN` まで到達することを確認済み。詳細は [Production E2E Validation Notes](../operations/production-e2e-validation.md#branch-protection-and-rulesets) を参照
 - [ ] `MAX_REVIEW_ITERATIONS` の適正値決定（コスト試算に基づく。20以上も検討。TY-140）
 - [ ] `/restart-review` 等のリカバリコマンド実装（TY-144）
 - [ ] hidden comment 消失時の自動リカバリ機構（TY-144）
