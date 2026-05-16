@@ -18639,7 +18639,6 @@ __export(main_pre_fix_exports, {
   runPreFix: () => runPreFix
 });
 module.exports = __toCommonJS(main_pre_fix_exports);
-var import_node_child_process7 = require("node:child_process");
 
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
@@ -19549,8 +19548,24 @@ function createLockedStateUpdater(args) {
   };
 }
 
-// dist/review-collector.js
+// dist/git.js
 var import_node_child_process2 = require("node:child_process");
+function readHeadSha(label) {
+  try {
+    return (0, import_node_child_process2.execFileSync)("git", ["rev-parse", "HEAD"], {
+      encoding: "utf-8"
+    }).trim();
+  } catch (error2) {
+    warning(`[${label}] Could not read HEAD sha: ${error2 instanceof Error ? error2.message : String(error2)}`);
+    return "";
+  }
+}
+function checkoutBranch(ref) {
+  (0, import_node_child_process2.execFileSync)("git", ["checkout", ref], { stdio: "inherit" });
+}
+
+// dist/review-collector.js
+var import_node_child_process3 = require("node:child_process");
 var import_node_util2 = require("node:util");
 
 // dist/severity-parser.js
@@ -19599,7 +19614,7 @@ function cleanTitle(title) {
 }
 
 // dist/review-collector.js
-var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process2.execFile);
+var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process3.execFile);
 var MAX_BUFFER2 = 10 * 1024 * 1024;
 async function fetchReviewComments(repoOwner, repoName, prNumber, githubToken) {
   const { stdout } = await execFileAsync2("gh", [
@@ -19749,9 +19764,9 @@ function isLoop(currentFindings, findingsHashHistory) {
 }
 
 // dist/comment-poster.js
-var import_node_child_process3 = require("node:child_process");
+var import_node_child_process4 = require("node:child_process");
 var import_node_util3 = require("node:util");
-var execFileAsync3 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
+var execFileAsync3 = (0, import_node_util3.promisify)(import_node_child_process4.execFile);
 var STOP_REASON_LABELS = {
   no_findings: "no P0/P1/P2 findings",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
@@ -19813,9 +19828,9 @@ async function postCodexReviewRequest(owner, name, pr, token) {
 }
 
 // dist/pr-merger.js
-var import_node_child_process4 = require("node:child_process");
+var import_node_child_process5 = require("node:child_process");
 var import_node_util4 = require("node:util");
-var execFileAsync4 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
+var execFileAsync4 = (0, import_node_util4.promisify)(import_node_child_process5.execFile);
 async function enableAutoMergeSquash(owner, name, pr, token, log) {
   try {
     await execFileAsync4("gh", ["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`], { env: buildGhEnv(token) });
@@ -19827,9 +19842,9 @@ async function enableAutoMergeSquash(owner, name, pr, token, log) {
 }
 
 // dist/pr-labels.js
-var import_node_child_process5 = require("node:child_process");
+var import_node_child_process6 = require("node:child_process");
 var import_node_util5 = require("node:util");
-var execFileAsync5 = (0, import_node_util5.promisify)(import_node_child_process5.execFile);
+var execFileAsync5 = (0, import_node_util5.promisify)(import_node_child_process6.execFile);
 var fetchPrLabels = async (owner, name, pr, token) => {
   const { stdout } = await execFileAsync5("gh", [
     "api",
@@ -19848,9 +19863,9 @@ function isAutoReviewAllowed(requiredLabel, currentLabels) {
 }
 
 // dist/restart-command.js
-var import_node_child_process6 = require("node:child_process");
+var import_node_child_process7 = require("node:child_process");
 var import_node_util6 = require("node:util");
-var execFileAsync6 = (0, import_node_util6.promisify)(import_node_child_process6.execFile);
+var execFileAsync6 = (0, import_node_util6.promisify)(import_node_child_process7.execFile);
 function normalizeBody(body) {
   return body.replace(/[\r\n]+$/, "");
 }
@@ -20288,17 +20303,8 @@ var defaultDeps2 = {
   error: (message) => error(message),
   sleep,
   now: () => /* @__PURE__ */ new Date(),
-  readHeadSha: () => {
-    try {
-      return (0, import_node_child_process7.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
-    } catch (error2) {
-      warning(`[pre-fix] Could not read HEAD sha: ${error2 instanceof Error ? error2.message : String(error2)}`);
-      return "";
-    }
-  },
-  checkoutBranch: (ref) => {
-    (0, import_node_child_process7.execFileSync)("git", ["checkout", ref], { stdio: "inherit" });
-  }
+  readHeadSha: () => readHeadSha("pre-fix"),
+  checkoutBranch
 };
 async function runPreFix(config, deps = defaultDeps2) {
   deps.setSecret(config.anthropicApiKey);

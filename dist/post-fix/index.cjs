@@ -18639,8 +18639,7 @@ __export(main_post_fix_exports, {
   runPostFix: () => runPostFix
 });
 module.exports = __toCommonJS(main_post_fix_exports);
-var import_node_child_process4 = require("node:child_process");
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
@@ -19493,10 +19492,67 @@ function createLockedStateUpdater(args) {
   };
 }
 
-// dist/check-runner.js
+// dist/git.js
 var import_node_child_process2 = require("node:child_process");
+var import_node_fs = require("node:fs");
+function readHeadSha(label) {
+  try {
+    return (0, import_node_child_process2.execFileSync)("git", ["rev-parse", "HEAD"], {
+      encoding: "utf-8"
+    }).trim();
+  } catch (error2) {
+    warning(`[${label}] Could not read HEAD sha: ${error2 instanceof Error ? error2.message : String(error2)}`);
+    return "";
+  }
+}
+function gitDiffNumstat() {
+  return (0, import_node_child_process2.execFileSync)("git", ["diff", "--numstat", "--no-renames", "HEAD"], {
+    encoding: "utf-8"
+  });
+}
+function gitListUntracked() {
+  return (0, import_node_child_process2.execFileSync)("git", ["ls-files", "--others", "--exclude-standard"], {
+    encoding: "utf-8"
+  });
+}
+function readWorkingTreeFile(path) {
+  try {
+    const content = (0, import_node_fs.readFileSync)(path);
+    if (content.includes(0))
+      return null;
+    return content.toString("utf-8");
+  } catch {
+    return null;
+  }
+}
+function resetWorkingTree() {
+  (0, import_node_child_process2.execFileSync)("git", ["reset", "--hard", "HEAD"], { stdio: "inherit" });
+  (0, import_node_child_process2.execFileSync)("git", ["clean", "-ffd"], { stdio: "inherit" });
+}
+function stagePaths(paths) {
+  if (paths.length === 0)
+    return;
+  (0, import_node_child_process2.execFileSync)("git", ["add", "--", ...paths], { stdio: "inherit" });
+}
+function hasStagedChanges() {
+  try {
+    (0, import_node_child_process2.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
+    return false;
+  } catch {
+    return true;
+  }
+}
+function commit(message) {
+  (0, import_node_child_process2.execFileSync)("git", ["commit", "-m", message], { stdio: "inherit" });
+}
+function push() {
+  (0, import_node_child_process2.execFileSync)("git", ["push"], { stdio: "inherit" });
+}
+
+// dist/check-runner.js
+var import_node_child_process3 = require("node:child_process");
 var import_node_util2 = require("node:util");
-var execAsync = (0, import_node_util2.promisify)(import_node_child_process2.exec);
+var execAsync = (0, import_node_util2.promisify)(import_node_child_process3.exec);
 function removeAnsiSequences(output) {
   return output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 }
@@ -19554,7 +19610,7 @@ async function runCheckCommand(checkCommand, modifiedFiles) {
     try {
       if (modifiedFiles.length > 0) {
         for (const file of modifiedFiles) {
-          (0, import_node_child_process2.execFileSync)("git", ["checkout", "--", file], {
+          (0, import_node_child_process3.execFileSync)("git", ["checkout", "--", file], {
             encoding: "utf-8"
           });
         }
@@ -19718,9 +19774,9 @@ function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_
 }
 
 // dist/comment-poster.js
-var import_node_child_process3 = require("node:child_process");
+var import_node_child_process4 = require("node:child_process");
 var import_node_util3 = require("node:util");
-var execFileAsync2 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
+var execFileAsync2 = (0, import_node_util3.promisify)(import_node_child_process4.execFile);
 var STOP_REASON_LABELS = {
   no_findings: "no P0/P1/P2 findings",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
@@ -19801,58 +19857,20 @@ var defaultDeps2 = {
   info: (message) => info(message),
   warning: (message) => warning(message),
   error: (message) => error(message),
-  gitDiffNumstat: () => (0, import_node_child_process4.execFileSync)("git", ["diff", "--numstat", "--no-renames", "HEAD"], {
-    encoding: "utf-8"
-  }),
-  gitListUntracked: () => (0, import_node_child_process4.execFileSync)("git", ["ls-files", "--others", "--exclude-standard"], {
-    encoding: "utf-8"
-  }),
-  readWorkingTreeFile: (path) => {
-    try {
-      const content = (0, import_node_fs.readFileSync)(path);
-      if (content.includes(0))
-        return null;
-      return content.toString("utf-8");
-    } catch {
-      return null;
-    }
-  },
-  readHeadSha: () => {
-    try {
-      return (0, import_node_child_process4.execFileSync)("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
-    } catch (error2) {
-      warning(`[post-fix] Could not read HEAD sha: ${error2 instanceof Error ? error2.message : String(error2)}`);
-      return "";
-    }
-  },
-  resetWorkingTree: () => {
-    (0, import_node_child_process4.execFileSync)("git", ["reset", "--hard", "HEAD"], { stdio: "inherit" });
-    (0, import_node_child_process4.execFileSync)("git", ["clean", "-ffd"], { stdio: "inherit" });
-  },
-  stagePaths: (paths) => {
-    if (paths.length === 0)
-      return;
-    (0, import_node_child_process4.execFileSync)("git", ["add", "--", ...paths], { stdio: "inherit" });
-  },
-  hasStagedChanges: () => {
-    try {
-      (0, import_node_child_process4.execFileSync)("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
-      return false;
-    } catch {
-      return true;
-    }
-  },
-  commit: (message) => {
-    (0, import_node_child_process4.execFileSync)("git", ["commit", "-m", message], { stdio: "inherit" });
-  },
-  push: () => {
-    (0, import_node_child_process4.execFileSync)("git", ["push"], { stdio: "inherit" });
-  },
+  gitDiffNumstat,
+  gitListUntracked,
+  readWorkingTreeFile,
+  readHeadSha: () => readHeadSha("post-fix"),
+  resetWorkingTree,
+  stagePaths,
+  hasStagedChanges,
+  commit,
+  push,
   readActionExecutionFile: (path) => {
     if (!path)
       return null;
     try {
-      return (0, import_node_fs.readFileSync)(path, "utf-8");
+      return (0, import_node_fs2.readFileSync)(path, "utf-8");
     } catch {
       return null;
     }

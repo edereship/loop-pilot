@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import * as core from "@actions/core";
 import {
@@ -12,6 +11,7 @@ import {
   updateStateComment as defaultUpdateStateComment,
 } from "./state-manager.js";
 import { createLockedStateUpdater } from "./state-comment-locker.js";
+import * as git from "./git.js";
 import { runCheckCommand as defaultRunCheckCommand } from "./check-runner.js";
 import {
   parseGitNumstat,
@@ -117,60 +117,15 @@ const defaultDeps: PostFixDeps = {
   info: (message) => core.info(message),
   warning: (message) => core.warning(message),
   error: (message) => core.error(message),
-  gitDiffNumstat: () =>
-    execFileSync("git", ["diff", "--numstat", "--no-renames", "HEAD"], {
-      encoding: "utf-8",
-    }),
-  gitListUntracked: () =>
-    execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
-      encoding: "utf-8",
-    }),
-  readWorkingTreeFile: (path) => {
-    try {
-      const content = readFileSync(path);
-      // Reject obvious binary content; checkScope refuses binary entries.
-      if (content.includes(0)) return null;
-      return content.toString("utf-8");
-    } catch {
-      return null;
-    }
-  },
-  readHeadSha: () => {
-    try {
-      return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
-    } catch (error) {
-      core.warning(
-        `[post-fix] Could not read HEAD sha: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return "";
-    }
-  },
-  resetWorkingTree: () => {
-    execFileSync("git", ["reset", "--hard", "HEAD"], { stdio: "inherit" });
-    // -d removes untracked directories; -ff (double force) removes nested git
-    // working trees as well. Without this step, files newly written by
-    // claude-code-action would survive a "rollback" and pollute subsequent
-    // iterations of the same job.
-    execFileSync("git", ["clean", "-ffd"], { stdio: "inherit" });
-  },
-  stagePaths: (paths) => {
-    if (paths.length === 0) return;
-    execFileSync("git", ["add", "--", ...paths], { stdio: "inherit" });
-  },
-  hasStagedChanges: () => {
-    try {
-      execFileSync("git", ["diff", "--cached", "--quiet"], { stdio: "inherit" });
-      return false;
-    } catch {
-      return true;
-    }
-  },
-  commit: (message) => {
-    execFileSync("git", ["commit", "-m", message], { stdio: "inherit" });
-  },
-  push: () => {
-    execFileSync("git", ["push"], { stdio: "inherit" });
-  },
+  gitDiffNumstat: git.gitDiffNumstat,
+  gitListUntracked: git.gitListUntracked,
+  readWorkingTreeFile: git.readWorkingTreeFile,
+  readHeadSha: () => git.readHeadSha("post-fix"),
+  resetWorkingTree: git.resetWorkingTree,
+  stagePaths: git.stagePaths,
+  hasStagedChanges: git.hasStagedChanges,
+  commit: git.commit,
+  push: git.push,
   readActionExecutionFile: (path) => {
     if (!path) return null;
     try {

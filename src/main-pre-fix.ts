@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import * as core from "@actions/core";
 import {
   loadConfig,
@@ -13,6 +12,7 @@ import {
   updateStateComment as defaultUpdateStateComment,
 } from "./state-manager.js";
 import { createLockedStateUpdater } from "./state-comment-locker.js";
+import * as git from "./git.js";
 import {
   fetchReviewComments as defaultFetchReviewComments,
   filterAndParseComments,
@@ -114,25 +114,8 @@ const defaultDeps: PreFixDeps = {
   error: (message) => core.error(message),
   sleep,
   now: () => new Date(),
-  readHeadSha: () => {
-    try {
-      return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
-    } catch (error) {
-      core.warning(
-        `[pre-fix] Could not read HEAD sha: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return "";
-    }
-  },
-  checkoutBranch: (ref) => {
-    // A failure here means the workflow cannot operate on the intended PR
-    // ref (e.g. force-push / branch-rename race). Propagating the error
-    // lets the outer crash-recovery demote `fixing` back to a terminal
-    // status; swallowing it here would let claude-code-action and post-fix
-    // run against whatever ref happens to be checked out, producing
-    // commits on the wrong branch or surprise push failures.
-    execFileSync("git", ["checkout", ref], { stdio: "inherit" });
-  },
+  readHeadSha: () => git.readHeadSha("pre-fix"),
+  checkoutBranch: git.checkoutBranch,
 };
 
 /**
