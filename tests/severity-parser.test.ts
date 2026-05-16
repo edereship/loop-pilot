@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import codexFixtures from "./fixtures/codex-inline-comments.json";
-import { parseSeverity } from "../src/severity-parser";
+import {
+  SEVERITIES,
+  compareSeverity,
+  isAtLeastSeverity,
+  isSeverity,
+  parseSeverity,
+} from "../src/severity-parser";
 
 describe("parseSeverity", () => {
   // --- Stage 1: bare or bracketed badge ---
@@ -125,5 +131,93 @@ describe("parseSeverity", () => {
         expect(result).toEqual(fixture.expected);
       });
     }
+  });
+
+  // --- P3 recognition (TY-256) ---
+
+  describe("P3 recognition (TY-256)", () => {
+    it('parses "P3 Title" → P3 via Stage 1', () => {
+      const result = parseSeverity("P3 Low-priority hint");
+      expect(result.severity).toBe("P3");
+      expect(result.title).toBe("Low-priority hint");
+    });
+
+    it('parses "[P3] Title" → P3 via Stage 1', () => {
+      const result = parseSeverity("[P3] Low-priority hint");
+      expect(result.severity).toBe("P3");
+      expect(result.title).toBe("Low-priority hint");
+    });
+
+    it('parses "**P3** Title" → P3 via Stage 2', () => {
+      const result = parseSeverity("**P3** Low-priority hint");
+      expect(result.severity).toBe("P3");
+      expect(result.title).toBe("Low-priority hint");
+    });
+
+    it("parses Codex image badge for P3", () => {
+      const raw =
+        "**<sub><sub>![P3 Badge](https://img.shields.io/badge/P3-green?style=flat)</sub></sub>  Cosmetic nit**\n\nMinor whitespace issue.\n\nUseful? React with 👍 / 👎.";
+
+      const result = parseSeverity(raw);
+
+      expect(result.severity).toBe("P3");
+      expect(result.title).toBe("Cosmetic nit");
+      expect(result.body).toBe("Minor whitespace issue.");
+    });
+
+    it("does NOT pick up bare P3 keyword via fallback (P0/P1 fallback only)", () => {
+      // No explicit badge prefix on the first line, body mentions P3 only.
+      // Stage1 would match "Some" as the title with no severity, so we expect null.
+      const result = parseSeverity("Some prose\n\nThis discusses P3 issues without a badge.");
+      expect(result.severity).toBeNull();
+    });
+
+    it("does NOT pick up bare P2 keyword via fallback (P0/P1 fallback only)", () => {
+      const result = parseSeverity("Some prose\n\nThis discusses P2 issues without a badge.");
+      expect(result.severity).toBeNull();
+    });
+  });
+
+  // --- Severity helpers (TY-256) ---
+
+  describe("severity helpers (TY-256)", () => {
+    it("exposes all four severities in urgency order via SEVERITIES", () => {
+      expect(SEVERITIES).toEqual(["P0", "P1", "P2", "P3"]);
+    });
+
+    it("isSeverity narrows valid values", () => {
+      expect(isSeverity("P0")).toBe(true);
+      expect(isSeverity("P3")).toBe(true);
+      expect(isSeverity("P4")).toBe(false);
+      expect(isSeverity("foo")).toBe(false);
+      expect(isSeverity("")).toBe(false);
+    });
+
+    it("compareSeverity orders urgency-first (P0 most urgent)", () => {
+      expect(compareSeverity("P0", "P1")).toBeLessThan(0);
+      expect(compareSeverity("P2", "P0")).toBeGreaterThan(0);
+      expect(compareSeverity("P3", "P3")).toBe(0);
+    });
+
+    it("isAtLeastSeverity keeps severities at or above the threshold", () => {
+      // threshold = P2 (default): P0/P1/P2 in, P3 out
+      expect(isAtLeastSeverity("P0", "P2")).toBe(true);
+      expect(isAtLeastSeverity("P1", "P2")).toBe(true);
+      expect(isAtLeastSeverity("P2", "P2")).toBe(true);
+      expect(isAtLeastSeverity("P3", "P2")).toBe(false);
+
+      // threshold = P1: P0/P1 in, P2/P3 out
+      expect(isAtLeastSeverity("P0", "P1")).toBe(true);
+      expect(isAtLeastSeverity("P2", "P1")).toBe(false);
+      expect(isAtLeastSeverity("P3", "P1")).toBe(false);
+
+      // threshold = P0: only P0 in
+      expect(isAtLeastSeverity("P0", "P0")).toBe(true);
+      expect(isAtLeastSeverity("P1", "P0")).toBe(false);
+
+      // threshold = P3: everything in
+      expect(isAtLeastSeverity("P0", "P3")).toBe(true);
+      expect(isAtLeastSeverity("P3", "P3")).toBe(true);
+    });
   });
 });

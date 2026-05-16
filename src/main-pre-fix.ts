@@ -44,7 +44,7 @@ import {
 } from "./check-command-allowlist.js";
 import { selectModel } from "./model-selector.js";
 import { isCodexUsageLimitMessage } from "./codex-status.js";
-import type { Finding, PrContext, ReviewState } from "./types.js";
+import type { PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
 function sleep(ms: number): Promise<void> {
@@ -397,6 +397,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     botLogin: config.codexBotLogin,
     lastReceivedAt: state.lastCodexReviewReceivedAt,
     triggerSummaryBody: config.triggerCommentBody,
+    severityThreshold: config.severityThreshold,
     intervalMs: config.stabilizeIntervalSeconds * 1000,
     stablePolls: config.stabilizeCount,
     maxWaitMs: config.debounceSeconds * 1000,
@@ -411,13 +412,27 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     log: (message) => deps.info(message),
   });
 
-  const findings: Finding[] = filterAndParseComments(
+  const { findings, skipped } = filterAndParseComments(
     rawComments,
     config.codexBotLogin,
     state.lastCodexReviewReceivedAt,
+    config.severityThreshold,
   );
 
-  deps.info(`[pre-fix] Found ${findings.length} P0/P1/P2 findings.`);
+  if (skipped.unparseable > 0) {
+    deps.warning(
+      `[review-collector] Skipped ${skipped.unparseable} comments due to unparseable severity; check parser regex.`,
+    );
+  }
+  if (skipped.belowThreshold > 0) {
+    deps.info(
+      `[review-collector] Skipped ${skipped.belowThreshold} findings below threshold (threshold=${config.severityThreshold}).`,
+    );
+  }
+
+  deps.info(
+    `[pre-fix] Found ${findings.length} findings at or above threshold ${config.severityThreshold}.`,
+  );
 
   // ─── Phase 2: Judge ───────────────────────────────────────────────────────
   const latestCommentTime = rawComments

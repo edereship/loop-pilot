@@ -1,15 +1,18 @@
+/** Severity ラベル。urgency 順 (P0 が最も緊急、P3 が最低)。 */
+export type Severity = "P0" | "P1" | "P2" | "P3";
+
 /** Codex インラインコメントから抽出した指摘 */
 export interface Finding {
-  severity: "P0" | "P1" | "P2";
+  severity: Severity;
   path: string;
   line: number;
   title: string;
   body: string;
 }
 
-/** Severity パーサーの結果（P2 含む。フィルタ前） */
+/** Severity パーサーの結果。`null` は severity を認識できなかったコメントを表す。 */
 export interface ParsedComment {
-  severity: "P0" | "P1" | "P2" | null;
+  severity: Severity | null;
   title: string;
   body: string;
 }

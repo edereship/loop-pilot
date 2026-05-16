@@ -58,6 +58,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 | `AUTO_REVIEW_LABEL` | 起動ラベル名（カスタマイズ用）。デフォルトのラベル必須モードでこのラベルが付いた PR のみ Workflow A/B が起動する。未設定/空文字なら `auto-review-fix` をフォールバック使用（レビュー＋自動修正までを行うため命名は `auto-review-fix`） | `auto-review-fix` | 未設定（フォールバックで `auto-review-fix` を要求） |
 | `AUTO_REVIEW_FULL_AUTO` | `true` を設定すると label gate を無効化し、すべての非 fork ready PR で起動する（完全自動化、PoC 互換挙動） | `false`（ラベル必須） | 未設定（ラベル必須） |
 | `AUTO_REVIEW_AUTO_MERGE` | `true` を設定すると `done / no_findings` 到達時に GitHub native auto-merge (squash) を有効化する（TY-245）。他の停止理由ではマージしない。失敗時は warning のみで人手マージ運用を維持 | `false`（人手マージ） | 未設定（人手マージ） |
+| `AUTO_REVIEW_SEVERITY_THRESHOLD` | auto-fix 対象とする最低 severity。値は `P0` / `P1` / `P2` / `P3` のいずれか。デフォルト `P2` は従来挙動 (P0/P1/P2 を修正、P3 は skip)。`P3` で P3 まで修正対象に含め、`P1` / `P0` で対象を狭める。Codex finding の severity badge が読めなかった場合は warning ログを出して件数を記録、threshold 未達 finding は info ログで件数を記録する（TY-256） | `P2` | 未設定（`P2`） |
 
 > 運用注意: `AUTO_REVIEW_FULL_AUTO=true` 時はラベルの付け外しで開始/停止を制御できない。停止したい場合は `AUTO_REVIEW_FULL_AUTO=false` に戻すか、workflow を無効化する。
 
@@ -74,6 +75,7 @@ env:
   STABILIZE_INTERVAL_SECONDS: ${{ vars.STABILIZE_INTERVAL_SECONDS || '10' }}
   STABILIZE_COUNT: ${{ vars.STABILIZE_COUNT || '3' }}
   CODEX_REVIEW_MARKER: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
+  AUTO_REVIEW_SEVERITY_THRESHOLD: ${{ vars.AUTO_REVIEW_SEVERITY_THRESHOLD || 'P2' }}
 ```
 
 `CODEX_REVIEW_REQUEST_TOKEN` は GitHub Actions の Repository secrets に設定し、Workflow A/B の action input `codex-review-request-token` として渡す。この token は `@codex review` の投稿だけに使い、hidden comment の状態管理、Artifact 収集など既存の GitHub 操作は `GITHUB_TOKEN` を使い続ける。

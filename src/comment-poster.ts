@@ -7,7 +7,7 @@ import {
 import type { StopReason } from "./types.js";
 
 const STOP_REASON_LABELS: Record<StopReason, string> = {
-  no_findings: "no P0/P1/P2 findings",
+  no_findings: "no findings at or above the configured severity threshold",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
   loop_detected: "same findings detected in loop",
   claude_api_error: "Claude API error",
@@ -132,11 +132,11 @@ export async function postCompletionComment(
     {
       current: "Completed",
       openFindings: 0,
-      nextAction: "All P0/P1/P2 findings have been resolved.",
+      nextAction: "All in-scope findings (at or above the configured severity threshold) have been resolved.",
       newEntry: entry(
         "completed",
         `Auto-review completed (${iterations} iterations)`,
-        "All P0/P1/P2 findings have been resolved.",
+        "All in-scope findings (at or above the configured severity threshold) have been resolved.",
       ),
     },
     token,
@@ -149,7 +149,8 @@ export async function postCompletionComment(
  *
  * @param stopReason - The reason automation was stopped
  * @param reviewId - The ID of the last processed Codex review comment
- * @param remainingFindings - Count of open P0/P1/P2 findings at the time of stopping
+ * @param remainingFindings - Count of open in-scope findings (at or above the
+ *                            configured severity threshold) at the time of stopping
  * @param detail - Additional detail about why automation stopped
  */
 export async function postStopComment(
@@ -166,7 +167,7 @@ export async function postStopComment(
   const body = [
     `Reason: ${formattedReason}`,
     `Last processed Codex review: #${reviewId}`,
-    `Open P0/P1/P2 findings remaining: ${remainingFindings}`,
+    `Open in-scope findings remaining: ${remainingFindings}`,
     `Detail: ${detail}`,
   ].join("\n");
 

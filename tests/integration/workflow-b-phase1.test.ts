@@ -44,7 +44,7 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
   ];
 
   it("extracts P0/P1/P2 findings from Codex bot, ignoring humans", () => {
-    const findings = filterAndParseComments(mockComments, codexBot, null);
+    const { findings } = filterAndParseComments(mockComments, codexBot, null, "P2");
     expect(findings).toHaveLength(3);
     expect(findings[0].severity).toBe("P0");
     expect(findings[0].path).toBe("src/auth/session.ts");
@@ -55,31 +55,32 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
   });
 
   it("filters by time when lastReceivedAt is provided", () => {
-    const findings = filterAndParseComments(mockComments, codexBot, "2026-03-20T11:05:15Z");
+    const { findings } = filterAndParseComments(mockComments, codexBot, "2026-03-20T11:05:15Z", "P2");
     expect(findings).toHaveLength(2);
     expect(findings[0].severity).toBe("P1");
     expect(findings[1].severity).toBe("P2");
   });
 
   it("computes hash and detects no loop on first iteration", () => {
-    const findings = filterAndParseComments(mockComments, codexBot, null);
+    const { findings } = filterAndParseComments(mockComments, codexBot, null, "P2");
     const hash = computeFindingsHash(findings);
     expect(hash).toMatch(/^[0-9a-f]{16}$/);
     expect(isLoop(findings, [])).toBe(false);
   });
 
   it("detects loop when same findings reappear", () => {
-    const findings = filterAndParseComments(mockComments, codexBot, null);
+    const { findings } = filterAndParseComments(mockComments, codexBot, null, "P2");
     const hash = computeFindingsHash(findings);
     const history: FindingsHashEntry[] = [{ iteration: 1, hash }];
     expect(isLoop(findings, history)).toBe(true);
   });
 
   it("extracts multiple same-file and multi-file P0/P1/P2 fixture findings", () => {
-    const findings = filterAndParseComments(
+    const { findings } = filterAndParseComments(
       multipleCodexFindings as RawReviewComment[],
       codexBot,
       null,
+      "P2",
     );
 
     expect(findings.map((finding) => ({

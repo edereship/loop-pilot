@@ -1,12 +1,32 @@
 import * as core from "@actions/core";
-import { parseSeverity } from "./severity-parser.js";
+import { isAtLeastSeverity, parseSeverity } from "./severity-parser.js";
 import { ghApi } from "./gh.js";
-import type { FetchReviewCommentsFn, Finding, RawReviewComment, SleepFn } from "./types.js";
+import type {
+  FetchReviewCommentsFn,
+  Finding,
+  RawReviewComment,
+  Severity,
+  SleepFn,
+} from "./types.js";
+
+/**
+ * `filterAndParseComments` の戻り値。`skipped` は observability 用のカウンタで、
+ * Codex finding を `unparseable` (severity 不明) と `belowThreshold` (threshold 未達) に
+ * 区別して提供する。両者は pre-fix 側でログレベルを使い分けるため別カウンタになっている。
+ */
+export interface FilteredComments {
+  findings: Finding[];
+  skipped: {
+    unparseable: number;
+    belowThreshold: number;
+  };
+}
 
 export interface StabilizeReviewCommentsOptions {
   botLogin: string;
   lastReceivedAt: string | null;
   triggerSummaryBody: string;
+  severityThreshold: Severity;
   intervalMs: number;
   stablePolls: number;
   maxWaitMs: number;
@@ -93,51 +113,64 @@ export function parseReviewCommentRecord(line: string): RawReviewComment | null 
 
 /**
  * Filters raw review comments by bot login and timestamp, parses severity,
- * and returns P0/P1/P2 findings.
+ * and returns findings whose severity is at least the given threshold.
  *
  * Why strict greater-than for timestamp: a comment received exactly at
  * lastReceivedAt was already processed in the previous iteration.
+ *
+ * Observability (TY-256): skipped comments are reported via the `skipped`
+ * counter, split into `unparseable` (severity could not be parsed) and
+ * `belowThreshold` (parsed severity is less urgent than the threshold).
+ * Callers use the breakdown to log warnings vs informational messages.
  */
 export function filterAndParseComments(
   comments: RawReviewComment[],
   botLogin: string,
-  lastReceivedAt: string | null
-): Finding[] {
-  return comments
-    .filter((comment) => comment.user.login === botLogin)
-    .filter(
-      (comment) =>
-        lastReceivedAt === null || comment.createdAt > lastReceivedAt
-    )
-    .flatMap((comment) => {
-      const parsed = parseSeverity(comment.body);
-      if (
-        parsed.severity !== "P0" &&
-        parsed.severity !== "P1" &&
-        parsed.severity !== "P2"
-      ) {
-        return [];
-      }
-      const finding: Finding = {
-        severity: parsed.severity,
-        path: comment.path,
-        line: comment.line ?? 0,
-        title: parsed.title,
-        body: parsed.body,
-      };
-      return [finding];
+  lastReceivedAt: string | null,
+  threshold: Severity,
+): FilteredComments {
+  const findings: Finding[] = [];
+  let unparseable = 0;
+  let belowThreshold = 0;
+
+  for (const comment of comments) {
+    if (comment.user.login !== botLogin) continue;
+    if (lastReceivedAt !== null && !(comment.createdAt > lastReceivedAt)) continue;
+
+    const parsed = parseSeverity(comment.body);
+    if (parsed.severity === null) {
+      unparseable += 1;
+      continue;
+    }
+    if (!isAtLeastSeverity(parsed.severity, threshold)) {
+      belowThreshold += 1;
+      continue;
+    }
+    findings.push({
+      severity: parsed.severity,
+      path: comment.path,
+      line: comment.line ?? 0,
+      title: parsed.title,
+      body: parsed.body,
     });
+  }
+
+  return {
+    findings,
+    skipped: { unparseable, belowThreshold },
+  };
 }
 
 export function shouldStabilizeReviewComments(
   comments: RawReviewComment[],
   botLogin: string,
   lastReceivedAt: string | null,
-  triggerSummaryBody: string
+  triggerSummaryBody: string,
+  threshold: Severity
 ): boolean {
   return (
-    countRelevantBotComments(comments, botLogin, lastReceivedAt) === 0 &&
-    summaryMayContainFindings(triggerSummaryBody)
+    countRelevantBotComments(comments, botLogin, lastReceivedAt, threshold) === 0 &&
+    summaryMayContainFindings(triggerSummaryBody, threshold)
   );
 }
 
@@ -154,7 +187,8 @@ export async function stabilizeReviewComments(
       initialComments,
       options.botLogin,
       options.lastReceivedAt,
-      options.triggerSummaryBody
+      options.triggerSummaryBody,
+      options.severityThreshold
     )
   ) {
     return initialComments;
@@ -164,7 +198,8 @@ export async function stabilizeReviewComments(
   let lastCount = countRelevantBotComments(
     latestComments,
     options.botLogin,
-    options.lastReceivedAt
+    options.lastReceivedAt,
+    options.severityThreshold
   );
   let stableCount = 0;
   let waitedMs = 0;
@@ -181,7 +216,8 @@ export async function stabilizeReviewComments(
     const nextCount = countRelevantBotComments(
       nextComments,
       options.botLogin,
-      options.lastReceivedAt
+      options.lastReceivedAt,
+      options.severityThreshold
     );
 
     if (nextCount === lastCount) {
@@ -206,19 +242,20 @@ export async function stabilizeReviewComments(
 function countRelevantBotComments(
   comments: RawReviewComment[],
   botLogin: string,
-  lastReceivedAt: string | null
+  lastReceivedAt: string | null,
+  threshold: Severity
 ): number {
-  return comments.filter(
-    (comment) =>
-      comment.user.login === botLogin &&
-      (lastReceivedAt === null || comment.createdAt > lastReceivedAt)
-  ).length;
+  return comments.filter((comment) => {
+    if (comment.user.login !== botLogin) return false;
+    if (lastReceivedAt !== null && !(comment.createdAt > lastReceivedAt)) return false;
+    const parsed = parseSeverity(comment.body);
+    return parsed.severity !== null && isAtLeastSeverity(parsed.severity, threshold);
+  }).length;
 }
 
-function summaryMayContainFindings(body: string): boolean {
+function summaryMayContainFindings(body: string, threshold: Severity): boolean {
   const normalized = body.toLowerCase();
   const noFindingsPatterns = [
-    /\bno\s+p0\s*\/\s*p1(?:\s*\/\s*p2)?\s+findings?\b/i,
     /\bno\s+findings?\b/i,
     /\b0\s+findings?\b/i,
     /\bno\s+issues?\b/i,
@@ -229,10 +266,53 @@ function summaryMayContainFindings(body: string): boolean {
     return false;
   }
 
+  // "No PX findings" requires threshold-aware handling: "No P3 findings" is not
+  // a global no-findings signal when the threshold is P2 and the body also
+  // mentions in-scope severities like P1/P2. Collect every negated severity
+  // from all "No P… findings" clauses in the body, then only return false when
+  // no un-negated in-scope severity also appears elsewhere in the text.
+  const specificNoFindingsMatches = [
+    ...body.matchAll(/\bno\s+(p[0-3](?:\s*\/\s*p[0-3])*)\s+findings?\b/gi),
+  ];
+  if (specificNoFindingsMatches.length > 0) {
+    const negatedSeverities = new Set(
+      specificNoFindingsMatches.flatMap((m) =>
+        (m[1].match(/p[0-3]/gi) ?? []).map((s) => s.toUpperCase()),
+      ),
+    );
+    const hasUnNegatedInScopeSignal = (["P0", "P1", "P2", "P3"] as Severity[])
+      .filter((s) => isAtLeastSeverity(s, threshold) && !negatedSeverities.has(s))
+      .some((s) => new RegExp(`\\b${s}\\b`, "i").test(body));
+    if (!hasUnNegatedInScopeSignal) {
+      return false;
+    }
+    // An un-negated in-scope severity appears in the body — fall through to the
+    // severitySignal block so it can be detected as a positive signal.
+  }
+
+  // Only treat an explicit severity label as a positive signal if it is at or
+  // above the threshold — a P3-only mention must not trigger stabilization
+  // polling when the threshold is P2, because those findings will be filtered
+  // out anyway (TY-256).
+  const severitySignal =
+    (isAtLeastSeverity("P0", threshold) && /\bp0\b/i.test(body)) ||
+    (isAtLeastSeverity("P1", threshold) && /\bp1\b/i.test(body)) ||
+    (isAtLeastSeverity("P2", threshold) && /\bp2\b/i.test(body)) ||
+    (isAtLeastSeverity("P3", threshold) && /\bp3\b/i.test(body));
+
+  // When the summary explicitly names a severity, the severity signal is the
+  // authoritative answer — falling back to generic "findings"/"issues" words
+  // when the named severity is below threshold would re-introduce the
+  // unnecessary polling the threshold gate was meant to avoid (TY-256). The
+  // generic-keyword fallback applies only when no severity is named, which
+  // is the conservative case (e.g., Codex summary changes its format and
+  // omits explicit severities — we still want to enter stabilization).
+  const mentionsAnySeverity = /\bp[0-3]\b/i.test(body);
+  if (mentionsAnySeverity) {
+    return severitySignal;
+  }
+
   return (
-    /\bp0\b/i.test(body) ||
-    /\bp1\b/i.test(body) ||
-    /\bp2\b/i.test(body) ||
     /\bfindings?\b/.test(normalized) ||
     /\bissues?\b/.test(normalized) ||
     /指摘|問題|検出/.test(body)

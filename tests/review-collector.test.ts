@@ -51,7 +51,7 @@ describe("filterAndParseComments", () => {
       makeComment({ id: 3, body: "P2 Style issue\n\nPrefer a smaller helper." }),
     ];
 
-    const findings = filterAndParseComments(comments, BOT_LOGIN, null);
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
     expect(findings).toHaveLength(3);
     expect(findings[0].severity).toBe("P0");
@@ -71,7 +71,7 @@ describe("filterAndParseComments", () => {
       makeComment({ id: 2, body: "P1 Minor issue", user: { login: BOT_LOGIN } }),
     ];
 
-    const findings = filterAndParseComments(comments, BOT_LOGIN, null);
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
     expect(findings).toHaveLength(1);
     expect(findings[0].severity).toBe("P1");
@@ -84,7 +84,7 @@ describe("filterAndParseComments", () => {
       makeComment({ id: 3, body: "P1 Important\n\nShould fix soon." }),
     ];
 
-    const findings = filterAndParseComments(comments, BOT_LOGIN, null);
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
     expect(findings).toHaveLength(3);
     expect(findings.map((f) => f.severity)).toEqual(["P0", "P2", "P1"]);
@@ -99,7 +99,7 @@ describe("filterAndParseComments", () => {
       }),
     ];
 
-    const findings = filterAndParseComments(comments, BOT_LOGIN, null);
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
@@ -129,7 +129,7 @@ describe("filterAndParseComments", () => {
       }),
     ];
 
-    const findings = filterAndParseComments(comments, BOT_LOGIN, lastReceivedAt);
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, lastReceivedAt, "P2");
 
     expect(findings).toHaveLength(1);
     expect(findings[0].severity).toBe("P1");
@@ -142,7 +142,7 @@ describe("filterAndParseComments", () => {
       makeComment({ id: 2, body: "P1 Issue two", createdAt: "2020-06-15T08:30:00Z" }),
     ];
 
-    const findings = filterAndParseComments(comments, BOT_LOGIN, null);
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
     expect(findings).toHaveLength(2);
   });
@@ -152,10 +152,98 @@ describe("filterAndParseComments", () => {
       makeComment({ id: 1, body: "P0 File-level comment", line: null }),
     ];
 
-    const findings = filterAndParseComments(comments, BOT_LOGIN, null);
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
     expect(findings).toHaveLength(1);
     expect(findings[0].line).toBe(0);
+  });
+
+  // --- Threshold + skip count (TY-256) ---
+
+  describe("severity threshold (TY-256)", () => {
+    it("default threshold P2 preserves prior behavior (P0/P1/P2 in, P3 in belowThreshold)", () => {
+      const comments: RawReviewComment[] = [
+        makeComment({ id: 1, body: "P0 Critical\n\nFix immediately." }),
+        makeComment({ id: 2, body: "P1 Important" }),
+        makeComment({ id: 3, body: "P2 Style" }),
+        makeComment({ id: 4, body: "P3 Cosmetic nit" }),
+      ];
+
+      const result = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
+
+      expect(result.findings.map((f) => f.severity)).toEqual(["P0", "P1", "P2"]);
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 1 });
+    });
+
+    it("threshold P3 includes everything (no belowThreshold)", () => {
+      const comments: RawReviewComment[] = [
+        makeComment({ id: 1, body: "P0 Critical" }),
+        makeComment({ id: 2, body: "P3 Cosmetic nit" }),
+      ];
+
+      const result = filterAndParseComments(comments, BOT_LOGIN, null, "P3");
+
+      expect(result.findings.map((f) => f.severity)).toEqual(["P0", "P3"]);
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 0 });
+    });
+
+    it("threshold P1 keeps P0/P1 and counts P2/P3 in belowThreshold", () => {
+      const comments: RawReviewComment[] = [
+        makeComment({ id: 1, body: "P0 Critical" }),
+        makeComment({ id: 2, body: "P1 Important" }),
+        makeComment({ id: 3, body: "P2 Style" }),
+        makeComment({ id: 4, body: "P3 Cosmetic nit" }),
+      ];
+
+      const result = filterAndParseComments(comments, BOT_LOGIN, null, "P1");
+
+      expect(result.findings.map((f) => f.severity)).toEqual(["P0", "P1"]);
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 2 });
+    });
+
+    it("threshold P0 keeps only P0 and counts everything else in belowThreshold", () => {
+      const comments: RawReviewComment[] = [
+        makeComment({ id: 1, body: "P0 Critical" }),
+        makeComment({ id: 2, body: "P1 Important" }),
+        makeComment({ id: 3, body: "P3 Cosmetic" }),
+      ];
+
+      const result = filterAndParseComments(comments, BOT_LOGIN, null, "P0");
+
+      expect(result.findings.map((f) => f.severity)).toEqual(["P0"]);
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 2 });
+    });
+
+    it("reports unparseable comments separately from belowThreshold", () => {
+      const comments: RawReviewComment[] = [
+        makeComment({ id: 1, body: "P0 Critical" }),
+        makeComment({ id: 2, body: "No severity badge at all" }),
+        makeComment({ id: 3, body: "Random text with no severity tag" }),
+        makeComment({ id: 4, body: "P3 Cosmetic" }),
+      ];
+
+      const result = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
+
+      expect(result.findings.map((f) => f.severity)).toEqual(["P0"]);
+      expect(result.skipped).toEqual({ unparseable: 2, belowThreshold: 1 });
+    });
+
+    it("excludes non-bot comments from skip counters", () => {
+      const comments: RawReviewComment[] = [
+        makeComment({
+          id: 1,
+          body: "P0 Critical",
+          user: { login: "human-reviewer" },
+        }),
+        makeComment({ id: 2, body: "Random text", user: { login: "human-reviewer" } }),
+        makeComment({ id: 3, body: "P2 Style" }),
+      ];
+
+      const result = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
+
+      expect(result.findings.map((f) => f.severity)).toEqual(["P2"]);
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 0 });
+    });
   });
 });
 
@@ -166,7 +254,8 @@ describe("shouldStabilizeReviewComments", () => {
         [],
         BOT_LOGIN,
         null,
-        "Codex Review found P2 issues that should be fixed."
+        "Codex Review found P2 issues that should be fixed.",
+        "P2"
       )
     ).toBe(true);
   });
@@ -177,7 +266,8 @@ describe("shouldStabilizeReviewComments", () => {
         [makeComment({ id: 1, body: "P1 Existing issue" })],
         BOT_LOGIN,
         null,
-        "Codex Review found P1 issues that should be fixed."
+        "Codex Review found P1 issues that should be fixed.",
+        "P2"
       )
     ).toBe(false);
   });
@@ -188,9 +278,129 @@ describe("shouldStabilizeReviewComments", () => {
         [],
         BOT_LOGIN,
         null,
-        "Codex Review completed. No P0/P1/P2 findings."
+        "Codex Review completed. No P0/P1/P2 findings.",
+        "P2"
       )
     ).toBe(false);
+  });
+
+  it("skips stabilization when summary only mentions below-threshold severities", () => {
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review found P3 cosmetic nit.",
+        "P2"
+      )
+    ).toBe(false);
+  });
+
+  it("starts stabilization when summary mentions at-threshold severity", () => {
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review found P3 cosmetic nit.",
+        "P3"
+      )
+    ).toBe(true);
+  });
+
+  it("does NOT skip stabilization when 'No PX findings' coexists with in-scope findings in the same summary", () => {
+    // Regression: "No P3 findings" matched the broad no-findings pattern and
+    // returned false even when P2/P1 findings were also present in the body.
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "No P3 findings. Found 2 P2 issues.",
+        "P2",
+      ),
+    ).toBe(true);
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "No P3 findings. Found 1 P1 issue.",
+        "P2",
+      ),
+    ).toBe(true);
+    // "No P3 findings" alone (no in-scope mention) should still skip stabilization
+    // at threshold P2, because P3 is below the threshold.
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review completed. No P3 findings.",
+        "P2",
+      ),
+    ).toBe(false);
+  });
+
+  it("skips stabilization for 'No P0/P1/P2/P3 findings' summaries at any threshold (TY-256)", () => {
+    for (const threshold of ["P0", "P1", "P2", "P3"] as const) {
+      expect(
+        shouldStabilizeReviewComments(
+          [],
+          BOT_LOGIN,
+          null,
+          "Codex Review completed. No P0/P1/P2/P3 findings.",
+          threshold,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("does NOT fall back to generic 'findings'/'issues' words when summary names a below-threshold severity (TY-256)", () => {
+    // P3 mentioned but threshold is P2: severitySignal = false. With the
+    // generic-keyword fallback gated by "no severity mentioned", we must NOT
+    // enter stabilization just because the summary contains the word "issues".
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review found P3 issues only.",
+        "P2",
+      ),
+    ).toBe(false);
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review found P3 findings.",
+        "P2",
+      ),
+    ).toBe(false);
+  });
+
+  it("still falls back to generic keywords when no severity is named at all (TY-256)", () => {
+    // No P[0-3] in body — generic "findings" / "issues" keyword is the only
+    // signal we have, so stabilization must enter (conservative default).
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review found some findings that need attention.",
+        "P2",
+      ),
+    ).toBe(true);
+    expect(
+      shouldStabilizeReviewComments(
+        [],
+        BOT_LOGIN,
+        null,
+        "Codex Review noted several issues.",
+        "P2",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -205,6 +415,7 @@ describe("stabilizeReviewComments", () => {
       botLogin: BOT_LOGIN,
       lastReceivedAt: null,
       triggerSummaryBody: "Codex Review found P1 issues.",
+      severityThreshold: "P2",
       intervalMs: 10,
       stablePolls: 2,
       maxWaitMs: 100,
@@ -225,6 +436,7 @@ describe("stabilizeReviewComments", () => {
       botLogin: BOT_LOGIN,
       lastReceivedAt: null,
       triggerSummaryBody: "Codex Review found P1 issues.",
+      severityThreshold: "P2",
       intervalMs: 5,
       stablePolls: 2,
       maxWaitMs: 100,
@@ -246,6 +458,7 @@ describe("stabilizeReviewComments", () => {
       botLogin: BOT_LOGIN,
       lastReceivedAt: null,
       triggerSummaryBody: "Codex Review found P1 issues.",
+      severityThreshold: "P2",
       intervalMs: 5,
       stablePolls: 2,
       maxWaitMs: 100,

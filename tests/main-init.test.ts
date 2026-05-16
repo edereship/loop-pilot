@@ -31,6 +31,7 @@ const baseConfig: Config = {
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
   autoMergeOnClean: false,
+  severityThreshold: "P2",
 };
 
 function makeState(overrides: Partial<ReviewState> = {}): ReviewState {

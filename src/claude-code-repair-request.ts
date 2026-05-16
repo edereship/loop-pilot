@@ -1,4 +1,4 @@
-import type { Finding, PrContext } from "./types.js";
+import type { Finding, PrContext, Severity } from "./types.js";
 
 /**
  * Repair request payload passed to `anthropics/claude-code-action@v1`.
@@ -26,7 +26,7 @@ export interface ClaudeCodeRepairRequest {
 }
 
 export interface ClaudeCodeRepairFinding {
-  severity: "P0" | "P1" | "P2";
+  severity: Severity;
   path: string;
   line: number;
   title: string;
@@ -42,10 +42,11 @@ export interface ClaudeCodeRepairFinding {
 /** Maximum characters preserved from a previous `CHECK_COMMAND` failure output. */
 export const PREVIOUS_CHECK_FAILURE_MAX_CHARS = 20_000;
 
-const SEVERITY_RANK: Record<ClaudeCodeRepairFinding["severity"], number> = {
+const SEVERITY_RANK: Record<Severity, number> = {
   P0: 0,
   P1: 1,
   P2: 2,
+  P3: 3,
 };
 
 /**

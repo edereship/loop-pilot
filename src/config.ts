@@ -1,4 +1,6 @@
 import * as core from "@actions/core";
+import { isSeverity } from "./severity-parser.js";
+import type { Severity } from "./types.js";
 
 export interface Config {
   maxReviewIterations: number;
@@ -38,7 +40,15 @@ export interface Config {
   // `gh pr merge --auto --squash` after a `done / no_findings` transition.
   // Other stop reasons never enable auto-merge.
   autoMergeOnClean: boolean;
+  // Severity threshold (TY-256). Findings whose severity is strictly below the
+  // threshold (numerically larger; e.g., P3 when threshold is P2) are excluded
+  // from the auto-fix pipeline and counted under `belowThreshold` in observability
+  // logs. Default `P2` preserves prior behavior. Invalid values fall back to `P2`
+  // with a warning.
+  severityThreshold: Severity;
 }
+
+export const DEFAULT_SEVERITY_THRESHOLD: Severity = "P2";
 
 const DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
 const DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-7";
@@ -119,7 +129,30 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey"> {
       DEFAULT_CLAUDE_CODE_MODEL_ESCALATED,
     ),
     autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
+    severityThreshold: severityThresholdInput(
+      "severity-threshold",
+      "AUTO_REVIEW_SEVERITY_THRESHOLD",
+      DEFAULT_SEVERITY_THRESHOLD,
+    ),
   };
+}
+
+/**
+ * 入力値を `Severity` として解釈する。空文字や未設定はデフォルトに、認識できない値は
+ * warning ログを出した上でデフォルトにフォールバックする。
+ */
+function severityThresholdInput(
+  inputName: string,
+  envName: string,
+  defaultValue: Severity,
+): Severity {
+  const raw = input(inputName, envName, "").trim().toUpperCase();
+  if (raw === "") return defaultValue;
+  if (isSeverity(raw)) return raw;
+  core.warning(
+    `[config] Unknown severity threshold "${raw}" for ${inputName} / ${envName}; falling back to ${defaultValue}.`,
+  );
+  return defaultValue;
 }
 
 /**

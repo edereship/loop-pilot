@@ -37,7 +37,7 @@ export interface StatusSnapshot {
   current: string;
   /** Optional last commit SHA (short or full); `null` renders as `—`. */
   lastCommit: string | null;
-  /** Open P0/P1/P2 findings count; `null` renders as `—`. */
+  /** Open in-scope findings count (severities at or above the configured threshold); `null` renders as `—`. */
   openFindings: number | null;
   /** Suggested next human action. */
   nextAction: string;

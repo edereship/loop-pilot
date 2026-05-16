@@ -33,6 +33,7 @@ const baseConfig: Config = {
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
   autoMergeOnClean: false,
+  severityThreshold: "P2",
 };
 
 function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
@@ -417,10 +418,11 @@ describe("runPreFix", () => {
         createdAt: "2026-05-14T11:30:00Z",
       },
     ];
-    const parsed = filterAndParseComments(
+    const { findings: parsed } = filterAndParseComments(
       comments,
       "chatgpt-codex-connector[bot]",
       null,
+      "P2",
     );
     const hash = computeFindingsHash(parsed);
 
@@ -475,10 +477,11 @@ describe("runPreFix", () => {
         createdAt: "2026-05-14T11:30:00Z",
       },
     ];
-    const parsed = filterAndParseComments(
+    const { findings: parsed } = filterAndParseComments(
       comments,
       "chatgpt-codex-connector[bot]",
       null,
+      "P2",
     );
     const hash = computeFindingsHash(parsed);
 
@@ -526,10 +529,11 @@ describe("runPreFix", () => {
         createdAt: "2026-05-14T11:30:00Z",
       },
     ];
-    const parsed = filterAndParseComments(
+    const { findings: parsed } = filterAndParseComments(
       comments,
       "chatgpt-codex-connector[bot]",
       null,
+      "P2",
     );
     const hash = computeFindingsHash(parsed);
 

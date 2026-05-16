@@ -108,6 +108,10 @@ inputs:
     description: "Set to 'true' to enable GitHub native auto-merge (squash) when the loop terminates with done/no_findings. Default 'false' preserves manual merge."
     required: false
     default: "false"
+  severity-threshold:
+    description: "Severity threshold for the auto-fix pipeline. One of P0|P1|P2|P3. Default 'P2' preserves prior behavior (TY-256)."
+    required: false
+    default: "P2"
 
 runs:
   using: "composite"
@@ -139,6 +143,7 @@ runs:
         claude-code-model-base: ${{ inputs.claude-code-model-base }}
         claude-code-model-escalated: ${{ inputs.claude-code-model-escalated }}
         auto-merge-on-clean: ${{ inputs.auto-merge-on-clean }}
+        severity-threshold: ${{ inputs.severity-threshold }}
 
     - name: Claude Code Action (repo-level repair)
       id: claude
