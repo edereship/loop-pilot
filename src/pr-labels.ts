@@ -1,8 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { buildGhEnv } from "./gh-env.js";
-
-const execFileAsync = promisify(execFile);
+import { ghApi } from "./gh.js";
 
 export type FetchPrLabelsFn = (
   owner: string,
@@ -22,8 +18,7 @@ export const fetchPrLabels: FetchPrLabelsFn = async (
   pr,
   token,
 ) => {
-  const { stdout } = await execFileAsync(
-    "gh",
+  const stdout = await ghApi(
     [
       "api",
       `repos/${owner}/${name}/issues/${pr}/labels`,
@@ -31,7 +26,7 @@ export const fetchPrLabels: FetchPrLabelsFn = async (
       "--jq",
       ".[].name",
     ],
-    { env: buildGhEnv(token) },
+    token,
   );
 
   return stdout

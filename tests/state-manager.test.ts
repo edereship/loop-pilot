@@ -34,6 +34,23 @@ function mockExecFileOnce(stdout: string): void {
   }) as typeof execFile);
 }
 
+function mockExecFileErrorOnce(opts: {
+  message?: string;
+  stderr?: string;
+  stdout?: string;
+}): void {
+  mockedExecFile.mockImplementationOnce(((_file, _args, _options, callback) => {
+    const err = new Error(opts.message ?? "exec failed") as Error & {
+      stderr?: string;
+      stdout?: string;
+    };
+    if (opts.stderr !== undefined) err.stderr = opts.stderr;
+    if (opts.stdout !== undefined) err.stdout = opts.stdout;
+    (callback as (err: Error) => void)(err);
+    return {} as ReturnType<typeof execFile>;
+  }) as typeof execFile);
+}
+
 beforeEach(() => {
   mockedExecFile.mockReset();
 });
@@ -184,6 +201,46 @@ describe("updateStateComment", () => {
     for (const call of mockedExecFile.mock.calls) {
       expect(call[1]).not.toContain("PATCH");
     }
+  });
+
+  it("converts a 412 PATCH response into StateUpdateConflictError", async () => {
+    const desired = makeState({ status: "fixing" });
+    mockExecFileOnce(JSON.stringify({
+      id: 123,
+      updated_at: "2026-05-09T00:00:01Z",
+      body: serializeState(makeState({ status: "waiting_codex" })),
+    }));
+    mockExecFileErrorOnce({
+      message: "gh: api failed",
+      stderr: "HTTP 412: Precondition Failed",
+      stdout: "",
+    });
+
+    await expect(
+      updateStateComment("owner", "repo", 123, desired, "token", {
+        expectedUpdatedAt: "2026-05-09T00:00:01Z",
+      }),
+    ).rejects.toBeInstanceOf(StateUpdateConflictError);
+  });
+
+  it("propagates non-conflict gh failures verbatim", async () => {
+    const desired = makeState({ status: "fixing" });
+    mockExecFileOnce(JSON.stringify({
+      id: 123,
+      updated_at: "2026-05-09T00:00:01Z",
+      body: serializeState(makeState({ status: "waiting_codex" })),
+    }));
+    mockExecFileErrorOnce({
+      message: "gh: api failed",
+      stderr: "HTTP 500: server error",
+      stdout: "",
+    });
+
+    await expect(
+      updateStateComment("owner", "repo", 123, desired, "token", {
+        expectedUpdatedAt: "2026-05-09T00:00:01Z",
+      }),
+    ).rejects.not.toBeInstanceOf(StateUpdateConflictError);
   });
 
   it("fails when the PATCH response body does not contain the expected state", async () => {

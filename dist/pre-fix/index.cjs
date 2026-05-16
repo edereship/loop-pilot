@@ -10838,7 +10838,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify7 } = require("node:util");
+    var { promisify: promisify3 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10878,7 +10878,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify7(this[kOriginalClose])();
+        await promisify3(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -10891,7 +10891,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify7 } = require("node:util");
+    var { promisify: promisify3 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10931,7 +10931,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify7(this[kOriginalClose])();
+        await promisify3(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -19246,7 +19246,7 @@ function runIfNotVitest(fn, onError) {
   });
 }
 
-// dist/state-manager.js
+// dist/gh.js
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
 
@@ -19263,9 +19263,31 @@ function buildGhEnv(token) {
   };
 }
 
-// dist/state-manager.js
+// dist/gh.js
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.execFile);
-var MAX_BUFFER = 10 * 1024 * 1024;
+var GH_MAX_BUFFER = 10 * 1024 * 1024;
+async function ghApi(args, token, opts = {}) {
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      env: buildGhEnv(token),
+      maxBuffer: opts.maxBuffer ?? GH_MAX_BUFFER
+    });
+    return stdout;
+  } catch (err) {
+    const errIO = err;
+    const stderrText = errIO.stderr ? String(errIO.stderr) : "";
+    const stdoutText = errIO.stdout ? String(errIO.stdout) : "";
+    const baseMessage = errIO.message ?? (err instanceof Error ? err.message : String(err));
+    const fullMessage = [
+      baseMessage,
+      stderrText && `stderr: ${stderrText.trim()}`,
+      stdoutText && `stdout: ${stdoutText.trim()}`
+    ].filter(Boolean).join("\n");
+    throw new Error(fullMessage);
+  }
+}
+
+// dist/state-manager.js
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
@@ -19390,7 +19412,7 @@ function parseStateCommentRecord(line) {
   return null;
 }
 async function readState(owner, name, pr, token) {
-  const { stdout } = await execFileAsync("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
     "--paginate",
@@ -19412,7 +19434,7 @@ async function readState(owner, name, pr, token) {
     // @json emits each match as a single-line JSON-encoded string so
     // split("\n") parsing below stays correct.
     `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
-  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  ], token);
   const trimmed = stdout.trim();
   if (!trimmed) {
     return { found: false, corrupted: false, commentId: null };
@@ -19450,12 +19472,12 @@ async function updateStateComment(owner, name, commentId, state, token, options 
   return { updatedAt: patched.updatedAt };
 }
 async function fetchStateComment(owner, name, commentId, token) {
-  const { stdout } = await execFileAsync("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/comments/${commentId}`,
     "--jq",
     "{body: .body, updated_at: .updated_at} | @json"
-  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  ], token);
   return parseCommentSnapshot(stdout.trim(), "fetchStateComment");
 }
 async function patchStateComment(owner, name, commentId, body, token, expectedUpdatedAt) {
@@ -19471,21 +19493,13 @@ async function patchStateComment(owner, name, commentId, body, token, expectedUp
   ];
   let stdout;
   try {
-    ({ stdout } = await execFileAsync("gh", args, { env: buildGhEnv(token), maxBuffer: MAX_BUFFER }));
+    stdout = await ghApi(args, token);
   } catch (err) {
-    const errIO = err;
-    const stderrText = errIO.stderr ? String(errIO.stderr) : "";
-    const stdoutText = errIO.stdout ? String(errIO.stdout) : "";
-    const baseMessage = errIO.message ?? (err instanceof Error ? err.message : String(err));
-    const fullMessage = [
-      baseMessage,
-      stderrText && `stderr: ${stderrText.trim()}`,
-      stdoutText && `stdout: ${stdoutText.trim()}`
-    ].filter(Boolean).join("\n");
+    const fullMessage = err instanceof Error ? err.message : String(err);
     if (expectedUpdatedAt !== void 0 && (fullMessage.includes("412") || fullMessage.includes("Precondition Failed"))) {
       throw new StateUpdateConflictError(`Hidden comment was modified concurrently (expectedUpdatedAt=${expectedUpdatedAt}): ${fullMessage}`);
     }
-    throw new Error(fullMessage);
+    throw err instanceof Error ? err : new Error(fullMessage);
   }
   return parseCommentSnapshot(stdout.trim(), "patchStateComment");
 }
@@ -19564,10 +19578,6 @@ function checkoutBranch(ref) {
   (0, import_node_child_process2.execFileSync)("git", ["checkout", ref], { stdio: "inherit" });
 }
 
-// dist/review-collector.js
-var import_node_child_process3 = require("node:child_process");
-var import_node_util2 = require("node:util");
-
 // dist/severity-parser.js
 var CODEX_FOOTER_PATTERN = /\n?Useful\? React with 👍 \/ 👎\.\s*$/;
 var NO_FINDINGS_PATTERN = /\bno\s+(?:p0\s*\/\s*p1\s+)?findings?\b|\b0\s+findings?\b|\bno\s+issues?\b/i;
@@ -19614,10 +19624,8 @@ function cleanTitle(title) {
 }
 
 // dist/review-collector.js
-var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process3.execFile);
-var MAX_BUFFER2 = 10 * 1024 * 1024;
 async function fetchReviewComments(repoOwner, repoName, prNumber, githubToken) {
-  const { stdout } = await execFileAsync2("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${repoOwner}/${repoName}/pulls/${prNumber}/comments`,
     "--paginate",
@@ -19625,7 +19633,7 @@ async function fetchReviewComments(repoOwner, repoName, prNumber, githubToken) {
     // @json ensures each result is a single-line JSON-encoded string,
     // preventing multi-line jq pretty-printing from breaking split("\n") parsing
     ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at} | @json"
-  ], { env: buildGhEnv(githubToken), maxBuffer: MAX_BUFFER2 });
+  ], githubToken);
   if (!stdout.trim())
     return [];
   return stdout.trim().split("\n").filter((line) => line.trim()).flatMap((line) => {
@@ -19764,9 +19772,6 @@ function isLoop(currentFindings, findingsHashHistory) {
 }
 
 // dist/comment-poster.js
-var import_node_child_process4 = require("node:child_process");
-var import_node_util3 = require("node:util");
-var execFileAsync3 = (0, import_node_util3.promisify)(import_node_child_process4.execFile);
 var STOP_REASON_LABELS = {
   no_findings: "no P0/P1/P2 findings",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
@@ -19783,7 +19788,7 @@ var STOP_REASON_LABELS = {
   codex_usage_limit: "Codex reported usage / quota limits; no review was performed"
 };
 async function postComment(owner, name, pr, body, token) {
-  const { stdout } = await execFileAsync3("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
     "-X",
@@ -19792,7 +19797,7 @@ async function postComment(owner, name, pr, body, token) {
     `body=${body}`,
     "--jq",
     ".id"
-  ], { env: buildGhEnv(token) });
+  ], token);
   const commentId = parseInt(stdout.trim(), 10);
   if (isNaN(commentId)) {
     throw new Error(`postComment: unexpected response from GitHub API: ${stdout.trim()}`);
@@ -19828,12 +19833,12 @@ async function postCodexReviewRequest(owner, name, pr, token) {
 }
 
 // dist/pr-merger.js
-var import_node_child_process5 = require("node:child_process");
-var import_node_util4 = require("node:util");
-var execFileAsync4 = (0, import_node_util4.promisify)(import_node_child_process5.execFile);
+var import_node_child_process3 = require("node:child_process");
+var import_node_util2 = require("node:util");
+var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process3.execFile);
 async function enableAutoMergeSquash(owner, name, pr, token, log) {
   try {
-    await execFileAsync4("gh", ["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`], { env: buildGhEnv(token) });
+    await execFileAsync2("gh", ["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`], { env: buildGhEnv(token) });
     log.info(`[pr-merger] Auto-merge (squash) enabled for PR #${pr}.`);
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);
@@ -19842,17 +19847,14 @@ async function enableAutoMergeSquash(owner, name, pr, token, log) {
 }
 
 // dist/pr-labels.js
-var import_node_child_process6 = require("node:child_process");
-var import_node_util5 = require("node:util");
-var execFileAsync5 = (0, import_node_util5.promisify)(import_node_child_process6.execFile);
 var fetchPrLabels = async (owner, name, pr, token) => {
-  const { stdout } = await execFileAsync5("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/labels`,
     "--paginate",
     "--jq",
     ".[].name"
-  ], { env: buildGhEnv(token) });
+  ], token);
   return stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
 };
 function isAutoReviewAllowed(requiredLabel, currentLabels) {
@@ -19863,9 +19865,6 @@ function isAutoReviewAllowed(requiredLabel, currentLabels) {
 }
 
 // dist/restart-command.js
-var import_node_child_process7 = require("node:child_process");
-var import_node_util6 = require("node:util");
-var execFileAsync6 = (0, import_node_util6.promisify)(import_node_child_process7.execFile);
 function normalizeBody(body) {
   return body.replace(/[\r\n]+$/, "");
 }
@@ -19991,7 +19990,7 @@ function restartRejectionMessage(reason) {
   }
 }
 async function getPrAuthor(owner, repo, prNumber, token) {
-  const { stdout } = await execFileAsync6("gh", ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"], { env: buildGhEnv(token) });
+  const stdout = await ghApi(["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"], token);
   return stdout.trim();
 }
 var BUILTIN_PERMISSIONS = /* @__PURE__ */ new Set([
@@ -20015,14 +20014,14 @@ function pickPermission(roleName, permission) {
 }
 async function getCollaboratorPermission(owner, repo, user, token) {
   try {
-    const { stdout } = await execFileAsync6("gh", [
+    const stdout = await ghApi([
       "api",
       `repos/${owner}/${repo}/collaborators/${user}/permission`,
       "--jq",
       // Emit both fields as a JSON array so we can disambiguate custom
       // role_name (e.g., "Reviewer") from built-in tiers in TS.
       "[.role_name, .permission] | @json"
-    ], { env: buildGhEnv(token) });
+    ], token);
     const parsed = JSON.parse(stdout.trim());
     const roleName = typeof parsed[0] === "string" ? parsed[0] : null;
     const permission = typeof parsed[1] === "string" ? parsed[1] : null;
@@ -20032,7 +20031,7 @@ async function getCollaboratorPermission(owner, repo, user, token) {
   }
 }
 async function addEyesReaction(owner, repo, commentId, token) {
-  await execFileAsync6("gh", [
+  await ghApi([
     "api",
     `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
     "-X",
@@ -20041,7 +20040,7 @@ async function addEyesReaction(owner, repo, commentId, token) {
     "Accept: application/vnd.github+json",
     "-f",
     "content=eyes"
-  ], { env: buildGhEnv(token) });
+  ], token);
 }
 var defaultRestartCommandDeps = {
   getPrAuthor,

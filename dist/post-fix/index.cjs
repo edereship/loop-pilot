@@ -10838,7 +10838,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify4 } = require("node:util");
+    var { promisify: promisify3 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10878,7 +10878,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify4(this[kOriginalClose])();
+        await promisify3(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -10891,7 +10891,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify4 } = require("node:util");
+    var { promisify: promisify3 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10931,7 +10931,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify4(this[kOriginalClose])();
+        await promisify3(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -19204,7 +19204,7 @@ function runIfNotVitest(fn, onError) {
   });
 }
 
-// dist/state-manager.js
+// dist/gh.js
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
 
@@ -19221,9 +19221,31 @@ function buildGhEnv(token) {
   };
 }
 
-// dist/state-manager.js
+// dist/gh.js
 var execFileAsync = (0, import_node_util.promisify)(import_node_child_process.execFile);
-var MAX_BUFFER = 10 * 1024 * 1024;
+var GH_MAX_BUFFER = 10 * 1024 * 1024;
+async function ghApi(args, token, opts = {}) {
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      env: buildGhEnv(token),
+      maxBuffer: opts.maxBuffer ?? GH_MAX_BUFFER
+    });
+    return stdout;
+  } catch (err) {
+    const errIO = err;
+    const stderrText = errIO.stderr ? String(errIO.stderr) : "";
+    const stdoutText = errIO.stdout ? String(errIO.stdout) : "";
+    const baseMessage = errIO.message ?? (err instanceof Error ? err.message : String(err));
+    const fullMessage = [
+      baseMessage,
+      stderrText && `stderr: ${stderrText.trim()}`,
+      stdoutText && `stdout: ${stdoutText.trim()}`
+    ].filter(Boolean).join("\n");
+    throw new Error(fullMessage);
+  }
+}
+
+// dist/state-manager.js
 var STATE_MARKER = "auto-review-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
@@ -19334,7 +19356,7 @@ function parseStateCommentRecord(line) {
   return null;
 }
 async function readState(owner, name, pr, token) {
-  const { stdout } = await execFileAsync("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
     "--paginate",
@@ -19356,7 +19378,7 @@ async function readState(owner, name, pr, token) {
     // @json emits each match as a single-line JSON-encoded string so
     // split("\n") parsing below stays correct.
     `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
-  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  ], token);
   const trimmed = stdout.trim();
   if (!trimmed) {
     return { found: false, corrupted: false, commentId: null };
@@ -19394,12 +19416,12 @@ async function updateStateComment(owner, name, commentId, state, token, options 
   return { updatedAt: patched.updatedAt };
 }
 async function fetchStateComment(owner, name, commentId, token) {
-  const { stdout } = await execFileAsync("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/comments/${commentId}`,
     "--jq",
     "{body: .body, updated_at: .updated_at} | @json"
-  ], { env: buildGhEnv(token), maxBuffer: MAX_BUFFER });
+  ], token);
   return parseCommentSnapshot(stdout.trim(), "fetchStateComment");
 }
 async function patchStateComment(owner, name, commentId, body, token, expectedUpdatedAt) {
@@ -19415,21 +19437,13 @@ async function patchStateComment(owner, name, commentId, body, token, expectedUp
   ];
   let stdout;
   try {
-    ({ stdout } = await execFileAsync("gh", args, { env: buildGhEnv(token), maxBuffer: MAX_BUFFER }));
+    stdout = await ghApi(args, token);
   } catch (err) {
-    const errIO = err;
-    const stderrText = errIO.stderr ? String(errIO.stderr) : "";
-    const stdoutText = errIO.stdout ? String(errIO.stdout) : "";
-    const baseMessage = errIO.message ?? (err instanceof Error ? err.message : String(err));
-    const fullMessage = [
-      baseMessage,
-      stderrText && `stderr: ${stderrText.trim()}`,
-      stdoutText && `stdout: ${stdoutText.trim()}`
-    ].filter(Boolean).join("\n");
+    const fullMessage = err instanceof Error ? err.message : String(err);
     if (expectedUpdatedAt !== void 0 && (fullMessage.includes("412") || fullMessage.includes("Precondition Failed"))) {
       throw new StateUpdateConflictError(`Hidden comment was modified concurrently (expectedUpdatedAt=${expectedUpdatedAt}): ${fullMessage}`);
     }
-    throw new Error(fullMessage);
+    throw err instanceof Error ? err : new Error(fullMessage);
   }
   return parseCommentSnapshot(stdout.trim(), "patchStateComment");
 }
@@ -19774,9 +19788,6 @@ function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_
 }
 
 // dist/comment-poster.js
-var import_node_child_process4 = require("node:child_process");
-var import_node_util3 = require("node:util");
-var execFileAsync2 = (0, import_node_util3.promisify)(import_node_child_process4.execFile);
 var STOP_REASON_LABELS = {
   no_findings: "no P0/P1/P2 findings",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
@@ -19793,7 +19804,7 @@ var STOP_REASON_LABELS = {
   codex_usage_limit: "Codex reported usage / quota limits; no review was performed"
 };
 async function postComment(owner, name, pr, body, token) {
-  const { stdout } = await execFileAsync2("gh", [
+  const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
     "-X",
@@ -19802,7 +19813,7 @@ async function postComment(owner, name, pr, body, token) {
     `body=${body}`,
     "--jq",
     ".id"
-  ], { env: buildGhEnv(token) });
+  ], token);
   const commentId = parseInt(stdout.trim(), 10);
   if (isNaN(commentId)) {
     throw new Error(`postComment: unexpected response from GitHub API: ${stdout.trim()}`);

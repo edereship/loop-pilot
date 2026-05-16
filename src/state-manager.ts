@@ -1,10 +1,5 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { buildGhEnv } from "./gh-env.js";
+import { ghApi } from "./gh.js";
 import type { ReviewState } from "./types.js";
-
-const execFileAsync = promisify(execFile);
-const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB
 
 const STATE_MARKER = "auto-review-state";
 const STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
@@ -217,8 +212,7 @@ export async function readState(
   pr: number,
   token: string,
 ): Promise<ReadStateResult> {
-  const { stdout } = await execFileAsync(
-    "gh",
+  const stdout = await ghApi(
     [
       "api",
       `repos/${owner}/${name}/issues/${pr}/comments`,
@@ -242,7 +236,7 @@ export async function readState(
       // split("\n") parsing below stays correct.
       `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`,
     ],
-    { env: buildGhEnv(token), maxBuffer: MAX_BUFFER },
+    token,
   );
 
   const trimmed = stdout.trim();
@@ -280,8 +274,7 @@ export async function createStateComment(
   token: string,
 ): Promise<number> {
   const body = serializeState(state);
-  const { stdout } = await execFileAsync(
-    "gh",
+  const stdout = await ghApi(
     [
       "api",
       "--method",
@@ -292,7 +285,7 @@ export async function createStateComment(
       "--jq",
       ".id",
     ],
-    { env: buildGhEnv(token) },
+    token,
   );
 
   const commentId = parseInt(stdout.trim(), 10);
@@ -346,15 +339,14 @@ async function fetchStateComment(
   commentId: number,
   token: string,
 ): Promise<{ body: string; updatedAt: string }> {
-  const { stdout } = await execFileAsync(
-    "gh",
+  const stdout = await ghApi(
     [
       "api",
       `repos/${owner}/${name}/issues/comments/${commentId}`,
       "--jq",
       "{body: .body, updated_at: .updated_at} | @json",
     ],
-    { env: buildGhEnv(token), maxBuffer: MAX_BUFFER },
+    token,
   );
   return parseCommentSnapshot(stdout.trim(), "fetchStateComment");
 }
@@ -407,24 +399,11 @@ async function patchStateComment(
 
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync("gh", args, { env: buildGhEnv(token), maxBuffer: MAX_BUFFER }));
+    stdout = await ghApi(args, token);
   } catch (err: unknown) {
-    // gh exits non-zero with the API response body on stdout/stderr;
-    // surface both so failure modes are visible in the workflow log.
-    const errIO = err as { stderr?: unknown; stdout?: unknown; message?: string };
-    const stderrText = errIO.stderr ? String(errIO.stderr) : "";
-    const stdoutText = errIO.stdout ? String(errIO.stdout) : "";
-    const baseMessage = errIO.message ?? (err instanceof Error ? err.message : String(err));
-    const fullMessage = [
-      baseMessage,
-      stderrText && `stderr: ${stderrText.trim()}`,
-      stdoutText && `stdout: ${stdoutText.trim()}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    // Treat 412 as a concurrent-modification signal whether it surfaces in
-    // err.message, stderr (gh's HTTP error line), or stdout (response body).
+    // `ghApi` always rejects with an Error whose message combines
+    // err.message / stderr / stdout, so 412 can surface in any of the three.
+    const fullMessage = err instanceof Error ? err.message : String(err);
     if (
       expectedUpdatedAt !== undefined &&
       (fullMessage.includes("412") || fullMessage.includes("Precondition Failed"))
@@ -433,7 +412,7 @@ async function patchStateComment(
         `Hidden comment was modified concurrently (expectedUpdatedAt=${expectedUpdatedAt}): ${fullMessage}`,
       );
     }
-    throw new Error(fullMessage);
+    throw err instanceof Error ? err : new Error(fullMessage);
   }
 
   return parseCommentSnapshot(stdout.trim(), "patchStateComment");

@@ -1,6 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { buildGhEnv } from "./gh-env.js";
+import { ghApi } from "./gh.js";
 import {
   postCodexReviewRequest as defaultPostCodexReviewRequest,
   postComment as defaultPostComment,
@@ -8,8 +6,6 @@ import {
 import { updateStateComment as defaultUpdateStateComment } from "./state-manager.js";
 import type { ReadStateResult } from "./state-manager.js";
 import type { ReviewState, StopReason } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 export type RestartMode = "soft" | "hard";
 type Permission = "admin" | "maintain" | "write" | "triage" | "read" | "none";
@@ -337,10 +333,9 @@ async function getPrAuthor(
   prNumber: number,
   token: string,
 ): Promise<string> {
-  const { stdout } = await execFileAsync(
-    "gh",
+  const stdout = await ghApi(
     ["api", `repos/${owner}/${repo}/pulls/${prNumber}`, "--jq", ".user.login"],
-    { env: buildGhEnv(token) },
+    token,
   );
   return stdout.trim();
 }
@@ -388,8 +383,7 @@ async function getCollaboratorPermission(
   token: string,
 ): Promise<Permission> {
   try {
-    const { stdout } = await execFileAsync(
-      "gh",
+    const stdout = await ghApi(
       [
         "api",
         `repos/${owner}/${repo}/collaborators/${user}/permission`,
@@ -398,7 +392,7 @@ async function getCollaboratorPermission(
         // role_name (e.g., "Reviewer") from built-in tiers in TS.
         "[.role_name, .permission] | @json",
       ],
-      { env: buildGhEnv(token) },
+      token,
     );
     const parsed = JSON.parse(stdout.trim()) as [unknown, unknown];
     const roleName = typeof parsed[0] === "string" ? parsed[0] : null;
@@ -415,8 +409,7 @@ async function addEyesReaction(
   commentId: number,
   token: string,
 ): Promise<void> {
-  await execFileAsync(
-    "gh",
+  await ghApi(
     [
       "api",
       `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
@@ -427,7 +420,7 @@ async function addEyesReaction(
       "-f",
       "content=eyes",
     ],
-    { env: buildGhEnv(token) },
+    token,
   );
 }
 

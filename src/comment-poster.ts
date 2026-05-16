@@ -1,9 +1,5 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { buildGhEnv } from "./gh-env.js";
+import { ghApi } from "./gh.js";
 import type { StopReason } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 const STOP_REASON_LABELS: Record<StopReason, string> = {
   no_findings: "no P0/P1/P2 findings",
@@ -31,8 +27,7 @@ export async function postComment(
   body: string,
   token: string,
 ): Promise<number> {
-  const { stdout } = await execFileAsync(
-    "gh",
+  const stdout = await ghApi(
     [
       "api",
       `repos/${owner}/${name}/issues/${pr}/comments`,
@@ -43,7 +38,7 @@ export async function postComment(
       "--jq",
       ".id",
     ],
-    { env: buildGhEnv(token) },
+    token,
   );
   const commentId = parseInt(stdout.trim(), 10);
   if (isNaN(commentId)) {

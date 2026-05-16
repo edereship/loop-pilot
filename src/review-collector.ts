@@ -1,12 +1,7 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import * as core from "@actions/core";
 import { parseSeverity } from "./severity-parser.js";
-import { buildGhEnv } from "./gh-env.js";
+import { ghApi } from "./gh.js";
 import type { FetchReviewCommentsFn, Finding, RawReviewComment, SleepFn } from "./types.js";
-
-const execFileAsync = promisify(execFile);
-const MAX_BUFFER = 10 * 1024 * 1024; // 10 MB — default 1 MB is insufficient for large PRs
 
 export interface StabilizeReviewCommentsOptions {
   botLogin: string;
@@ -33,8 +28,7 @@ export async function fetchReviewComments(
   prNumber: number,
   githubToken: string
 ): Promise<RawReviewComment[]> {
-  const { stdout } = await execFileAsync(
-    "gh",
+  const stdout = await ghApi(
     [
       "api",
       `repos/${repoOwner}/${repoName}/pulls/${prNumber}/comments`,
@@ -44,7 +38,7 @@ export async function fetchReviewComments(
       // preventing multi-line jq pretty-printing from breaking split("\n") parsing
       ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at} | @json",
     ],
-    { env: buildGhEnv(githubToken), maxBuffer: MAX_BUFFER }
+    githubToken,
   );
 
   if (!stdout.trim()) return [];
