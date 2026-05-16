@@ -20390,25 +20390,36 @@ var defaultRestartCommandDeps = {
 
 // dist/claude-code-repair-request.js
 var PREVIOUS_CHECK_FAILURE_MAX_CHARS = 2e4;
+var MAX_FINDINGS_PER_REQUEST = 30;
+var MAX_FINDING_BODY_CHARS = 4e3;
+var HEAD_RATIO = 0.25;
 var SEVERITY_RANK = {
   P0: 0,
   P1: 1,
   P2: 2,
   P3: 3
 };
+function buildMiddleMarker(omitted, head, tail) {
+  return `[... truncated ${omitted} characters from the middle of CHECK_COMMAND output; kept ${head} head + ${tail} tail ...]
+`;
+}
 function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_MAX_CHARS) {
   if (output.length <= maxChars)
     return output;
-  const buildHeader = (omitted2) => `[... truncated ${omitted2} leading characters of CHECK_COMMAND output; showing tail ...]
-`;
-  const headerBudget = buildHeader(output.length).length;
-  if (headerBudget >= maxChars) {
+  const worstMarker = buildMiddleMarker(output.length, maxChars, maxChars);
+  const reservedMarkerBudget = worstMarker.length + 1;
+  if (reservedMarkerBudget >= maxChars) {
     return output.slice(output.length - maxChars);
   }
-  const tailRoom = maxChars - headerBudget;
+  const remainingBudget = maxChars - reservedMarkerBudget;
+  const headRoom = Math.floor(remainingBudget * HEAD_RATIO);
+  const tailRoom = remainingBudget - headRoom;
+  const head = output.slice(0, headRoom);
   const tail = output.slice(output.length - tailRoom);
-  const omitted = output.length - tail.length;
-  return buildHeader(omitted) + tail;
+  const omitted = output.length - head.length - tail.length;
+  const marker = buildMiddleMarker(omitted, head.length, tail.length);
+  const leadingNewline = head.endsWith("\n") ? "" : "\n";
+  return head + leadingNewline + marker + tail;
 }
 function toRepairFinding(finding) {
   return {
@@ -20432,6 +20443,45 @@ function compareFindings(a, b) {
     return a.title < b.title ? -1 : 1;
   return a.body < b.body ? -1 : a.body > b.body ? 1 : 0;
 }
+function buildFindingBodyMarker(omitted) {
+  return `[... truncated ${omitted} leading characters of finding body; showing tail ...]
+`;
+}
+function truncateFindingBody(body, maxChars = MAX_FINDING_BODY_CHARS) {
+  if (body.length <= maxChars)
+    return { body, droppedChars: 0 };
+  const worstMarker = buildFindingBodyMarker(body.length);
+  if (worstMarker.length >= maxChars) {
+    const truncated = body.slice(body.length - maxChars);
+    return { body: truncated, droppedChars: body.length - truncated.length };
+  }
+  const tailRoom = maxChars - worstMarker.length;
+  const tail = body.slice(body.length - tailRoom);
+  const omitted = body.length - tail.length;
+  const marker = buildFindingBodyMarker(omitted);
+  return { body: marker + tail, droppedChars: omitted };
+}
+function applyFindingCaps(findings) {
+  const received = findings.length;
+  const dropped = findings.slice(MAX_FINDINGS_PER_REQUEST);
+  const droppedFindingChars = dropped.reduce((sum, f) => sum + f.body.length, 0);
+  const survivors = findings.slice(0, MAX_FINDINGS_PER_REQUEST);
+  let truncatedBodyChars = 0;
+  const kept = survivors.map((finding) => {
+    const { body, droppedChars } = truncateFindingBody(finding.body);
+    truncatedBodyChars += droppedChars;
+    return droppedChars === 0 ? finding : { ...finding, body };
+  });
+  return {
+    kept,
+    stats: {
+      received,
+      embedded: kept.length,
+      droppedFindingChars,
+      truncatedBodyChars
+    }
+  };
+}
 var INSTRUCTION_LINES = [
   "1. Each Codex finding's `path` and `line` mark an investigation entry point, NOT the bounded scope of the fix. Explore related files, callers, type definitions, existing tests, and configuration as needed to produce a consistent repair.",
   "2. Treat existing tests as the specification. If a test captures the intended behavior, do not weaken or rewrite it to make a faulty fix pass; fix the production code instead.",
@@ -20443,7 +20493,8 @@ var INSTRUCTION_LINES = [
   "8. After your edits, the repository must be in a state where the configured CHECK_COMMAND succeeds. The workflow will run the final CHECK_COMMAND verification regardless of your own checks, so leave the tree in a verifiable state."
 ];
 function buildClaudeCodeRepairRequest(input2) {
-  const findings = input2.findings.map(toRepairFinding).sort(compareFindings);
+  const sorted = input2.findings.map(toRepairFinding).sort(compareFindings);
+  const { kept: findings, stats: findingsTruncated } = applyFindingCaps(sorted);
   const previousCheckFailure = input2.previousCheckFailure == null ? null : truncatePreviousCheckFailure(input2.previousCheckFailure);
   return {
     version: 1,
@@ -20457,7 +20508,8 @@ function buildClaudeCodeRepairRequest(input2) {
       iteration: input2.iteration,
       maxIterations: input2.maxIterations,
       checkCommand: input2.checkCommand,
-      previousCheckFailure
+      previousCheckFailure,
+      findingsTruncated
     },
     findings,
     instructions: INSTRUCTION_LINES.join("\n")
@@ -20485,7 +20537,9 @@ function buildClaudeCodeRepairPrompt(request) {
     `- Iteration: ${execution.iteration} / ${execution.maxIterations}`,
     `- CHECK_COMMAND: \`${execution.checkCommand}\``
   ].join("\n"));
-  const findingsHeader = `## Codex Findings (${findings.length})`;
+  const { received, embedded } = execution.findingsTruncated;
+  const droppedCount = received - embedded;
+  const findingsHeader = droppedCount > 0 ? `## Codex Findings (${embedded} of ${received} \u2014 ${droppedCount} truncated due to per-request cap)` : `## Codex Findings (${findings.length})`;
   if (findings.length === 0) {
     sections.push(`${findingsHeader}
 

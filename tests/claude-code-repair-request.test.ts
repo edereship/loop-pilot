@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_FINDINGS_PER_REQUEST,
+  MAX_FINDING_BODY_CHARS,
   PREVIOUS_CHECK_FAILURE_MAX_CHARS,
   buildClaudeCodeRepairPrompt,
   buildClaudeCodeRepairRequest,
@@ -68,6 +70,12 @@ describe("buildClaudeCodeRepairRequest", () => {
       maxIterations: 20,
       checkCommand: "npm run check",
       previousCheckFailure: null,
+      findingsTruncated: {
+        received: 3,
+        embedded: 3,
+        droppedFindingChars: 0,
+        truncatedBodyChars: 0,
+      },
     });
 
     expect(request.findings).toHaveLength(3);
@@ -132,6 +140,246 @@ describe("buildClaudeCodeRepairRequest", () => {
   });
 });
 
+function makeP2Finding(index: number, bodyLen = 200): Finding {
+  // Pad path with leading zeros so deterministic sort order matches index order.
+  const padded = String(index).padStart(4, "0");
+  return {
+    severity: "P2",
+    path: `src/synthetic/file-${padded}.ts`,
+    line: 1,
+    title: `synthetic finding ${padded}`,
+    body: `body-${padded}-${"x".repeat(Math.max(0, bodyLen - 10))}`,
+  };
+}
+
+describe("buildClaudeCodeRepairRequest finding caps", () => {
+  it("embeds all findings when the count is at MAX_FINDINGS_PER_REQUEST - 1", () => {
+    const fs = Array.from({ length: MAX_FINDINGS_PER_REQUEST - 1 }, (_, i) =>
+      makeP2Finding(i)
+    );
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: fs,
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+    expect(request.findings).toHaveLength(MAX_FINDINGS_PER_REQUEST - 1);
+    expect(request.execution.findingsTruncated).toEqual({
+      received: MAX_FINDINGS_PER_REQUEST - 1,
+      embedded: MAX_FINDINGS_PER_REQUEST - 1,
+      droppedFindingChars: 0,
+      truncatedBodyChars: 0,
+    });
+  });
+
+  it("embeds all findings when the count is exactly MAX_FINDINGS_PER_REQUEST", () => {
+    const fs = Array.from({ length: MAX_FINDINGS_PER_REQUEST }, (_, i) =>
+      makeP2Finding(i)
+    );
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: fs,
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+    expect(request.findings).toHaveLength(MAX_FINDINGS_PER_REQUEST);
+    expect(request.execution.findingsTruncated.droppedFindingChars).toBe(0);
+  });
+
+  it("drops the lowest-priority findings when count exceeds the cap", () => {
+    const fs = Array.from({ length: MAX_FINDINGS_PER_REQUEST + 1 }, (_, i) =>
+      makeP2Finding(i, 250)
+    );
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: fs,
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+    expect(request.findings).toHaveLength(MAX_FINDINGS_PER_REQUEST);
+    expect(request.execution.findingsTruncated).toEqual({
+      received: MAX_FINDINGS_PER_REQUEST + 1,
+      embedded: MAX_FINDINGS_PER_REQUEST,
+      droppedFindingChars: 250,
+      truncatedBodyChars: 0,
+    });
+    // The dropped finding is the last in deterministic order; survivors must
+    // include findings 0..MAX-1 and exclude the final one.
+    const lastSurvivorPath = `src/synthetic/file-${String(
+      MAX_FINDINGS_PER_REQUEST - 1
+    ).padStart(4, "0")}.ts`;
+    expect(
+      request.findings.some((f) => f.path === lastSurvivorPath)
+    ).toBe(true);
+    const droppedPath = `src/synthetic/file-${String(
+      MAX_FINDINGS_PER_REQUEST
+    ).padStart(4, "0")}.ts`;
+    expect(
+      request.findings.some((f) => f.path === droppedPath)
+    ).toBe(false);
+  });
+
+  it("keeps bodies untouched at MAX_FINDING_BODY_CHARS - 1 and exactly MAX_FINDING_BODY_CHARS", () => {
+    const finding1: Finding = {
+      severity: "P1",
+      path: "src/foo.ts",
+      line: 1,
+      title: "body cap - 1",
+      body: "a".repeat(MAX_FINDING_BODY_CHARS - 1),
+    };
+    const finding2: Finding = {
+      severity: "P1",
+      path: "src/bar.ts",
+      line: 1,
+      title: "body cap",
+      body: "b".repeat(MAX_FINDING_BODY_CHARS),
+    };
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: [finding1, finding2],
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+    expect(request.execution.findingsTruncated.truncatedBodyChars).toBe(0);
+    for (const f of request.findings) {
+      expect(f.body.length).toBeLessThanOrEqual(MAX_FINDING_BODY_CHARS);
+    }
+  });
+
+  it("truncates the body once it exceeds MAX_FINDING_BODY_CHARS by one character", () => {
+    const finding: Finding = {
+      severity: "P1",
+      path: "src/foo.ts",
+      line: 1,
+      title: "body cap + 1",
+      body: "TAIL-MARKER" + "x".repeat(MAX_FINDING_BODY_CHARS - 10) + "END-OF-BODY",
+    };
+    expect(finding.body.length).toBeGreaterThan(MAX_FINDING_BODY_CHARS);
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: [finding],
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+    const [embedded] = request.findings;
+    expect(embedded.body.length).toBeLessThanOrEqual(MAX_FINDING_BODY_CHARS);
+    expect(embedded.body).toContain("END-OF-BODY");
+    expect(embedded.body.startsWith("[... truncated")).toBe(true);
+    expect(
+      request.execution.findingsTruncated.truncatedBodyChars
+    ).toBeGreaterThan(0);
+  });
+
+  it("guarantees payload-level ClaudeCodeRepairFinding.body.length <= MAX_FINDING_BODY_CHARS invariant", () => {
+    const finding: Finding = {
+      severity: "P0",
+      path: "src/huge.ts",
+      line: 1,
+      title: "huge body",
+      body: "y".repeat(MAX_FINDING_BODY_CHARS * 10),
+    };
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: [finding],
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+    for (const f of request.findings) {
+      expect(f.body.length).toBeLessThanOrEqual(MAX_FINDING_BODY_CHARS);
+    }
+  });
+
+  it("aggregates droppedFindingChars and truncatedBodyChars when both caps fire", () => {
+    // 31 findings total: top 30 survive count cap, 1 is dropped (body=300).
+    // Among the 30 survivors, the first finding has a body well over the body
+    // cap so it contributes to truncatedBodyChars.
+    const survivors = Array.from(
+      { length: MAX_FINDINGS_PER_REQUEST - 1 },
+      (_, i) => makeP2Finding(i + 1, 200)
+    );
+    const oversized: Finding = {
+      severity: "P0",
+      path: "src/aaa-oversized.ts",
+      line: 1,
+      title: "oversized body",
+      body: "z".repeat(MAX_FINDING_BODY_CHARS + 1234),
+    };
+    const dropped = makeP2Finding(MAX_FINDINGS_PER_REQUEST + 100, 300);
+
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: [oversized, ...survivors, dropped],
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+
+    const { findingsTruncated } = request.execution;
+    expect(findingsTruncated.received).toBe(MAX_FINDINGS_PER_REQUEST + 1);
+    expect(findingsTruncated.embedded).toBe(MAX_FINDINGS_PER_REQUEST);
+    expect(findingsTruncated.droppedFindingChars).toBe(dropped.body.length);
+
+    // truncatedBodyChars must match what the marker reports for the oversized
+    // finding, proving the aggregate is wired to the same source-of-truth.
+    const oversizedInResult = request.findings.find(
+      (f) => f.path === oversized.path
+    );
+    expect(oversizedInResult).toBeDefined();
+    const markerMatch = oversizedInResult!.body.match(
+      /^\[\.\.\. truncated (\d+) leading characters of finding body; showing tail \.\.\.\]/
+    );
+    expect(markerMatch).not.toBeNull();
+    expect(findingsTruncated.truncatedBodyChars).toBe(
+      Number(markerMatch![1])
+    );
+    // Sanity check: at least the original overflow (1234) was trimmed.
+    expect(findingsTruncated.truncatedBodyChars).toBeGreaterThanOrEqual(1234);
+  });
+
+  it("preserves deterministic sort order without re-sorting after truncation", () => {
+    // Two findings at the same severity / path / line / title differ only in
+    // body. Pre-truncation sort places the lexicographically smaller body first.
+    // After body truncation the bodies are identical (both truncated to the
+    // same tail prefix), but re-sorting would shuffle them — we must not.
+    const longBodyA = "A".repeat(MAX_FINDING_BODY_CHARS + 100);
+    const longBodyB = "B".repeat(MAX_FINDING_BODY_CHARS + 100);
+    const f1: Finding = {
+      severity: "P2",
+      path: "src/same.ts",
+      line: 1,
+      title: "same",
+      body: longBodyA,
+    };
+    const f2: Finding = {
+      severity: "P2",
+      path: "src/same.ts",
+      line: 1,
+      title: "same",
+      body: longBodyB,
+    };
+    const request = buildClaudeCodeRepairRequest({
+      prContext,
+      findings: [f2, f1], // input order reversed
+      iteration: 1,
+      maxIterations: 20,
+      checkCommand: "npm run check",
+    });
+    expect(request.findings).toHaveLength(2);
+    // The pre-truncation sort placed body-A first (A < B lexicographically).
+    // After truncation, body-A ended with "A" and body-B ended with "B".
+    const firstBody = request.findings[0]!.body;
+    const secondBody = request.findings[1]!.body;
+    expect(firstBody.endsWith("A")).toBe(true);
+    expect(secondBody.endsWith("B")).toBe(true);
+  });
+});
+
 describe("buildClaudeCodeRepairPrompt", () => {
   it("contains every required behavioral constraint", () => {
     const prompt = buildClaudeCodeRepairPrompt(buildBaseRequest());
@@ -193,6 +441,39 @@ describe("buildClaudeCodeRepairPrompt", () => {
     expect(prompt).toContain("src/auth/session.ts:84");
     expect(prompt).toContain("(investigation start, not fix scope)");
   });
+
+  it("uses the compact findings header when no findings are truncated", () => {
+    const prompt = buildClaudeCodeRepairPrompt(buildBaseRequest());
+    expect(prompt).toContain("## Codex Findings (3)");
+    expect(prompt).not.toMatch(/truncated due to per-request cap/);
+  });
+
+  it("shows embedded-of-received header when the count cap fires", () => {
+    const fs: Finding[] = Array.from(
+      { length: MAX_FINDINGS_PER_REQUEST + 5 },
+      (_, i) => ({
+        severity: "P2",
+        path: `src/synthetic/file-${String(i).padStart(4, "0")}.ts`,
+        line: 1,
+        title: `synthetic ${i}`,
+        body: `body ${i}`,
+      })
+    );
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildClaudeCodeRepairRequest({
+        prContext,
+        findings: fs,
+        iteration: 1,
+        maxIterations: 20,
+        checkCommand: "npm run check",
+      })
+    );
+    expect(prompt).toContain(
+      `## Codex Findings (${MAX_FINDINGS_PER_REQUEST} of ${
+        MAX_FINDINGS_PER_REQUEST + 5
+      } — 5 truncated due to per-request cap)`
+    );
+  });
 });
 
 describe("serializeClaudeCodeRepairRequest", () => {
@@ -244,12 +525,62 @@ describe("truncatePreviousCheckFailure", () => {
     expect(truncatePreviousCheckFailure(s, 100)).toBe(s);
   });
 
-  it("preserves the tail and prefixes a truncation marker when truncating", () => {
-    const body = "X".repeat(1000) + "TAIL-MARKER";
-    const truncated = truncatePreviousCheckFailure(body, 500);
-    expect(truncated.length).toBeLessThanOrEqual(500);
+  it("returns the input unchanged at the maxChars boundary", () => {
+    const s = "a".repeat(100);
+    expect(truncatePreviousCheckFailure(s, 100)).toBe(s);
+  });
+
+  it("truncates once the input exceeds the budget by one character", () => {
+    const s = "a".repeat(101);
+    const truncated = truncatePreviousCheckFailure(s, 100);
+    // 100 is below the fallback threshold for the middle marker, so the
+    // function falls back to a verbatim tail of length maxChars.
+    expect(truncated.length).toBeLessThanOrEqual(100);
+  });
+
+  it("preserves both a head slice and a tail slice with a middle marker", () => {
+    const head = "HEAD-MARKER\n" + "h".repeat(2_000);
+    const middle = "m".repeat(20_000);
+    const tail = "t".repeat(2_000) + "TAIL-MARKER";
+    const body = head + middle + tail;
+    const truncated = truncatePreviousCheckFailure(body, 8_000);
+    expect(truncated.length).toBeLessThanOrEqual(8_000);
+    expect(truncated.startsWith("HEAD-MARKER")).toBe(true);
     expect(truncated).toContain("TAIL-MARKER");
-    expect(truncated.startsWith("[... truncated")).toBe(true);
+    expect(truncated).toContain(
+      "characters from the middle of CHECK_COMMAND output"
+    );
+  });
+
+  it("embeds head / tail sizes that match the actual slices in the marker", () => {
+    const body = "X".repeat(50_000);
+    const truncated = truncatePreviousCheckFailure(body, 5_000);
+    const match = truncated.match(
+      /truncated (\d+) characters from the middle of CHECK_COMMAND output; kept (\d+) head \+ (\d+) tail/
+    );
+    expect(match).not.toBeNull();
+    const [, omitted, head, tail] = match!;
+    const omittedN = Number(omitted);
+    const headN = Number(head);
+    const tailN = Number(tail);
+    expect(headN + tailN + omittedN).toBe(body.length);
+    // 25 / 75 split applied to remaining budget — tail should be larger.
+    expect(tailN).toBeGreaterThan(headN);
+  });
+
+  it("inserts a leading newline before the marker when the head does not end with one", () => {
+    const body = "X".repeat(20_000);
+    const truncated = truncatePreviousCheckFailure(body, 5_000);
+    expect(truncated).toMatch(/X\n\[\.\.\. truncated/);
+  });
+
+  it("does not insert an extra newline when the head already ends with one", () => {
+    // Pad head with newline-terminated rows so the chosen head slice ends with "\n".
+    const headRows = Array.from({ length: 2_000 }, () => "line\n").join("");
+    const body = headRows + "z".repeat(50_000);
+    const truncated = truncatePreviousCheckFailure(body, 5_000);
+    expect(truncated).not.toMatch(/\n\n\[\.\.\. truncated/);
+    expect(truncated).toMatch(/\n\[\.\.\. truncated/);
   });
 
   it("never exceeds the configured budget even when the omitted count is large", () => {
@@ -263,5 +594,13 @@ describe("truncatePreviousCheckFailure", () => {
     const truncated = truncatePreviousCheckFailure(body, 20);
     expect(truncated.length).toBe(20);
     expect(truncated).toBe(body.slice(body.length - 20));
+  });
+
+  it("falls back to a verbatim tail when maxChars is set to 100", () => {
+    const body = "a".repeat(500);
+    const truncated = truncatePreviousCheckFailure(body, 100);
+    // 100 is below the worst-case marker length, so fallback applies.
+    expect(truncated.length).toBe(100);
+    expect(truncated).toBe(body.slice(body.length - 100));
   });
 });

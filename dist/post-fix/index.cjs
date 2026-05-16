@@ -19808,19 +19808,28 @@ function parseGitNumstat(output) {
 
 // dist/claude-code-repair-request.js
 var PREVIOUS_CHECK_FAILURE_MAX_CHARS = 2e4;
+var HEAD_RATIO = 0.25;
+function buildMiddleMarker(omitted, head, tail) {
+  return `[... truncated ${omitted} characters from the middle of CHECK_COMMAND output; kept ${head} head + ${tail} tail ...]
+`;
+}
 function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_MAX_CHARS) {
   if (output.length <= maxChars)
     return output;
-  const buildHeader = (omitted2) => `[... truncated ${omitted2} leading characters of CHECK_COMMAND output; showing tail ...]
-`;
-  const headerBudget = buildHeader(output.length).length;
-  if (headerBudget >= maxChars) {
+  const worstMarker = buildMiddleMarker(output.length, maxChars, maxChars);
+  const reservedMarkerBudget = worstMarker.length + 1;
+  if (reservedMarkerBudget >= maxChars) {
     return output.slice(output.length - maxChars);
   }
-  const tailRoom = maxChars - headerBudget;
+  const remainingBudget = maxChars - reservedMarkerBudget;
+  const headRoom = Math.floor(remainingBudget * HEAD_RATIO);
+  const tailRoom = remainingBudget - headRoom;
+  const head = output.slice(0, headRoom);
   const tail = output.slice(output.length - tailRoom);
-  const omitted = output.length - tail.length;
-  return buildHeader(omitted) + tail;
+  const omitted = output.length - head.length - tail.length;
+  const marker = buildMiddleMarker(omitted, head.length, tail.length);
+  const leadingNewline = head.endsWith("\n") ? "" : "\n";
+  return head + leadingNewline + marker + tail;
 }
 
 // dist/status-comment.js

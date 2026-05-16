@@ -20,9 +20,21 @@ export interface ClaudeCodeRepairRequest {
     maxIterations: number;
     checkCommand: string;
     previousCheckFailure: string | null;
+    findingsTruncated: FindingsTruncationStats;
   };
   findings: ClaudeCodeRepairFinding[];
   instructions: string;
+}
+
+export interface FindingsTruncationStats {
+  /** Number of findings received from the parser before any cap. */
+  received: number;
+  /** Number of findings embedded in the payload (= min(received, MAX_FINDINGS_PER_REQUEST)). */
+  embedded: number;
+  /** Total body chars from findings fully dropped by the count cap. */
+  droppedFindingChars: number;
+  /** Total body chars trimmed by the per-body cap (does not include dropped findings). */
+  truncatedBodyChars: number;
 }
 
 export interface ClaudeCodeRepairFinding {
@@ -42,6 +54,15 @@ export interface ClaudeCodeRepairFinding {
 /** Maximum characters preserved from a previous `CHECK_COMMAND` failure output. */
 export const PREVIOUS_CHECK_FAILURE_MAX_CHARS = 20_000;
 
+/** Maximum number of findings embedded in a single repair request. */
+export const MAX_FINDINGS_PER_REQUEST = 30;
+
+/** Maximum characters preserved from a single finding's body. */
+export const MAX_FINDING_BODY_CHARS = 4_000;
+
+/** Fraction of the truncation budget allocated to head (vs. tail). 25% head / 75% tail. */
+const HEAD_RATIO = 0.25;
+
 const SEVERITY_RANK: Record<Severity, number> = {
   P0: 0,
   P1: 1,
@@ -49,13 +70,22 @@ const SEVERITY_RANK: Record<Severity, number> = {
   P3: 3,
 };
 
+function buildMiddleMarker(
+  omitted: number,
+  head: number,
+  tail: number
+): string {
+  return `[... truncated ${omitted} characters from the middle of CHECK_COMMAND output; kept ${head} head + ${tail} tail ...]\n`;
+}
+
 /**
- * Truncate a CHECK_COMMAND failure output to a safe length, keeping the tail.
+ * Truncate a CHECK_COMMAND failure output to a safe length, keeping a head
+ * slice and a tail slice with a middle marker.
  *
- * Tail-preserving truncation is preferred because CHECK_COMMAND output
- * (test runs, type checks, build logs) typically surfaces the actionable
- * error near the end. The returned string length is guaranteed to be at
- * most `maxChars`.
+ * jest / vitest / pytest surface actionable errors at the tail, while tsc /
+ * eslint surface the first actionable error at the head. Splitting the
+ * `maxChars` budget 25 / 75 between head and tail covers both patterns. The
+ * returned string length is guaranteed to be at most `maxChars`.
  */
 export function truncatePreviousCheckFailure(
   output: string,
@@ -63,20 +93,28 @@ export function truncatePreviousCheckFailure(
 ): string {
   if (output.length <= maxChars) return output;
 
-  const buildHeader = (omitted: number): string =>
-    `[... truncated ${omitted} leading characters of CHECK_COMMAND output; showing tail ...]\n`;
-
-  // Worst-case header length (omitted at most output.length) reserves enough
-  // budget so the final string never exceeds maxChars when there is room.
-  const headerBudget = buildHeader(output.length).length;
-  if (headerBudget >= maxChars) {
-    // Budget is too small to fit a marker — just keep the tail verbatim.
+  // Worst-case marker length uses upper bounds on omitted / head / tail so
+  // the actual marker can only be shorter than what we reserve. The extra
+  // +1 reserves space for an optional leading "\n" inserted when the head
+  // slice doesn't already end with a newline.
+  const worstMarker = buildMiddleMarker(output.length, maxChars, maxChars);
+  const reservedMarkerBudget = worstMarker.length + 1;
+  if (reservedMarkerBudget >= maxChars) {
+    // Budget is too small to fit head + marker + tail — fall back to tail
+    // verbatim (same shape as the original tail-only truncation fallback).
     return output.slice(output.length - maxChars);
   }
-  const tailRoom = maxChars - headerBudget;
+
+  const remainingBudget = maxChars - reservedMarkerBudget;
+  const headRoom = Math.floor(remainingBudget * HEAD_RATIO);
+  const tailRoom = remainingBudget - headRoom;
+
+  const head = output.slice(0, headRoom);
   const tail = output.slice(output.length - tailRoom);
-  const omitted = output.length - tail.length;
-  return buildHeader(omitted) + tail;
+  const omitted = output.length - head.length - tail.length;
+  const marker = buildMiddleMarker(omitted, head.length, tail.length);
+  const leadingNewline = head.endsWith("\n") ? "" : "\n";
+  return head + leadingNewline + marker + tail;
 }
 
 function toRepairFinding(finding: Finding): ClaudeCodeRepairFinding {
@@ -100,6 +138,78 @@ function compareFindings(
   if (a.line !== b.line) return a.line - b.line;
   if (a.title !== b.title) return a.title < b.title ? -1 : 1;
   return a.body < b.body ? -1 : a.body > b.body ? 1 : 0;
+}
+
+function buildFindingBodyMarker(omitted: number): string {
+  return `[... truncated ${omitted} leading characters of finding body; showing tail ...]\n`;
+}
+
+/**
+ * Truncate a finding body to at most `maxChars` keeping the tail, matching
+ * the marker style used by `truncatePreviousCheckFailure`'s tail fallback.
+ *
+ * Returns the (possibly unchanged) body and the number of leading characters
+ * removed, so `applyFindingCaps` can aggregate `truncatedBodyChars`.
+ */
+function truncateFindingBody(
+  body: string,
+  maxChars: number = MAX_FINDING_BODY_CHARS
+): { body: string; droppedChars: number } {
+  if (body.length <= maxChars) return { body, droppedChars: 0 };
+
+  // Worst-case marker uses omitted = body.length, an upper bound that ensures
+  // the actual marker is no longer than what we reserve from the budget.
+  const worstMarker = buildFindingBodyMarker(body.length);
+  if (worstMarker.length >= maxChars) {
+    // Budget too small for any marker — keep the tail verbatim.
+    const truncated = body.slice(body.length - maxChars);
+    return { body: truncated, droppedChars: body.length - truncated.length };
+  }
+
+  const tailRoom = maxChars - worstMarker.length;
+  const tail = body.slice(body.length - tailRoom);
+  const omitted = body.length - tail.length;
+  const marker = buildFindingBodyMarker(omitted);
+  return { body: marker + tail, droppedChars: omitted };
+}
+
+/**
+ * Apply count cap and per-body cap to an already-sorted list of findings.
+ *
+ * `findings` MUST be sorted by `compareFindings` before calling, so the count
+ * cap retains the highest-priority entries deterministically. The function
+ * does NOT re-sort after truncation — body changes would otherwise shift the
+ * (severity, path, line, title, body) tiebreaker order.
+ */
+function applyFindingCaps(findings: ClaudeCodeRepairFinding[]): {
+  kept: ClaudeCodeRepairFinding[];
+  stats: FindingsTruncationStats;
+} {
+  const received = findings.length;
+  const dropped = findings.slice(MAX_FINDINGS_PER_REQUEST);
+  const droppedFindingChars = dropped.reduce(
+    (sum, f) => sum + f.body.length,
+    0
+  );
+
+  const survivors = findings.slice(0, MAX_FINDINGS_PER_REQUEST);
+
+  let truncatedBodyChars = 0;
+  const kept = survivors.map((finding) => {
+    const { body, droppedChars } = truncateFindingBody(finding.body);
+    truncatedBodyChars += droppedChars;
+    return droppedChars === 0 ? finding : { ...finding, body };
+  });
+
+  return {
+    kept,
+    stats: {
+      received,
+      embedded: kept.length,
+      droppedFindingChars,
+      truncatedBodyChars,
+    },
+  };
 }
 
 const INSTRUCTION_LINES: readonly string[] = [
@@ -128,9 +238,10 @@ export function buildClaudeCodeRepairRequest(input: {
   checkCommand: string;
   previousCheckFailure?: string | null;
 }): ClaudeCodeRepairRequest {
-  const findings = input.findings
-    .map(toRepairFinding)
-    .sort(compareFindings);
+  // Sort once, then apply count + body caps in that locked order. Do not
+  // re-sort afterwards — body truncation would otherwise alter the tiebreaker.
+  const sorted = input.findings.map(toRepairFinding).sort(compareFindings);
+  const { kept: findings, stats: findingsTruncated } = applyFindingCaps(sorted);
 
   const previousCheckFailure =
     input.previousCheckFailure == null
@@ -150,6 +261,7 @@ export function buildClaudeCodeRepairRequest(input: {
       maxIterations: input.maxIterations,
       checkCommand: input.checkCommand,
       previousCheckFailure,
+      findingsTruncated,
     },
     findings,
     instructions: INSTRUCTION_LINES.join("\n"),
@@ -195,7 +307,12 @@ export function buildClaudeCodeRepairPrompt(
     ].join("\n")
   );
 
-  const findingsHeader = `## Codex Findings (${findings.length})`;
+  const { received, embedded } = execution.findingsTruncated;
+  const droppedCount = received - embedded;
+  const findingsHeader =
+    droppedCount > 0
+      ? `## Codex Findings (${embedded} of ${received} — ${droppedCount} truncated due to per-request cap)`
+      : `## Codex Findings (${findings.length})`;
   if (findings.length === 0) {
     sections.push(`${findingsHeader}\n\n(no findings supplied)`);
   } else {
