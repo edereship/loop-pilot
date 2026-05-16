@@ -281,12 +281,19 @@ Workflow B の `Run auto-fix loop` ステップは composite action（`loop/acti
 - post-fix が `@codex review` を投稿する。`CODEX_REVIEW_REQUEST_TOKEN` が設定されている場合は接続済みユーザー PAT を使い、未設定時は `GITHUB_TOKEN` に fallback する
 - `status: waiting_codex` に更新
 
-**PoC で未検証の境界:**
-- `issue_comment` トリガーでの done 終了は確認済み。ただし、互換用 `issue_comment` 経由で修正 commit/push まで進むケースは未検証
-- `DEBOUNCE_SECONDS=0` は未検証。PR #7 ではデフォルト待機で安定動作を確認した
-- `concurrency` の多重 review 競合は設計上の対策のみで、実 PR で意図的な競合は発生させていない
-- 複数 Codex 指摘を同時に受けた E2E は未検証。TY-138 で統合テストを追加する
-- 本番で `issue_comment` 互換 trigger を正式対応にするか、`pull_request_review` 主体に限定するかは TY-142 で判断する
+**本番方針（TY-142 で確定、2026-05-16）:**
+
+| 項目 | 方針 | 理由 |
+| -- | -- | -- |
+| Trigger | `pull_request_review.submitted` と `issue_comment.created` を **両ルート正式対応** | `/restart-review` (issue_comment 専用) と Codex usage-limit notice (TY-229、両ルート対応) の依存があり、`pull_request_review` だけに絞ると機能が落ちる。同一 `if:` ガード経由で集約済み |
+| Debounce 値 | デフォルト `DEBOUNCE_SECONDS=90` 据え置き。`vars.DEBOUNCE_SECONDS` で 0 への短縮を **variable opt-in** として許容するが、運用時は安定実績のある 90 を推奨 | 20 iteration × 90s ≈ $0.24 / PR で課金影響は限定的。`STABILIZE_INTERVAL_SECONDS=10` × `STABILIZE_COUNT=3` の安全網と二重化することで Codex 挙動変化への耐性を維持 |
+| Debounce 方式 | GitHub Actions runner 上の `sleep` を継続採用 | `--max-turns 40` と `timeout-minutes: 30` (TY-140) でコスト天井が明示済み。event-driven / 外部 scheduler は Codex 挙動依存リスクが高く、現時点でコスト削減効果も小さい |
+| Concurrency | workflow-level `concurrency: pr-{N}-auto-fix` + `cancel-in-progress: false` (PR scoped queue) を継続 | `fixing` 窓は composite 1 invocation 内に閉じる現設計 (`flow-and-state.md` §4) と整合。`cancel-in-progress: true` だと `fixing` 状態が hung するリスクがある。GitHub Actions の queue 深さ 1 制約 (3 件目以降の中間 run は置換される) は `findings_hash_history` + `last_processed_review_id` による ETL-style 集約で許容範囲 |
+
+**残検証 (別チケットへハンドオフ):**
+- `issue_comment` 経由で commit/push まで進む E2E → 通常 E2E は TY-232 (PR #58) で実走済み (commit/push まで到達)。徹底レビュー有効時の検証は [TY-233](https://linear.app/team-yubune/issue/TY-233) に吸収する
+- 複数 Codex 指摘を同時に受けた E2E → [TY-138](https://linear.app/team-yubune/issue/TY-138) で統合テストを追加する
+- `concurrency` の意図的な多重 review 競合 → 上記 TY-138 と合わせて検討。queue 制約は受け入れる方針
 
 ---
 

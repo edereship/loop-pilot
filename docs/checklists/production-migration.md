@@ -26,7 +26,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 | TY-143 | High | 必須 / 認証判断 | 本番用 token / GitHub App / machine user 運用 |
 | TY-145 | High | 必須 / E2E 検証 | 外部 fork PR と branch protection 下での本番 E2E |
 | TY-141 | Medium | 完了 / トラッキング | repo-level repair 移行トラック（旧 large file / cross-file finding 対応方針）。claude-code-action 採用で解決（TY-234 / TY-235 / TY-140 / TY-236）。徹底レビュー時 E2E は TY-233 で継続 |
-| TY-142 | Medium | 仕様判断 | debounce / concurrency / `issue_comment` 互換 trigger 方針 |
+| TY-142 | Medium | 完了 / 方針確定 | debounce / concurrency / `issue_comment` 互換 trigger 方針 (2026-05-16 確定: 90s 据え置き / sleep 継続 / PR scoped queue / 両ルート正式対応) |
 | TY-144 | Medium | 運用改善 | `/restart-review` と hidden state recovery |
 
 High は本番移植前に完了または明確な保留判断が必要な項目。Medium は初期移植では手動運用や制限付き運用で代替できるが、移植先の規模・運用要件によって High に上げる。
@@ -43,15 +43,15 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 - [ ] Claude API 呼び出しのバッチ化検討（findings が少ないファイル同士をまとめて1回の API 呼び出しで処理し、コスト効率を改善する。TY-140）
 - [ ] hidden comment の競合対策（楽観ロック + TOCTOU 対策の実装。方針は [状態管理](../architecture/flow-and-state.md#hidden-comment-の競合書き込みリスク) に記載済み。PoC では concurrency 制御で代替。TY-139）
 - [x] large file / cross-file finding 対応（TY-141）。旧 `claude-fix-engine` の単一ファイル `edit_file` 方式を廃止し、`anthropics/claude-code-action@v1` ベースの repo-level repair に移行（TY-234 / TY-235 / TY-140 / TY-236 / TY-237 PR #33）。Codex finding の path/line は entry point として扱い、Claude Code Action が関連ファイル・呼び出し元・型定義・テストを探索した上で修正する。PoC 由来の `MAX_INPUT_TOKENS_PER_FILE` chunking 前提は廃止。徹底レビュー有効時の E2E は [TY-233](https://linear.app/team-yubune/issue/TY-233) で継続。
-- [ ] 互換用 `issue_comment` トリガー経由で修正 commit/push まで進むケースを検証する、または本番では `pull_request_review` のみを正式対応にする（TY-142）
-- [ ] `DEBOUNCE_SECONDS=0` への短縮可否を決める。PR #7 ではデフォルト待機での安定動作のみ確認済み（TY-142）
-- [ ] `concurrency` キューの実運用リスクを判断する。GitHub Actions の待機キュー制約により、短時間の複数 review では中間 run が置き換えられる可能性がある（TY-142 / TY-139）
+- [x] 互換用 `issue_comment` トリガーの本番扱い (TY-142、2026-05-16 確定)。`pull_request_review.submitted` と `issue_comment.created` を両ルート正式対応として継続。`/restart-review` (issue_comment 専用) と Codex usage-limit notice (TY-229、両ルート) の依存があるため、片側に絞ると機能落ちになる。`issue_comment` 経由で commit/push まで進む E2E は通常レビュー時は TY-232 (PR #58) で実走済み、徹底レビュー有効時は [TY-233](https://linear.app/team-yubune/issue/TY-233) に吸収
+- [x] `DEBOUNCE_SECONDS=0` 可否判断 (TY-142、2026-05-16 確定)。デフォルト 90 据え置き、`vars.DEBOUNCE_SECONDS=0` は variable opt-in として許容するが運用時は 90 を推奨。理由: 課金影響 ≈ $0.24 / PR と限定的、PR #7 の安定実績あり、stabilize polling と二重化することで Codex 挙動変化への耐性を維持
+- [x] `concurrency` キュー方針 (TY-142、2026-05-16 確定)。workflow-level `concurrency: pr-{N}-auto-fix` + `cancel-in-progress: false` (PR scoped queue) を継続。`fixing` 窓は composite 1 invocation 内に閉じる現設計と整合。queue 深さ 1 制約 (3 件目以降の中間 run は置換) は `findings_hash_history` + `last_processed_review_id` による ETL 集約で許容
 
 ---
 
 ## 運用・セキュリティの項目
 
-- [ ] デバウンス方式の見直し（`sleep` → イベント駆動 or 外部スケジューラ。TY-142）
+- [x] デバウンス方式の見直し（TY-142、2026-05-16 確定）。`sleep` 継続採用。`--max-turns 40` + `timeout-minutes: 30` (TY-140) でコスト天井が明示済み、event-driven / 外部 scheduler への移行は Codex 挙動依存リスクが高く現時点での削減効果も小さい
 - [x] Codex のレビュー形式に合わせた severity パーサーの厳密化（PoC で取得した実コメントを基に）
 - [x] `Codex Review` 文言の環境変数化（`CODEX_REVIEW_MARKER`）— PoC 段階で対応済み
 - [x] Codex bot 名 `chatgpt-codex-connector[bot]` の環境変数化（`CODEX_BOT_LOGIN`）— PoC 段階で対応済み
@@ -63,7 +63,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 - [ ] `MAX_REVIEW_ITERATIONS` の適正値決定（コスト試算に基づく。20以上も検討。TY-140）
 - [ ] `/restart-review` 等のリカバリコマンド実装（TY-144）
 - [ ] hidden comment 消失時の自動リカバリ機構（TY-144）
-- [ ] GitHub API レート制限の考慮（1 iteration あたり最低4回の API コール × 20 iteration = 80回。複数 PR が並行する場合は 1時間あたり1,000リクエスト制限に注意。TY-140 / TY-142）
+- [ ] GitHub API レート制限の考慮（1 iteration あたり最低4回の API コール × 20 iteration = 80回。複数 PR が並行する場合は 1時間あたり1,000リクエスト制限に注意。TY-140）
 - [ ] Slack 通知等の運用連携（PoC 完了条件からは除外。必要になった時点で別 Issue 化）
 
 ---
@@ -85,7 +85,7 @@ TY-145 の 2026-05-16 検証結果は [Production E2E Validation Notes](../opera
 以下は PoC の完了条件には含めず、本番移植または移植後の運用改善として扱う。
 
 - Slack 通知、ラベル連携以外の外部連携、管理 UI
-- 外部 DB / 外部キュー化。ただし `concurrency` キュー制約が本番要件に合わない場合は TY-142 で再判断する
+- 外部 DB / 外部キュー化。TY-142 (2026-05-16) で workflow-level `concurrency` + PR scoped queue 方針を継続採用と確定。queue 深さ 1 制約 (中間 run 置換) は ETL 集約で許容。本番要件で耐えられないと判明した場合に限り、別途新規 issue を起票して再検討する
 - ~~完全な cross-file 修正エンジン化。初期移植では TY-141 で手動対応ポリシーまたは限定実装を決める~~ → TY-141 / TY-236 で `claude-code-action` 採用により解決済み。`docs/specs/claude-code-repair-request.md` 参照
 - `/restart-review` の完全自動化。初期移植時は手動復旧で代替可能だが、TY-144 で運用改善として追跡する
 
