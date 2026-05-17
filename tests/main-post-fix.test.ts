@@ -72,7 +72,7 @@ interface DepRecord {
   readonly resetCalls: number;
   readonly stagedPaths: string[][];
   readonly commitMessages: string[];
-  readonly pushCalls: Array<{ owner: string; repo: string; token: string }>;
+  readonly pushCalls: Array<{ owner: string; repo: string; ref: string; token: string }>;
 }
 
 function makeDeps(
@@ -83,7 +83,7 @@ function makeDeps(
     resetCalls: 0,
     stagedPaths: [] as string[][],
     commitMessages: [] as string[],
-    pushCalls: [] as Array<{ owner: string; repo: string; token: string }>,
+    pushCalls: [] as Array<{ owner: string; repo: string; ref: string; token: string }>,
   };
   const deps: PostFixDeps = {
     readState: vi.fn().mockResolvedValue(readResult),
@@ -111,8 +111,8 @@ function makeDeps(
     commit: (msg) => {
       counters.commitMessages.push(msg);
     },
-    push: (owner, repo, token) => {
-      counters.pushCalls.push({ owner, repo, token });
+    push: (owner, repo, ref, token) => {
+      counters.pushCalls.push({ owner, repo, ref, token });
     },
     readActionExecutionFile: () => null,
     ...overrides,
@@ -146,7 +146,12 @@ describe("runPostFix", () => {
     expect(deps.stagedPaths).toEqual([["src/foo.ts", "tests/foo.test.ts"]]);
     expect(deps.commitMessages[0]).toContain("(iteration 2)");
     expect(deps.pushCalls).toEqual([
-      { owner: "team-yubune", repo: "test-auto-ai-review", token: "" },
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        ref: "linear/TY-237",
+        token: "",
+      },
     ]);
     expect(deps.postClaudeCodeActionFixSummary).toHaveBeenCalled();
     expect(deps.postCodexReviewRequest).toHaveBeenCalled();
@@ -322,7 +327,12 @@ describe("runPostFix", () => {
     ]);
     expect(deps.commitMessages.length).toBe(1);
     expect(deps.pushCalls).toEqual([
-      { owner: "team-yubune", repo: "test-auto-ai-review", token: "" },
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        ref: "linear/TY-237",
+        token: "",
+      },
     ]);
     // The fix summary surfaces every changed file, not just the tracked subset.
     expect(deps.postClaudeCodeActionFixSummary).toHaveBeenCalledWith(

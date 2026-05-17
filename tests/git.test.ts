@@ -177,7 +177,7 @@ describe("subprocess wrappers", () => {
   });
 
   it("pushWithToken falls back to plain push for an empty token", () => {
-    git.pushWithToken("owner", "repo", "");
+    git.pushWithToken("owner", "repo", "feature/x", "");
     expect(execFileSync).toHaveBeenCalledTimes(1);
     expect(execFileSync).toHaveBeenCalledWith(
       "git",
@@ -186,27 +186,179 @@ describe("subprocess wrappers", () => {
     );
   });
 
-  it("pushWithToken temporarily sets and deletes origin push URL for a token", () => {
-    git.pushWithToken("owner", "repo", "push-token");
+  it("pushWithToken: full happy path — unset extraheader, list+clear rewrite rules, push to pinned URL", () => {
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 2) {
+        // `git config --get-regexp` returns matched keys with their values.
+        return [
+          "url.https://evil/.insteadOf https://github.com/",
+          "url.https://github.com/.insteadOf https://corp/",
+        ].join("\n") + "\n";
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
 
-    const url = "https://x-access-token:push-token@github.com/owner/repo.git";
-    expect(execFileSync).toHaveBeenNthCalledWith(
-      1,
-      "git",
-      ["remote", "set-url", "--push", "origin", url],
-      { stdio: "inherit" },
+    git.pushWithToken("team-yubune", "test-auto-ai-review", "claude/some-branch", "push-token");
+
+    // 1: unset checkout extraheader
+    // 2: list rewrite rules (returns 2 keys)
+    // 3, 4: unset each rewrite key
+    // 5: push
+    expect(execFileSync).toHaveBeenCalledTimes(5);
+
+    expect(execFileSync.mock.calls[0][1]).toEqual([
+      "config",
+      "--local",
+      "--unset-all",
+      "http.https://github.com/.extraheader",
+    ]);
+
+    expect(execFileSync.mock.calls[1][1]).toEqual([
+      "config",
+      "--local",
+      "--get-regexp",
+      "^url\\..*\\.(insteadOf|pushInsteadOf)$",
+    ]);
+
+    expect(execFileSync.mock.calls[2][1]).toEqual([
+      "config",
+      "--local",
+      "--unset-all",
+      "url.https://evil/.insteadOf",
+    ]);
+    expect(execFileSync.mock.calls[3][1]).toEqual([
+      "config",
+      "--local",
+      "--unset-all",
+      "url.https://github.com/.insteadOf",
+    ]);
+
+    const basic = Buffer.from("x-access-token:push-token").toString("base64");
+    expect(execFileSync.mock.calls[4][1]).toEqual([
+      "-c",
+      `http.extraheader=AUTHORIZATION: Basic ${basic}`,
+      "push",
+      "https://github.com/team-yubune/test-auto-ai-review.git",
+      "HEAD:refs/heads/claude/some-branch",
+    ]);
+  });
+
+  it("pushWithToken: swallows exit 5 from extraheader unset (key not present)", () => {
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 1) {
+        const e = new Error("not set") as Error & { status?: number };
+        e.status = 5;
+        throw e;
+      }
+      if (call === 2) {
+        const e = new Error("no matches") as Error & { status?: number };
+        e.status = 1;
+        throw e;
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
+
+    expect(() =>
+      git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok"),
+    ).not.toThrow();
+
+    // 1: failing extraheader unset (status 5), 2: failing get-regexp (status 1), 3: push.
+    expect(execFileSync).toHaveBeenCalledTimes(3);
+    expect(execFileSync.mock.calls[2][1]).toContain("push");
+  });
+
+  it("pushWithToken: rethrows non-exit-5 failures from extraheader unset (Codex P2)", () => {
+    execFileSync.mockImplementationOnce(() => {
+      const e = new Error("permission denied reading .git/config") as Error & {
+        status?: number;
+      };
+      e.status = 128;
+      throw e;
+    });
+
+    expect(() =>
+      git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok"),
+    ).toThrow(/permission denied/);
+
+    // The push must NOT have been attempted: silently swallowing a corrupt
+    // config would re-introduce the duplicate-Authorization-header bug.
+    expect(execFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it("pushWithToken: skips rewrite cleanup when get-regexp exits 1 (no rules)", () => {
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 2) {
+        const e = new Error("no matches") as Error & { status?: number };
+        e.status = 1;
+        throw e;
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
+
+    git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok");
+
+    // 1: unset extraheader, 2: failing get-regexp, 3: push (no unset calls).
+    expect(execFileSync).toHaveBeenCalledTimes(3);
+    expect(execFileSync.mock.calls[2][1]).toContain("push");
+  });
+
+  it("pushWithToken: rethrows non-exit-1 failures from get-regexp (corrupt config)", () => {
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 1) {
+        // extraheader unset: exit 5, swallowed.
+        const e = new Error("not set") as Error & { status?: number };
+        e.status = 5;
+        throw e;
+      }
+      if (call === 2) {
+        const e = new Error("config is corrupt") as Error & { status?: number };
+        e.status = 128;
+        throw e;
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
+
+    expect(() =>
+      git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok"),
+    ).toThrow(/corrupt/);
+
+    expect(execFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("pushWithToken: uses owner/repo/ref from Config (not remote.origin) for the destination URL", () => {
+    // Security: a tampered `remote.origin.url` (claude-code-action runs before
+    // post-fix and could in principle mutate `.git/config`) must NOT be able to
+    // redirect the PAT to an attacker URL.
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 2) {
+        // No rewrite rules.
+        const e = new Error("no matches") as Error & { status?: number };
+        e.status = 1;
+        throw e;
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
+
+    git.pushWithToken("safe-org", "safe-repo", "main", "tok");
+
+    const pushCall = execFileSync.mock.calls.find(
+      (c: unknown[]) => Array.isArray(c[1]) && (c[1] as string[]).includes("push"),
     );
-    expect(execFileSync).toHaveBeenNthCalledWith(
-      2,
-      "git",
-      ["push"],
-      { stdio: "inherit" },
-    );
-    expect(execFileSync).toHaveBeenNthCalledWith(
-      3,
-      "git",
-      ["remote", "set-url", "--delete", "--push", "origin", url],
-      { stdio: "inherit" },
-    );
+    expect(pushCall).toBeDefined();
+    const args = pushCall![1] as string[];
+    expect(args).toContain("https://github.com/safe-org/safe-repo.git");
+    expect(args).toContain("HEAD:refs/heads/main");
+    // No reliance on the `origin` remote.
+    expect(args).not.toContain("origin");
   });
 });

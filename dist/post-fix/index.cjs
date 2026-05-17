@@ -19594,22 +19594,75 @@ function commit(message) {
 function push() {
   (0, import_node_child_process2.execFileSync)("git", ["push"], { stdio: "inherit" });
 }
-function pushWithToken(owner, repo, token) {
+function unsetCheckoutExtraheader() {
+  try {
+    (0, import_node_child_process2.execFileSync)("git", [
+      "config",
+      "--local",
+      "--unset-all",
+      "http.https://github.com/.extraheader"
+    ], { stdio: "inherit" });
+  } catch (err) {
+    const status = err.status;
+    if (status === 5) {
+      return;
+    }
+    throw err;
+  }
+}
+function clearUrlRewriteRules() {
+  let listOutput;
+  try {
+    listOutput = (0, import_node_child_process2.execFileSync)("git", [
+      "config",
+      "--local",
+      "--get-regexp",
+      "^url\\..*\\.(insteadOf|pushInsteadOf)$"
+    ], { encoding: "utf-8" });
+  } catch (err) {
+    const status = err.status;
+    if (status === 1) {
+      return;
+    }
+    throw err;
+  }
+  const keys = /* @__PURE__ */ new Set();
+  for (const line of listOutput.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed)
+      continue;
+    const [key] = trimmed.split(/\s+/, 1);
+    if (key)
+      keys.add(key);
+  }
+  for (const key of keys) {
+    try {
+      (0, import_node_child_process2.execFileSync)("git", ["config", "--local", "--unset-all", key], { stdio: "inherit" });
+    } catch (err) {
+      const status = err.status;
+      if (status === 5) {
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+function pushWithToken(owner, repo, ref, token) {
   if (token === "") {
     push();
     return;
   }
-  const pushUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-  (0, import_node_child_process2.execFileSync)("git", ["remote", "set-url", "--push", "origin", pushUrl], {
-    stdio: "inherit"
-  });
-  try {
-    push();
-  } finally {
-    (0, import_node_child_process2.execFileSync)("git", ["remote", "set-url", "--delete", "--push", "origin", pushUrl], {
-      stdio: "inherit"
-    });
-  }
+  unsetCheckoutExtraheader();
+  clearUrlRewriteRules();
+  const destUrl = `https://github.com/${owner}/${repo}.git`;
+  const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+  (0, import_node_child_process2.execFileSync)("git", [
+    "-c",
+    `http.extraheader=AUTHORIZATION: Basic ${basic}`,
+    "push",
+    destUrl,
+    `HEAD:refs/heads/${ref}`
+  ], { stdio: "inherit" });
 }
 
 // dist/check-runner.js
@@ -20552,7 +20605,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     ].join("\n");
     try {
       deps.commit(commitMessage);
-      deps.push(config.repoOwner, config.repoName, config.autoReviewPushToken);
+      deps.push(config.repoOwner, config.repoName, inputs.prHeadRef, config.autoReviewPushToken);
     } catch (error2) {
       deps.error(`[post-fix] commit/push failed: ${error2 instanceof Error ? error2.message : String(error2)}`);
       await failureExit({

@@ -101,8 +101,8 @@ export interface PostFixDeps {
   hasStagedChanges: () => boolean;
   /** Creates a commit with the supplied message. */
   commit: (message: string) => void;
-  /** Pushes HEAD to the remote tracking branch, optionally using a push token. */
-  push: (owner: string, repo: string, token: string) => void;
+  /** Pushes HEAD to the given branch on github.com/<owner>/<repo>.git, optionally using a push token. */
+  push: (owner: string, repo: string, ref: string, token: string) => void;
   /** Reads the file at `path` as utf-8. Returns null on failure. */
   readActionExecutionFile: (path: string) => string | null;
 }
@@ -559,7 +559,12 @@ export async function runPostFix(
     ].join("\n");
     try {
       deps.commit(commitMessage);
-      deps.push(config.repoOwner, config.repoName, config.autoReviewPushToken);
+      deps.push(
+        config.repoOwner,
+        config.repoName,
+        inputs.prHeadRef,
+        config.autoReviewPushToken,
+      );
     } catch (error) {
       deps.error(
         `[post-fix] commit/push failed: ${error instanceof Error ? error.message : String(error)}`,
