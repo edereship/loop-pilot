@@ -23,6 +23,7 @@ const crashConfig: Config = {
   stabilizeCount: 3,
   codexReviewMarker: "Codex Review",
   codexReviewRequestToken: "codex-token",
+  autoReviewPushToken: "",
   anthropicApiKey: "",
   claudeCodeOauthToken: "",
   githubToken: "github-token",
@@ -39,6 +40,7 @@ const crashConfig: Config = {
   autoReviewRestartRoles: "author,write,maintain,admin",
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
+  autoMergeOnClean: false,
   severityThreshold: "P2",
   hardBlockOverride: [],
 };

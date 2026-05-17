@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadInitConfig } from "../src/config";
+import { loadInitConfig } from "../src/config.js";
 
 const ENV_KEYS = [
   "GITHUB_REPOSITORY",

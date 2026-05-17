@@ -29,7 +29,10 @@ function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
 
 function mockExecFileOnce(stdout: string): void {
   mockedExecFile.mockImplementationOnce(((_file, _args, _options, callback) => {
-    callback(null, { stdout, stderr: "" });
+    (callback as unknown as (e: unknown, v: { stdout: string; stderr: string }) => void)(
+      null,
+      { stdout, stderr: "" },
+    );
     return {} as ReturnType<typeof execFile>;
   }) as typeof execFile);
 }

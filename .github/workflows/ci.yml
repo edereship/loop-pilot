@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (src)
+        run: npm run typecheck
+
+      - name: Typecheck (tests)
+        run: npm run typecheck:test
+
+      - name: Test
+        run: npm test
+
+      - name: Bundle
+        run: npm run bundle
+
+      # Fail if src/ was edited but dist/ wasn't regenerated.
+      # The published action loads dist/{init,pre-fix,post-fix}/index.cjs,
+      # so a stale bundle silently runs old code in consumers.
+      #
+      # `git status --porcelain dist/` covers both tracked-file modifications
+      # AND new untracked artifacts under dist/ (e.g., a new bundle entrypoint
+      # created by `npm run bundle` that the contributor forgot to commit).
+      # Plain `git diff --exit-code dist/` only reports tracked changes and
+      # would silently pass for new untracked files.
+      - name: Check dist/ drift
+        run: |
+          status="$(git status --porcelain dist/)"
+          if [ -n "$status" ]; then
+            echo "$status"
+            echo "::error::dist/ is out of sync with src/. Run 'npm run bundle' and commit the result."
+            exit 1
+          fi

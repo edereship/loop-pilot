@@ -4,8 +4,8 @@ import {
   parseReviewCommentRecord,
   shouldStabilizeReviewComments,
   stabilizeReviewComments,
-} from "../src/review-collector";
-import type { RawReviewComment } from "../src/types";
+} from "../src/review-collector.js";
+import type { RawReviewComment } from "../src/types.js";
 
 const BOT_LOGIN = "openai-codex[bot]";
 
@@ -15,7 +15,6 @@ function makeComment(
   return {
     id: 1,
     user: { login: BOT_LOGIN },
-    body: overrides.body,
     path: "src/foo.ts",
     line: 10,
     createdAt: "2024-01-10T00:00:00Z",

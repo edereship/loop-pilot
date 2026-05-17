@@ -4,6 +4,7 @@ import {
   handleRestartCommand,
   isRestartCommandLike,
   parseRestartCommand,
+  type RestartCommandDeps,
 } from "../src/restart-command.js";
 import { createInitialState, type ReadStateResult } from "../src/state-manager.js";
 import type { ReviewState } from "../src/types.js";
@@ -25,17 +26,27 @@ function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
 }
 
 function foundState(state: ReviewState): ReadStateResult {
-  return { found: true, corrupted: false, state, commentId: 999 };
+  return {
+    found: true,
+    corrupted: false,
+    state,
+    commentId: 999,
+    commentUpdatedAt: "2026-05-07T00:00:00Z",
+  };
 }
 
 function makeDeps() {
   return {
-    getPrAuthor: vi.fn(async () => "pr-author"),
-    getCollaboratorPermission: vi.fn(async () => "write"),
-    updateStateComment: vi.fn(async () => undefined),
-    postComment: vi.fn(async () => 12345),
-    postCodexReviewRequest: vi.fn(async () => 45678),
-    addEyesReaction: vi.fn(async () => undefined),
+    getPrAuthor: vi.fn<RestartCommandDeps["getPrAuthor"]>(async () => "pr-author"),
+    getCollaboratorPermission: vi.fn<RestartCommandDeps["getCollaboratorPermission"]>(
+      async () => "write",
+    ),
+    updateStateComment: vi.fn<RestartCommandDeps["updateStateComment"]>(async () => undefined),
+    postComment: vi.fn<RestartCommandDeps["postComment"]>(async () => 12345),
+    postCodexReviewRequest: vi.fn<RestartCommandDeps["postCodexReviewRequest"]>(
+      async () => 45678,
+    ),
+    addEyesReaction: vi.fn<RestartCommandDeps["addEyesReaction"]>(async () => undefined),
   };
 }
 
@@ -86,7 +97,7 @@ describe("applyRestartToState", () => {
 
     const result = applyRestartToState(state, "hard", 45678);
 
-    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected hard restart to succeed");
     expect(result.nextState).toMatchObject({
       status: "waiting_codex",
       // TY-258: stopReason persists across both soft and hard restart so
@@ -110,7 +121,7 @@ describe("applyRestartToState", () => {
 
     const result = applyRestartToState(state, "soft", 45678);
 
-    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected soft restart to succeed");
     expect(result.nextState).toMatchObject({
       status: "waiting_codex",
       stopReason: "max_turns_exceeded",
@@ -145,7 +156,7 @@ describe("applyRestartToState", () => {
 
     const result = applyRestartToState(state, "hard", 45678);
 
-    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected hard restart to succeed");
     expect(result.nextState).toMatchObject({
       status: "waiting_codex",
       stopReason: null,

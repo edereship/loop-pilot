@@ -65,6 +65,7 @@ describe("runInit", () => {
         found: true,
         corrupted: false,
         commentId: 111,
+        commentUpdatedAt: "2026-05-15T00:00:00Z",
         state: makeState({ status, lastCodexRequestCommentId: 222 }),
       });
 
@@ -82,6 +83,7 @@ describe("runInit", () => {
       found: true,
       corrupted: false,
       commentId: 111,
+      commentUpdatedAt: "2026-05-15T00:00:00Z",
       state: makeState({ status: "initialized", lastCodexRequestCommentId: null }),
     });
 

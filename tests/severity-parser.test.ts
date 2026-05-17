@@ -6,7 +6,7 @@ import {
   isAtLeastSeverity,
   isSeverity,
   parseSeverity,
-} from "../src/severity-parser";
+} from "../src/severity-parser.js";
 
 describe("parseSeverity", () => {
   // --- Stage 1: bare or bracketed badge ---
