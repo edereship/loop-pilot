@@ -9,6 +9,7 @@ import {
 } from "./state-manager.js";
 import { postCodexReviewRequest } from "./comment-poster.js";
 import type { Config } from "./config.js";
+import { registerAllSecrets } from "./secrets.js";
 
 type ReadState = typeof readState;
 type CreateStateComment = typeof createStateComment;
@@ -38,8 +39,7 @@ const defaultDeps: InitDeps = {
 };
 
 export async function runInit(config: Config, deps: InitDeps = defaultDeps): Promise<void> {
-  deps.setSecret(config.githubToken);
-  deps.setSecret(config.codexReviewRequestToken);
+  registerAllSecrets(config, deps.setSecret);
   deps.info(`Initializing auto-review for PR #${config.prNumber}`);
 
   // Check for existing hidden comment (re-run support)

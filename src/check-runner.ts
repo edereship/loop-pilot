@@ -1,6 +1,7 @@
 import { execFileSync, exec } from "node:child_process";
 import { promisify } from "node:util";
 import * as core from "@actions/core";
+import { stripSecretEnv } from "./secrets.js";
 
 const execAsync = promisify(exec);
 
@@ -89,18 +90,11 @@ export async function runCheckCommand(
   modifiedFiles: string[]
 ): Promise<CheckResult> {
   // Strip sensitive env vars to prevent exfiltration via malicious check commands.
-  // Use denylist approach: remove all known secret-bearing keys.
-  // GITHUB_TOKEN / GH_TOKEN carry contents:write scope and must not leak.
-  const safeEnv = { ...process.env };
-  delete safeEnv.ANTHROPIC_API_KEY;
-  delete safeEnv.GITHUB_TOKEN;
-  delete safeEnv.GH_TOKEN;
-  // GitHub Actions passes action inputs as INPUT_<NAME> env vars
-  for (const key of Object.keys(safeEnv)) {
-    if (key.startsWith("INPUT_ANTHROPIC") || key.startsWith("INPUT_GITHUB")) {
-      delete safeEnv[key];
-    }
-  }
+  // The denylist is centralized in `secrets.ts` so a new Config-level secret
+  // (TY-264) is automatically removed from both child env and setSecret
+  // registration. All `INPUT_*` action inputs are also stripped as
+  // defense-in-depth — CHECK_COMMAND runs as user code, not as the action.
+  const safeEnv = stripSecretEnv(process.env);
 
   try {
     const { stdout, stderr } = await execAsync(checkCommand, {

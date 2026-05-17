@@ -19609,6 +19609,50 @@ function pushWithToken(owner, repo, token) {
 // dist/check-runner.js
 var import_node_child_process3 = require("node:child_process");
 var import_node_util2 = require("node:util");
+
+// dist/secrets.js
+var SECRET_CONFIG_FIELDS = [
+  "githubToken",
+  "codexReviewRequestToken",
+  "autoReviewPushToken",
+  "anthropicApiKey",
+  "claudeCodeOauthToken"
+];
+var SECRET_ENV_NAMES = [
+  "GITHUB_TOKEN",
+  "GH_TOKEN",
+  "CODEX_REVIEW_REQUEST_TOKEN",
+  "AUTO_REVIEW_PUSH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "INPUT_GITHUB_TOKEN",
+  "INPUT_CODEX_REVIEW_REQUEST_TOKEN",
+  "INPUT_AUTO_REVIEW_PUSH_TOKEN",
+  "INPUT_ANTHROPIC_API_KEY",
+  "INPUT_CLAUDE_CODE_OAUTH_TOKEN"
+];
+function registerAllSecrets(config, setSecret2) {
+  for (const field of SECRET_CONFIG_FIELDS) {
+    const value = config[field];
+    if (typeof value === "string" && value !== "") {
+      setSecret2(value);
+    }
+  }
+}
+function stripSecretEnv(env) {
+  const safe = { ...env };
+  for (const name of SECRET_ENV_NAMES) {
+    delete safe[name];
+  }
+  for (const key of Object.keys(safe)) {
+    if (key.startsWith("INPUT_")) {
+      delete safe[key];
+    }
+  }
+  return safe;
+}
+
+// dist/check-runner.js
 var execAsync = (0, import_node_util2.promisify)(import_node_child_process3.exec);
 function removeAnsiSequences(output) {
   return output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
@@ -19642,15 +19686,7 @@ function extractErrorOutput(error2) {
   return ["", "", String(error2)];
 }
 async function runCheckCommand(checkCommand, modifiedFiles) {
-  const safeEnv = { ...process.env };
-  delete safeEnv.ANTHROPIC_API_KEY;
-  delete safeEnv.GITHUB_TOKEN;
-  delete safeEnv.GH_TOKEN;
-  for (const key of Object.keys(safeEnv)) {
-    if (key.startsWith("INPUT_ANTHROPIC") || key.startsWith("INPUT_GITHUB")) {
-      delete safeEnv[key];
-    }
-  }
+  const safeEnv = stripSecretEnv(process.env);
   try {
     const { stdout, stderr } = await execAsync(checkCommand, {
       timeout: 5 * 60 * 1e3,
@@ -20237,9 +20273,7 @@ function detectMaxTurnsExceeded(executionFileContents) {
   return haystack.includes("max_turns") || haystack.includes("max turns") || haystack.includes("maximum turns");
 }
 async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInputs()) {
-  deps.setSecret(config.githubToken);
-  deps.setSecret(config.codexReviewRequestToken);
-  deps.setSecret(config.autoReviewPushToken);
+  registerAllSecrets(config, deps.setSecret);
   deps.info(`[post-fix] Starting post-fix for PR #${config.prNumber}, iteration ${inputs.iteration}, action outcome: ${inputs.actionOutcome}`);
   const stateResult = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   if (!stateResult.found) {

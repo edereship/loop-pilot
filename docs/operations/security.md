@@ -123,7 +123,8 @@ PR #7 では、Repository UI で default workflow permission を write に変更
 未登録 secret は GitHub Actions が空文字列に展開するため、上のように両方とも参照しても、実際に登録されているのが片方だけなら fail fast には引っかからない。
 
 **注意事項:**
-- シークレットは workflow のログに出力されない (GitHub の自動マスク + `src/main-pre-fix.ts` の `core.setSecret` で API キー / OAuth トークン両方を明示登録)
+- シークレットは workflow のログに出力されない (GitHub の自動マスク + `src/secrets.ts:registerAllSecrets` で `githubToken` / `codexReviewRequestToken` / `autoReviewPushToken` / `anthropicApiKey` / `claudeCodeOauthToken` を init / pre-fix / post-fix 各 entrypoint から一括登録 — TY-264)
+- `CHECK_COMMAND` を実行する子プロセスには `stripSecretEnv` (src/secrets.ts) が上記 secret 系の素 env (`GITHUB_TOKEN`, `CODEX_REVIEW_REQUEST_TOKEN`, `AUTO_REVIEW_PUSH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` 等) と `INPUT_*` 系すべてを削除した env を渡す。新しい secret を `Config` に足す際は `SECRET_CONFIG_FIELDS` / `SECRET_ENV_NAMES` の 1 ヶ所に追加すれば init/pre-fix/post-fix の `setSecret` と CHECK_COMMAND 隔離の両方に自動で反映される
 - Fork PR の workflow ではシークレットにアクセスできない (GitHub のデフォルト挙動で保護される)
 - 認証情報のローテーション手順は API キー / OAuth トークン共に本番移植時に定める
 

@@ -29,6 +29,7 @@ import {
   postStopComment as defaultPostStopComment,
   postTestFailureComment as defaultPostTestFailureComment,
 } from "./comment-poster.js";
+import { registerAllSecrets } from "./secrets.js";
 import type { ReviewState, StopReason } from "./types.js";
 
 /**
@@ -192,9 +193,12 @@ export async function runPostFix(
   deps: PostFixDeps = defaultDeps,
   inputs: PostFixInputs = readPostFixInputs(),
 ): Promise<void> {
-  deps.setSecret(config.githubToken);
-  deps.setSecret(config.codexReviewRequestToken);
-  deps.setSecret(config.autoReviewPushToken);
+  // TY-264: shared helper so a new Config secret is masked symmetrically in
+  // init/pre-fix/post-fix. Anthropic credentials are also registered here in
+  // case the wrapping workflow exports `ANTHROPIC_API_KEY` via `env:` without
+  // going through `loadConfig` (post-fix uses `loadInitConfig`, which leaves
+  // those two fields empty by design).
+  registerAllSecrets(config, deps.setSecret);
 
   deps.info(
     `[post-fix] Starting post-fix for PR #${config.prNumber}, iteration ${inputs.iteration}, action outcome: ${inputs.actionOutcome}`,

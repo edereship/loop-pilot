@@ -20191,6 +20191,23 @@ async function enableAutoMergeSquash(owner, name, pr, token, log) {
   }
 }
 
+// dist/secrets.js
+var SECRET_CONFIG_FIELDS = [
+  "githubToken",
+  "codexReviewRequestToken",
+  "autoReviewPushToken",
+  "anthropicApiKey",
+  "claudeCodeOauthToken"
+];
+function registerAllSecrets(config, setSecret2) {
+  for (const field of SECRET_CONFIG_FIELDS) {
+    const value = config[field];
+    if (typeof value === "string" && value !== "") {
+      setSecret2(value);
+    }
+  }
+}
+
 // dist/pr-labels.js
 var fetchPrLabels = async (owner, name, pr, token) => {
   const stdout = await ghApi([
@@ -20708,10 +20725,7 @@ var defaultDeps3 = {
   checkoutBranch
 };
 async function runPreFix(config, deps = defaultDeps3) {
-  deps.setSecret(config.anthropicApiKey);
-  deps.setSecret(config.claudeCodeOauthToken);
-  deps.setSecret(config.githubToken);
-  deps.setSecret(config.codexReviewRequestToken);
+  registerAllSecrets(config, deps.setSecret);
   if (config.claudeCodeOauthToken !== "") {
     deps.warning("[pre-fix] Running with Claude Code OAuth token (subscription). Your personal account's usage limits apply \u2014 auto-review iterations may consume your quota quickly, especially with Opus escalation. Consider lowering MAX_REVIEW_ITERATIONS for high-frequency CI use; see docs/operations/security.md (\u8A8D\u8A3C).");
   }

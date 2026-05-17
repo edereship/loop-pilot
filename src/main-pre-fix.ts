@@ -26,6 +26,7 @@ import {
   postInitIncompleteComment as defaultPostInitIncompleteComment,
 } from "./comment-poster.js";
 import { enableAutoMergeSquash as defaultEnableAutoMergeSquash } from "./pr-merger.js";
+import { registerAllSecrets } from "./secrets.js";
 import {
   fetchPrLabels as defaultFetchPrLabels,
   isAutoReviewAllowed,
@@ -130,14 +131,12 @@ const defaultDeps: PreFixDeps = {
  * `should_run=false`.
  */
 export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps): Promise<void> {
-  deps.setSecret(config.anthropicApiKey);
-  // TY-260: register the OAuth token as a secret too, so subscription users
-  // get the same automatic log masking as API key users. `loadConfig`
-  // guarantees exactly one of the two is non-empty; `setSecret` on the empty
-  // string is a no-op in `@actions/core`.
-  deps.setSecret(config.claudeCodeOauthToken);
-  deps.setSecret(config.githubToken);
-  deps.setSecret(config.codexReviewRequestToken);
+  // TY-264: all secret-bearing Config fields (incl. autoReviewPushToken) are
+  // registered via a single helper so a new credential added to `Config`
+  // automatically appears in init/pre-fix/post-fix log masking. Empty values
+  // are skipped, so the API-key / OAuth token gate from `loadConfig` keeps
+  // working without a special case here.
+  registerAllSecrets(config, deps.setSecret);
 
   // TY-260: surface a one-line caution when running on a personal Claude
   // Code subscription. The auto-review loop can fire up to

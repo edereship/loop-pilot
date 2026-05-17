@@ -19582,6 +19582,23 @@ async function postCodexReviewRequest(owner, name, pr, token) {
   return postComment(owner, name, pr, "@codex review", token);
 }
 
+// dist/secrets.js
+var SECRET_CONFIG_FIELDS = [
+  "githubToken",
+  "codexReviewRequestToken",
+  "autoReviewPushToken",
+  "anthropicApiKey",
+  "claudeCodeOauthToken"
+];
+function registerAllSecrets(config, setSecret2) {
+  for (const field of SECRET_CONFIG_FIELDS) {
+    const value = config[field];
+    if (typeof value === "string" && value !== "") {
+      setSecret2(value);
+    }
+  }
+}
+
 // dist/main-init.js
 var defaultDeps = {
   readState,
@@ -19594,8 +19611,7 @@ var defaultDeps = {
   setOutput
 };
 async function runInit(config, deps = defaultDeps) {
-  deps.setSecret(config.githubToken);
-  deps.setSecret(config.codexReviewRequestToken);
+  registerAllSecrets(config, deps.setSecret);
   deps.info(`Initializing auto-review for PR #${config.prNumber}`);
   const existing = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   let commentId;
