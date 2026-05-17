@@ -647,4 +647,135 @@ describe("runPostFix", () => {
     expect(deps.updateStateComment).not.toHaveBeenCalled();
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
   });
+
+  // TY-273 #B3: rolls back the Phase 3 bookkeeping when no edits are produced.
+
+  it("TY-273 #B3: no-op claude-code-action rolls back iterationCount and findingsHashHistory", async () => {
+    const stateAfterPhase3 = makeState({
+      iterationCount: 2,
+      findingsHashHistory: [
+        { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+        { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
+      ],
+      lastFindingsHash: "bbbbbbbbbbbbbbbb",
+    });
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: stateAfterPhase3,
+      },
+      { gitDiffNumstat: () => "" },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    // First state write returns the loop to `waiting_codex` with the Phase 3
+    // bookkeeping reverted so the next iteration sees the same hash again
+    // (and `isLoop` can route it to the escalated tier per TY-243).
+    const firstWrite = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock
+      .calls[0][3];
+    expect(firstWrite).toMatchObject({
+      status: "waiting_codex",
+      iterationCount: 1,
+      lastFindingsHash: "aaaaaaaaaaaaaaaa",
+    });
+    expect(firstWrite.findingsHashHistory).toEqual([
+      { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+    ]);
+    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+  });
+
+  // TY-273 #B5: codex_request_failed downgrade.
+
+  it("TY-273 #B5: downgrades to stopped/codex_request_failed when re-posting @codex review throws", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState(),
+    });
+    (deps.postCodexReviewRequest as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("HTTP 403: forbidden"),
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    // The status comment ends up in stopped/codex_request_failed so the next
+    // pre-fix run does NOT re-enter `waiting_codex` and deadlock.
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3];
+    expect(lastState).toMatchObject({
+      status: "stopped",
+      stopReason: "codex_request_failed",
+    });
+    // The operator gets a top-level notification with the underlying error so
+    // they can fix Codex auth and `/restart-review` once it's reachable.
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "codex_request_failed",
+      expect.any(Number),
+      0,
+      expect.stringContaining("HTTP 403: forbidden"),
+      "github-token",
+    );
+  });
+
+  it("TY-273 #B5: same downgrade fires from the no-op path when @codex review fails", async () => {
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      { gitDiffNumstat: () => "" },
+    );
+    (deps.postCodexReviewRequest as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("network failure"),
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3];
+    expect(lastState).toMatchObject({
+      status: "stopped",
+      stopReason: "codex_request_failed",
+    });
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "codex_request_failed",
+      expect.any(Number),
+      0,
+      expect.stringContaining("network failure"),
+      "github-token",
+    );
+  });
+
+  // TY-273 #B4: fixingStartedAt clearing on terminal transitions.
+
+  it("TY-273 #B4: clears fixingStartedAt on the clean waiting_codex transition", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState({ fixingStartedAt: "2026-05-17T00:00:00Z" }),
+    });
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3];
+    expect(lastState.fixingStartedAt).toBeNull();
+  });
 });

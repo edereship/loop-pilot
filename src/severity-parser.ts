@@ -2,7 +2,15 @@ import type { ParsedComment, Severity } from "./types.js";
 
 // Leading \n is optional so the pattern matches when the footer is the only body content
 const CODEX_FOOTER_PATTERN = /\n?Useful\? React with 👍 \/ 👎\.\s*$/;
-const NO_FINDINGS_PATTERN = /\bno\s+(?:p0\s*\/\s*p1\s+)?findings?\b|\b0\s+findings?\b|\bno\s+issues?\b/i;
+// TY-273 #B1: accept any single-severity or `/`-joined chain of severities
+// (`No P0 findings`, `No P0/P1 findings`, `No P2/P3 findings`, etc.). The
+// earlier expression only matched `no findings` or the literal `no p0/p1
+// findings`, so wording like `No P0 findings.` slipped through and was then
+// re-classified as a P0 finding by FALLBACK_KEYWORD_REGEX. Mirrors the
+// `specificNoFindingsMatches` pattern in `src/review-collector.ts` so the
+// two layers agree on what counts as a "no findings" sentence.
+const NO_FINDINGS_PATTERN =
+  /\bno\s+(?:p[0-3](?:\s*\/\s*p[0-3])*\s+)?findings?\b|\b0\s+findings?\b|\bno\s+issues?\b/i;
 
 // Stage 1: bare badge (P0) or bracketed badge ([P0]). Extended to P0..P3 (TY-256).
 const STAGE1_REGEX = /^\s*\[?(P[0-3])\]?\s*(.*)/;

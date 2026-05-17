@@ -19325,6 +19325,9 @@ function validateState(obj) {
   if ("previousCheckFailure" in s && s.previousCheckFailure !== null && typeof s.previousCheckFailure !== "string") {
     return false;
   }
+  if ("fixingStartedAt" in s && s.fixingStartedAt !== null && typeof s.fixingStartedAt !== "string") {
+    return false;
+  }
   for (const entry2 of s.findingsHashHistory) {
     if (typeof entry2 !== "object" || entry2 === null)
       return false;
@@ -19369,7 +19372,8 @@ function deserializeState(commentBody) {
     }
     const normalized = {
       ...parsed,
-      previousCheckFailure: parsed.previousCheckFailure ?? null
+      previousCheckFailure: parsed.previousCheckFailure ?? null,
+      fixingStartedAt: parsed.fixingStartedAt ?? null
     };
     return normalized;
   } catch {
@@ -20331,7 +20335,8 @@ var STOP_REASON_LABELS = {
   action_failure: "Claude Code Action exited with a non-zero status",
   scope_violation: "Auto-fix blocked \u2014 the repair diff touched protected paths.",
   max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
-  codex_usage_limit: "Codex reported usage / quota limits; no review was performed"
+  codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
+  codex_request_failed: "Re-posting @codex review failed; auto-review stopped to avoid silent deadlock"
 };
 
 // dist/comment-poster.js
@@ -20611,7 +20616,9 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
       lastFindingsHash: rolledBackLastHash,
       status: "stopped",
       stopReason: opts.stopReason,
-      previousCheckFailure
+      previousCheckFailure,
+      // TY-273 #B4: leaving stale entry would mislead the next pre-fix run.
+      fixingStartedAt: null
     };
     if (!await updateStateCommentLocked(stoppedState, `Could not stop after ${opts.stopReason}.`)) {
       return;
@@ -20680,14 +20687,23 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   deps.info(`[post-fix] Detected ${changedFiles.length} changed file(s) in working tree (${trackedChanges.length} tracked, ${untrackedChanges.length} new).`);
   if (changedFiles.length === 0) {
     deps.warning("[post-fix] claude-code-action made no file changes. Treating as no-op success and re-requesting Codex review.");
+    const rolledBackHistory = state.findingsHashHistory.slice(0, -1);
+    const rolledBackLastHash = rolledBackHistory.length > 0 ? rolledBackHistory[rolledBackHistory.length - 1].hash : null;
     const waitingState2 = {
       ...state,
+      iterationCount: Math.max(0, state.iterationCount - 1),
+      findingsHashHistory: rolledBackHistory,
+      lastFindingsHash: rolledBackLastHash,
       status: "waiting_codex",
       // TY-258: clear any `max_turns_exceeded` (or other) stop reason carried
       // over from a previous stop + `/restart-review`, so escalation stays
       // one-shot once the action finishes without an error outcome.
       stopReason: null,
-      previousCheckFailure: null
+      previousCheckFailure: null,
+      // TY-273 #B4: fixingStartedAt only describes the *current* fixing
+      // attempt; clearing it on every terminal transition keeps the next
+      // `fixing` claim's stale window honest.
+      fixingStartedAt: null
     };
     if (!await updateStateCommentLocked(waitingState2, "Could not return state to waiting_codex after no-op claude-code-action run.")) {
       return;
@@ -20700,7 +20716,17 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
       };
       await updateStateCommentLocked(updated, "Could not persist Codex review request comment id after no-op run.");
     } catch (error2) {
-      deps.error(`[post-fix] Failed to re-request Codex review: ${error2 instanceof Error ? error2.message : String(error2)}`);
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      deps.error(`[post-fix] Failed to re-request Codex review (no-op path): ${message}. Downgrading to stopped/codex_request_failed.`);
+      const stoppedState = {
+        ...waitingState2,
+        status: "stopped",
+        stopReason: "codex_request_failed"
+      };
+      if (!await updateStateCommentLocked(stoppedState, "Could not record codex_request_failed stop after no-op run.")) {
+        return;
+      }
+      await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Failed to post @codex review after a no-op claude-code-action run: ${message}`, config.githubToken);
     }
     return;
   }
@@ -20818,7 +20844,9 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     // means the escalation signal has done its job and the next iteration
     // should fall back to normal tiering (one-shot escalation).
     stopReason: null,
-    previousCheckFailure: null
+    previousCheckFailure: null,
+    // TY-273 #B4: see no-op path and failureExit.
+    fixingStartedAt: null
   };
   if (!await updateStateCommentLocked(waitingState, "Could not return state to waiting_codex after committing fixes.")) {
     return;
@@ -20835,7 +20863,17 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     }
     deps.info(`[post-fix] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`);
   } catch (error2) {
-    deps.error(`[post-fix] Failed to post Codex review request: ${error2 instanceof Error ? error2.message : String(error2)}. State is waiting_codex. Manual '@codex review' comment may be needed.`);
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    deps.error(`[post-fix] Failed to post Codex review request: ${message}. Downgrading to stopped/codex_request_failed.`);
+    const stoppedState = {
+      ...waitingState,
+      status: "stopped",
+      stopReason: "codex_request_failed"
+    };
+    if (!await updateStateCommentLocked(stoppedState, "Could not record codex_request_failed stop.")) {
+      return;
+    }
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Failed to post @codex review after the repair commit: ${message}`, config.githubToken);
   }
 }
 async function run() {

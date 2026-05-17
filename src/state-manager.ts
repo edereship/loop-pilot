@@ -82,6 +82,16 @@ function validateState(obj: unknown): obj is ReviewState {
   ) {
     return false;
   }
+  // TY-273 #B4: fixingStartedAt was added after the initial release; tolerate
+  // missing and explicit-null/string shapes. Missing is normalized to null
+  // below so legacy state comments still satisfy the type.
+  if (
+    "fixingStartedAt" in s &&
+    s.fixingStartedAt !== null &&
+    typeof s.fixingStartedAt !== "string"
+  ) {
+    return false;
+  }
 
   // Validate each hash history entry shape
   for (const entry of s.findingsHashHistory) {
@@ -116,6 +126,7 @@ export function createInitialState(): ReviewState {
     status: "initialized",
     stopReason: null,
     previousCheckFailure: null,
+    fixingStartedAt: null,
   };
 }
 
@@ -181,6 +192,8 @@ export function deserializeState(commentBody: string): ReviewState | null {
       ...(parsed as ReviewState),
       previousCheckFailure:
         (parsed as { previousCheckFailure?: string | null }).previousCheckFailure ?? null,
+      fixingStartedAt:
+        (parsed as { fixingStartedAt?: string | null }).fixingStartedAt ?? null,
     };
     return normalized;
   } catch {

@@ -19140,7 +19140,7 @@ function info(message) {
 
 // dist/severity-parser.js
 var CODEX_FOOTER_PATTERN = /\n?Useful\? React with 👍 \/ 👎\.\s*$/;
-var NO_FINDINGS_PATTERN = /\bno\s+(?:p0\s*\/\s*p1\s+)?findings?\b|\b0\s+findings?\b|\bno\s+issues?\b/i;
+var NO_FINDINGS_PATTERN = /\bno\s+(?:p[0-3](?:\s*\/\s*p[0-3])*\s+)?findings?\b|\b0\s+findings?\b|\bno\s+issues?\b/i;
 var STAGE1_REGEX = /^\s*\[?(P[0-3])\]?\s*(.*)/;
 var STAGE2_REGEX = /^\s*(?:\*{2})?\[?(P[0-3])\]?(?:\*{2})?\s*(.*)/;
 var IMAGE_BADGE_REGEX = /!\[(P[0-3])\s+Badge\]\([^)]+\)(?:\s*<\/sub>)*\s*(.*)$/i;
@@ -19427,6 +19427,9 @@ function validateState(obj) {
   if ("previousCheckFailure" in s && s.previousCheckFailure !== null && typeof s.previousCheckFailure !== "string") {
     return false;
   }
+  if ("fixingStartedAt" in s && s.fixingStartedAt !== null && typeof s.fixingStartedAt !== "string") {
+    return false;
+  }
   for (const entry2 of s.findingsHashHistory) {
     if (typeof entry2 !== "object" || entry2 === null)
       return false;
@@ -19450,7 +19453,8 @@ function createInitialState() {
     findingsHashHistory: [],
     status: "initialized",
     stopReason: null,
-    previousCheckFailure: null
+    previousCheckFailure: null,
+    fixingStartedAt: null
   };
 }
 function serializeState(state) {
@@ -19485,7 +19489,8 @@ function deserializeState(commentBody) {
     }
     const normalized = {
       ...parsed,
-      previousCheckFailure: parsed.previousCheckFailure ?? null
+      previousCheckFailure: parsed.previousCheckFailure ?? null,
+      fixingStartedAt: parsed.fixingStartedAt ?? null
     };
     return normalized;
   } catch {
@@ -20126,7 +20131,8 @@ var STOP_REASON_LABELS = {
   action_failure: "Claude Code Action exited with a non-zero status",
   scope_violation: "Auto-fix blocked \u2014 the repair diff touched protected paths.",
   max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
-  codex_usage_limit: "Codex reported usage / quota limits; no review was performed"
+  codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
+  codex_request_failed: "Re-posting @codex review failed; auto-review stopped to avoid silent deadlock"
 };
 
 // dist/comment-poster.js
@@ -21101,7 +21107,7 @@ async function runPreFix(config, deps = defaultDeps3) {
   }
   if (state.status === "fixing") {
     const STALE_THRESHOLD_MS = 30 * 60 * 1e3;
-    const fixingStartedAt = state.lastCodexReviewReceivedAt;
+    const fixingStartedAt = state.fixingStartedAt ?? state.lastCodexReviewReceivedAt;
     if (fixingStartedAt === null) {
       deps.warning("[pre-fix] Status is 'fixing' with null timestamp. Treating as stale.");
     }
@@ -21114,7 +21120,8 @@ async function runPreFix(config, deps = defaultDeps3) {
     const recoveredState = {
       ...state,
       status: "stopped",
-      stopReason: "state_corrupted"
+      stopReason: "state_corrupted",
+      fixingStartedAt: null
     };
     if (!await updateStateCommentLocked(recoveredState, "Could not recover stale fixing state."))
       return;
@@ -21237,7 +21244,11 @@ async function runPreFix(config, deps = defaultDeps3) {
     iterationCount: newIteration,
     status: "fixing",
     lastFindingsHash: currentHash,
-    findingsHashHistory: updatedHashHistory
+    findingsHashHistory: updatedHashHistory,
+    // TY-273 #B4: record the actual fixing entry timestamp so the
+    // stale-detector in subsequent pre-fix runs can distinguish a genuinely
+    // hung `fixing` from one that legitimately resumed via /restart-review.
+    fixingStartedAt: deps.now().toISOString()
   };
   if (!await updateStateCommentLocked(fixingState, "Could not claim the hidden comment state for fixing."))
     return;

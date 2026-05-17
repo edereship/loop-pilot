@@ -85,6 +85,41 @@ describe("parseSeverity", () => {
     expect(result.title).toBe("Review details");
   });
 
+  // --- TY-273 #B1: single-severity "No PN findings" forms must not fall
+  //                 through to FALLBACK_KEYWORD_REGEX and be reclassified
+  //                 as a finding of that severity. ---
+
+  it('TY-273 #B1: "No P0 findings" returns null severity (not P0)', () => {
+    const result = parseSeverity("No P0 findings");
+    expect(result.severity).toBeNull();
+    expect(result.title).toBe("No P0 findings");
+  });
+
+  it('TY-273 #B1: "No P1 findings" returns null severity (not P1)', () => {
+    const result = parseSeverity("No P1 findings");
+    expect(result.severity).toBeNull();
+  });
+
+  it('TY-273 #B1: "No P2 findings" returns null severity', () => {
+    const result = parseSeverity("No P2 findings");
+    expect(result.severity).toBeNull();
+  });
+
+  it('TY-273 #B1: "No P0/P1 findings" continues to match (regression guard)', () => {
+    const result = parseSeverity("No P0/P1 findings");
+    expect(result.severity).toBeNull();
+  });
+
+  it('TY-273 #B1: "No P0/P1/P2 findings" matches the extended chain', () => {
+    const result = parseSeverity("No P0/P1/P2 findings");
+    expect(result.severity).toBeNull();
+  });
+
+  it('TY-273 #B1: "No P2/P3 findings" matches the extended chain', () => {
+    const result = parseSeverity("No P2/P3 findings");
+    expect(result.severity).toBeNull();
+  });
+
   // --- No match ---
 
   it('returns null severity for "No severity badge at all"', () => {

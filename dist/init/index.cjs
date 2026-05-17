@@ -19359,6 +19359,9 @@ function validateState(obj) {
   if ("previousCheckFailure" in s && s.previousCheckFailure !== null && typeof s.previousCheckFailure !== "string") {
     return false;
   }
+  if ("fixingStartedAt" in s && s.fixingStartedAt !== null && typeof s.fixingStartedAt !== "string") {
+    return false;
+  }
   for (const entry of s.findingsHashHistory) {
     if (typeof entry !== "object" || entry === null)
       return false;
@@ -19382,7 +19385,8 @@ function createInitialState() {
     findingsHashHistory: [],
     status: "initialized",
     stopReason: null,
-    previousCheckFailure: null
+    previousCheckFailure: null,
+    fixingStartedAt: null
   };
 }
 function serializeState(state) {
@@ -19417,7 +19421,8 @@ function deserializeState(commentBody) {
     }
     const normalized = {
       ...parsed,
-      previousCheckFailure: parsed.previousCheckFailure ?? null
+      previousCheckFailure: parsed.previousCheckFailure ?? null,
+      fixingStartedAt: parsed.fixingStartedAt ?? null
     };
     return normalized;
   } catch {

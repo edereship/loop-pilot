@@ -35,6 +35,20 @@ export interface ReviewState {
    * or succeeded.
    */
   previousCheckFailure: string | null;
+  /**
+   * Timestamp at which pre-fix transitioned into `fixing` for the current
+   * iteration (TY-273 #B4). Pre-fix sets it to `now()` whenever Phase 3
+   * claims the `fixing` status; post-fix clears it back to null on every
+   * terminal transition (`waiting_codex` / `done` / `stopped`). Used by the
+   * `fixing` stale-detection in pre-fix instead of `lastCodexReviewReceivedAt`,
+   * which is preserved across `/restart-review` and would falsely trip the
+   * stale threshold on restart-recovered fixing states.
+   *
+   * Legacy state comments written before this field was added are normalized
+   * to null by `deserializeState`. The stale detector treats null as "not
+   * stale" so existing in-flight PRs do not regress to `state_corrupted`.
+   */
+  fixingStartedAt: string | null;
 }
 
 export interface FindingsHashEntry {
@@ -77,6 +91,8 @@ export const STOP_REASON_LABELS = {
   scope_violation: "Auto-fix blocked — the repair diff touched protected paths.",
   max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
   codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
+  codex_request_failed:
+    "Re-posting @codex review failed; auto-review stopped to avoid silent deadlock",
 } as const satisfies Record<string, string>;
 
 export type StopReason = keyof typeof STOP_REASON_LABELS;

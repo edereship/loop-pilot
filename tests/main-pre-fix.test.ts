@@ -143,6 +143,9 @@ describe("runPreFix", () => {
       commentUpdatedAt: "2026-05-14T11:00:00Z",
       state: makeState({
         status: "fixing",
+        // TY-273 #B4: stale detection now anchors on `fixingStartedAt`. The
+        // legacy fallback to `lastCodexReviewReceivedAt` is still exercised
+        // here to confirm pre-TY-273 state comments keep recovering.
         lastCodexReviewReceivedAt: staleStartedAt,
       }),
     });
@@ -159,6 +162,70 @@ describe("runPreFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalled();
+  });
+
+  // TY-273 #B4: `fixingStartedAt` is the authoritative stale-detection
+  // timestamp once a state comment has been written by post-TY-273 code.
+
+  it("TY-273 #B4: prefers fixingStartedAt over lastCodexReviewReceivedAt for stale detection", async () => {
+    // lastCodexReviewReceivedAt looks ancient (would trip stale recovery),
+    // but a fresh fixingStartedAt means the fixing claim is recent so the
+    // loop should skip without downgrading.
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T11:00:00Z",
+      state: makeState({
+        status: "fixing",
+        lastCodexReviewReceivedAt: "2026-05-14T10:00:00Z",
+        fixingStartedAt: "2026-05-14T11:55:00Z",
+      }),
+    });
+
+    await runPreFix(baseConfig, deps);
+
+    expect(deps.outputs.should_run).toBe("false");
+    expect(deps.updateStateComment).not.toHaveBeenCalled();
+    expect(deps.postStopComment).not.toHaveBeenCalled();
+  });
+
+  it("TY-273 #B4: persists fixingStartedAt = now() on the Phase 3 fixing transition", async () => {
+    const findings: RawReviewComment[] = [
+      {
+        id: 300,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P1 Missing null guard\n\nGuard the dereference.",
+        path: "src/foo.ts",
+        line: 9,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex", iterationCount: 1 }),
+      },
+      findings,
+    );
+
+    await runPreFix(baseConfig, deps);
+
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "fixing",
+        // mock now() returns 2026-05-14T12:00:00Z.
+        fixingStartedAt: "2026-05-14T12:00:00.000Z",
+      }),
+      "github-token",
+      expect.any(Object),
+    );
   });
 
   it("does not double-process the same trigger comment", async () => {

@@ -286,6 +286,47 @@ describe("createInitialState", () => {
   });
 });
 
+describe("fixingStartedAt round-trip (TY-273 #B4)", () => {
+  it("includes fixingStartedAt in createInitialState (null by default)", () => {
+    const state = createInitialState();
+    expect(state.fixingStartedAt).toBeNull();
+  });
+
+  it("round-trips fixingStartedAt through serialize / deserialize", () => {
+    const state = { ...createInitialState(), fixingStartedAt: "2026-05-17T12:30:00Z" };
+    const body = serializeState(state);
+    const restored = deserializeState(body);
+    expect(restored?.fixingStartedAt).toBe("2026-05-17T12:30:00Z");
+  });
+
+  it("normalizes legacy state without fixingStartedAt to null", () => {
+    const legacyBody = [
+      "Auto-review state is stored in this comment.",
+      "",
+      "<!-- auto-review-state",
+      JSON.stringify(
+        {
+          iterationCount: 0,
+          lastProcessedReviewId: null,
+          lastClaudeCommitSha: null,
+          lastCodexRequestCommentId: null,
+          lastCodexReviewReceivedAt: null,
+          lastFindingsHash: null,
+          findingsHashHistory: [],
+          status: "waiting_codex",
+          stopReason: null,
+          previousCheckFailure: null,
+        },
+        null,
+        2,
+      ),
+      "-->",
+    ].join("\n");
+    const restored = deserializeState(legacyBody);
+    expect(restored?.fixingStartedAt).toBeNull();
+  });
+});
+
 describe("deserializeState (forward compatibility)", () => {
   it("normalizes a state comment that predates the previousCheckFailure field", () => {
     // Hand-crafted body shaped like a pre-extension state comment to verify

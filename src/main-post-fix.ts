@@ -379,6 +379,8 @@ export async function runPostFix(
       status: "stopped",
       stopReason: opts.stopReason,
       previousCheckFailure,
+      // TY-273 #B4: leaving stale entry would mislead the next pre-fix run.
+      fixingStartedAt: null,
     };
     if (
       !(await updateStateCommentLocked(
@@ -503,14 +505,37 @@ export async function runPostFix(
     deps.warning(
       "[post-fix] claude-code-action made no file changes. Treating as no-op success and re-requesting Codex review.",
     );
+    // TY-273 #B3: roll back the optimistic Phase 3 bookkeeping. Pre-fix
+    // appended the current findings hash to `findingsHashHistory` and bumped
+    // `iterationCount` before claude-code-action ran. When no file edits
+    // result, leaving those updates in place poisons two downstream paths:
+    //   1. The tier-aware loop detector (TY-243) sees the just-written hash
+    //      as a "previous" entry and short-circuits the next iteration into
+    //      `loop_detected` even though no fix was actually attempted.
+    //   2. iterationCount silently advances toward MAX_REVIEW_ITERATIONS
+    //      for runs that produced nothing.
+    // Mirror the rollback in `failureExit` so the no-op path leaves state
+    // identical to "pre-fix never ran Phase 3" for retry purposes.
+    const rolledBackHistory = state.findingsHashHistory.slice(0, -1);
+    const rolledBackLastHash =
+      rolledBackHistory.length > 0
+        ? rolledBackHistory[rolledBackHistory.length - 1].hash
+        : null;
     const waitingState: ReviewState = {
       ...state,
+      iterationCount: Math.max(0, state.iterationCount - 1),
+      findingsHashHistory: rolledBackHistory,
+      lastFindingsHash: rolledBackLastHash,
       status: "waiting_codex",
       // TY-258: clear any `max_turns_exceeded` (or other) stop reason carried
       // over from a previous stop + `/restart-review`, so escalation stays
       // one-shot once the action finishes without an error outcome.
       stopReason: null,
       previousCheckFailure: null,
+      // TY-273 #B4: fixingStartedAt only describes the *current* fixing
+      // attempt; clearing it on every terminal transition keeps the next
+      // `fixing` claim's stale window honest.
+      fixingStartedAt: null,
     };
     if (
       !(await updateStateCommentLocked(
@@ -536,8 +561,35 @@ export async function runPostFix(
         "Could not persist Codex review request comment id after no-op run.",
       );
     } catch (error) {
+      // TY-273 #B5: same deadlock as the committed-fix Phase 4 path —
+      // leaving status at waiting_codex with a stale request id silently
+      // strands the loop. Downgrade so the operator gets a notification.
+      const message = error instanceof Error ? error.message : String(error);
       deps.error(
-        `[post-fix] Failed to re-request Codex review: ${error instanceof Error ? error.message : String(error)}`,
+        `[post-fix] Failed to re-request Codex review (no-op path): ${message}. Downgrading to stopped/codex_request_failed.`,
+      );
+      const stoppedState: ReviewState = {
+        ...waitingState,
+        status: "stopped",
+        stopReason: "codex_request_failed",
+      };
+      if (
+        !(await updateStateCommentLocked(
+          stoppedState,
+          "Could not record codex_request_failed stop after no-op run.",
+        ))
+      ) {
+        return;
+      }
+      await deps.postStopComment(
+        config.repoOwner,
+        config.repoName,
+        config.prNumber,
+        "codex_request_failed",
+        inputs.triggerCommentId,
+        0,
+        `Failed to post @codex review after a no-op claude-code-action run: ${message}`,
+        config.githubToken,
       );
     }
     return;
@@ -718,6 +770,8 @@ export async function runPostFix(
     // should fall back to normal tiering (one-shot escalation).
     stopReason: null,
     previousCheckFailure: null,
+    // TY-273 #B4: see no-op path and failureExit.
+    fixingStartedAt: null,
   };
   if (
     !(await updateStateCommentLocked(
@@ -752,9 +806,39 @@ export async function runPostFix(
       `[post-fix] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`,
     );
   } catch (error) {
+    // TY-273 #B5: when @codex review re-request fails, leaving status at
+    // `waiting_codex` with the stale `lastCodexRequestCommentId` deadlocks
+    // the loop (no new Codex review will arrive, no trigger fires). Downgrade
+    // to `stopped/codex_request_failed` so `postTerminalNotification` surfaces
+    // a top-level comment and operators can `/restart-review` once Codex is
+    // reachable again. The committed repair is preserved on the branch — we
+    // only roll back the *pending* re-review request.
+    const message = error instanceof Error ? error.message : String(error);
     deps.error(
-      `[post-fix] Failed to post Codex review request: ${error instanceof Error ? error.message : String(error)}. ` +
-        "State is waiting_codex. Manual '@codex review' comment may be needed.",
+      `[post-fix] Failed to post Codex review request: ${message}. Downgrading to stopped/codex_request_failed.`,
+    );
+    const stoppedState: ReviewState = {
+      ...waitingState,
+      status: "stopped",
+      stopReason: "codex_request_failed",
+    };
+    if (
+      !(await updateStateCommentLocked(
+        stoppedState,
+        "Could not record codex_request_failed stop.",
+      ))
+    ) {
+      return;
+    }
+    await deps.postStopComment(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      "codex_request_failed",
+      inputs.triggerCommentId,
+      0,
+      `Failed to post @codex review after the repair commit: ${message}`,
+      config.githubToken,
     );
   }
 }

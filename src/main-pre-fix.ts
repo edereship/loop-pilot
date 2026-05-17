@@ -300,7 +300,19 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
 
   if (state.status === "fixing") {
     const STALE_THRESHOLD_MS = 30 * 60 * 1000;
-    const fixingStartedAt = state.lastCodexReviewReceivedAt;
+    // TY-273 #B4: use the dedicated `fixingStartedAt` timestamp set when
+    // Phase 3 transitioned into `fixing`. Earlier code reused
+    // `lastCodexReviewReceivedAt`, which is preserved across
+    // `/restart-review` and crash recovery; a soft-restarted fixing state
+    // (or a state restored from a much older Codex review) would falsely
+    // trip the stale threshold and downgrade to `state_corrupted`.
+    //
+    // Legacy state comments (pre-TY-273) carry `fixingStartedAt: null`. We
+    // fall back to `lastCodexReviewReceivedAt` for those so the recovery
+    // path is preserved; future writes populate `fixingStartedAt` and the
+    // fallback stops being relevant.
+    const fixingStartedAt =
+      state.fixingStartedAt ?? state.lastCodexReviewReceivedAt;
 
     if (fixingStartedAt === null) {
       deps.warning(
@@ -324,6 +336,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       ...state,
       status: "stopped",
       stopReason: "state_corrupted",
+      fixingStartedAt: null,
     };
     if (
       !(await updateStateCommentLocked(
@@ -610,6 +623,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     status: "fixing",
     lastFindingsHash: currentHash,
     findingsHashHistory: updatedHashHistory,
+    // TY-273 #B4: record the actual fixing entry timestamp so the
+    // stale-detector in subsequent pre-fix runs can distinguish a genuinely
+    // hung `fixing` from one that legitimately resumed via /restart-review.
+    fixingStartedAt: deps.now().toISOString(),
   };
   if (
     !(await updateStateCommentLocked(
