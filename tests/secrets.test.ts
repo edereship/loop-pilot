@@ -35,6 +35,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     claudeCodeModelBase: "claude-sonnet-4-6",
     claudeCodeModelEscalated: "claude-opus-4-7",
     autoMergeOnClean: false,
+    autoMergePollSeconds: 15,
+    autoMergeTimeoutMinutes: 10,
     severityThreshold: "P2",
     autoReviewBlockPaths: "",
     scopeMaxFiles: 0,

@@ -19253,6 +19253,8 @@ function loadBaseConfig() {
     claudeCodeModelBase: input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE),
     claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED),
     autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
+    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS", 15, 1),
+    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
     severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
     autoReviewBlockPaths: input("auto-review-block-paths", "AUTO_REVIEW_BLOCK_PATHS", ""),
     scopeMaxFiles: intInput("scope-max-files", "AUTO_REVIEW_SCOPE_MAX_FILES", 0),
@@ -20221,13 +20223,135 @@ async function postCodexReviewRequest(owner, name, pr, token) {
 }
 
 // dist/pr-merger.js
-async function enableAutoMergeSquash(owner, name, pr, token, log) {
+var import_promises = require("node:timers/promises");
+var FAILED_CONCLUSIONS = /* @__PURE__ */ new Set([
+  "failure",
+  "cancelled",
+  "timed_out",
+  "action_required",
+  "startup_failure",
+  "stale"
+]);
+var DEFAULT_AUTO_MERGE_POLL_INTERVAL_MS = 15 * 1e3;
+var DEFAULT_AUTO_MERGE_TIMEOUT_MS = 10 * 60 * 1e3;
+function defaultMergerDeps(overrides = {}) {
+  return {
+    getPrHeadSha: async (owner, name, pr, token) => {
+      const stdout = await ghApi([
+        "api",
+        `/repos/${owner}/${name}/pulls/${pr}`,
+        "--jq",
+        ".head.sha"
+      ], token);
+      return stdout.trim();
+    },
+    listWorkflowRuns: async (owner, name, sha, token) => {
+      const stdout = await ghApi([
+        "api",
+        "--paginate",
+        `/repos/${owner}/${name}/actions/runs?head_sha=${encodeURIComponent(sha)}&per_page=100`,
+        "--jq",
+        ".workflow_runs[]"
+      ], token);
+      const runs = [];
+      for (const line of stdout.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed === "")
+          continue;
+        try {
+          runs.push(JSON.parse(trimmed));
+        } catch {
+        }
+      }
+      return runs;
+    },
+    mergeSquash: async (owner, name, pr, expectedHeadSha, token) => {
+      await ghApi([
+        "pr",
+        "merge",
+        String(pr),
+        "--squash",
+        "--match-head-commit",
+        expectedHeadSha,
+        "--repo",
+        `${owner}/${name}`
+      ], token);
+    },
+    sleep: (ms) => (0, import_promises.setTimeout)(ms),
+    now: () => Date.now(),
+    selfRunId: process.env.GITHUB_RUN_ID ?? "",
+    pollIntervalMs: DEFAULT_AUTO_MERGE_POLL_INTERVAL_MS,
+    timeoutMs: DEFAULT_AUTO_MERGE_TIMEOUT_MS,
+    ...overrides
+  };
+}
+function errMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+async function mergeIfChecksPass(owner, name, pr, token, log, overrides = {}) {
+  const deps = defaultMergerDeps(overrides);
+  let initialHeadSha;
   try {
-    await ghApi(["pr", "merge", String(pr), "--auto", "--squash", "--repo", `${owner}/${name}`], token);
-    log.info(`[pr-merger] Auto-merge (squash) enabled for PR #${pr}.`);
-  } catch (error2) {
-    const message = error2 instanceof Error ? error2.message : String(error2);
-    log.warning(`[pr-merger] Failed to enable auto-merge for PR #${pr} (non-fatal): ${message}`);
+    initialHeadSha = await deps.getPrHeadSha(owner, name, pr, token);
+  } catch (err) {
+    log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: failed to read PR HEAD sha (${errMessage(err)}).`);
+    return;
+  }
+  if (initialHeadSha === "") {
+    log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: empty HEAD sha.`);
+    return;
+  }
+  log.info(`[pr-merger] Auto-merge check for PR #${pr} at ${initialHeadSha} (poll ${Math.round(deps.pollIntervalMs / 1e3)}s, timeout ${Math.round(deps.timeoutMs / 6e4)} min).`);
+  const startedAt = deps.now();
+  let pollCount = 0;
+  while (true) {
+    if (pollCount > 0) {
+      let currentSha;
+      try {
+        currentSha = await deps.getPrHeadSha(owner, name, pr, token);
+      } catch (err) {
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: failed to re-read PR HEAD during polling (${errMessage(err)}).`);
+        return;
+      }
+      if (currentSha !== initialHeadSha) {
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: PR HEAD changed during CI wait (${initialHeadSha} \u2192 ${currentSha}). The new commit needs its own review/CI cycle; re-trigger via /restart-review.`);
+        return;
+      }
+    }
+    let runs;
+    try {
+      runs = await deps.listWorkflowRuns(owner, name, initialHeadSha, token);
+    } catch (err) {
+      log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: failed to list workflow runs (${errMessage(err)}).`);
+      return;
+    }
+    const others = deps.selfRunId === "" ? runs : runs.filter((r) => String(r.id) !== deps.selfRunId);
+    const failed = others.filter((r) => r.conclusion !== null && FAILED_CONCLUSIONS.has(r.conclusion));
+    if (failed.length > 0) {
+      const names = failed.map((r) => `${r.name} (${r.conclusion})`).join(", ");
+      log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: ${failed.length} CI run(s) failed: ${names}.`);
+      return;
+    }
+    const pending = others.filter((r) => r.status !== "completed");
+    if (pending.length === 0) {
+      try {
+        await deps.mergeSquash(owner, name, pr, initialHeadSha, token);
+        log.info(`[pr-merger] Auto-merge (squash) succeeded for PR #${pr} at ${initialHeadSha}.`);
+      } catch (err) {
+        log.warning(`[pr-merger] Failed to merge PR #${pr} (non-fatal): ${errMessage(err)}.`);
+      }
+      return;
+    }
+    const elapsedMs = deps.now() - startedAt;
+    if (elapsedMs >= deps.timeoutMs) {
+      const pendingNames2 = pending.map((r) => r.name).join(", ");
+      log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${Math.round(deps.timeoutMs / 6e4)} min with ${pending.length} CI run(s) still pending: ${pendingNames2}.`);
+      return;
+    }
+    pollCount += 1;
+    const pendingNames = pending.map((r) => r.name).join(", ");
+    log.info(`[pr-merger] Waiting for ${pending.length} CI run(s) on PR #${pr} (poll ${pollCount}): ${pendingNames}.`);
+    await deps.sleep(deps.pollIntervalMs);
   }
 }
 
@@ -20774,7 +20898,7 @@ function isCodexUsageLimitMessage(body) {
 }
 
 // dist/main-pre-fix.js
-function sleep(ms) {
+function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 var defaultDeps3 = {
@@ -20785,7 +20909,7 @@ var defaultDeps3 = {
   postCompletionComment,
   postStopComment,
   postInitIncompleteComment,
-  enableAutoMergeSquash,
+  mergeIfChecksPass,
   fetchPrLabels,
   handleRestartCommand,
   setSecret: (secret) => setSecret(secret),
@@ -20793,7 +20917,7 @@ var defaultDeps3 = {
   info: (message) => info(message),
   warning: (message) => warning(message),
   error: (message) => error(message),
-  sleep,
+  sleep: sleep2,
   now: () => /* @__PURE__ */ new Date(),
   readHeadSha: () => readHeadSha("pre-fix"),
   checkoutBranch
@@ -20970,7 +21094,10 @@ async function runPreFix(config, deps = defaultDeps3) {
       return;
     await deps.postCompletionComment(config.repoOwner, config.repoName, config.prNumber, doneState.iterationCount, config.githubToken);
     if (config.autoMergeOnClean) {
-      await deps.enableAutoMergeSquash(config.repoOwner, config.repoName, config.prNumber, config.githubToken, { info: deps.info, warning: deps.warning });
+      await deps.mergeIfChecksPass(config.repoOwner, config.repoName, config.prNumber, config.githubToken, { info: deps.info, warning: deps.warning }, {
+        pollIntervalMs: config.autoMergePollSeconds * 1e3,
+        timeoutMs: config.autoMergeTimeoutMinutes * 60 * 1e3
+      });
     }
     return;
   }

@@ -7,15 +7,39 @@
 
 PR #7 で実測済み。Codex の `Codex Review: Didn't find any major issues.` コメントを受け、Workflow B が `done / no_findings` に更新し、完了コメントを投稿した。
 
-**オプション: `done / no_findings` 到達時の自動マージ (TY-245):**
+**オプション: `done / no_findings` 到達時の自動マージ (TY-245, TY-277 で hardened):**
 
-Repository variable `AUTO_REVIEW_AUTO_MERGE=true` を設定すると、`done / no_findings` への遷移直後に `gh pr merge --auto --squash` を呼び出し、GitHub native auto-merge を有効化する。GitHub 側で required status checks 通過後にマージされるため、ブランチ保護下でも安全に動作する。
+Repository variable `AUTO_REVIEW_AUTO_MERGE=true` を設定すると、`done / no_findings` への遷移直後に `mergeIfChecksPass`（`src/pr-merger.ts`）を呼び出し、HEAD commit の workflow run を自前で確認してから `gh pr merge --squash` でマージする。`gh pr merge --auto` は使わない（branch protection の有無に依存せず、CI 失敗時のバイパスを防ぐため）。
+
+動作:
+
+1. PR の HEAD sha を取得
+2. その sha に紐づく workflow runs を `GET /repos/.../actions/runs?head_sha=...` で列挙
+3. 自分自身（`GITHUB_RUN_ID` が一致する auto-review-loop run）は除外
+4. 1 つでも `failure` / `cancelled` / `timed_out` / `action_required` / `startup_failure` / `stale` conclusion があれば **マージしない** + warning
+5. すべて `completed` でかつ failure 無しなら `gh pr merge --squash --match-head-commit <verified-sha>` を即発行（GitHub 側でも sha 一致を強制してチェック後の race を防ぐ）
+6. まだ `in_progress` / `queued` の run があれば `AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS` (default 15) 間隔で polling
+7. polling 中に PR HEAD sha が変化したら（人が新 commit を push したら）**マージしない** + warning
+8. `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` (default 10) を超過したら **マージしない** + warning
+9. `/repos/.../actions/runs` は `--paginate` で全ページ取得するので、100 件超の workflow run があっても page 2+ の failure を見落とさない
+
+`AUTO_REVIEW_AUTO_MERGE=true` を使う場合、workflow に `actions: read` 権限が必要（API 読みのため）。未付与だと auto-merge が常に skip される（[security.md](security.md) 参照）。
+
+仕様の前提:
 
 - デフォルト `false`（従来挙動・人手マージ維持）
 - 発火するのは `done / no_findings` のみ。`max_iterations` / `loop_detected` / `claude_api_error` 等の停止では絶対にマージしない
 - マージ方式は **squash 固定**
-- `gh pr merge --auto` 自体が失敗した場合（権限不足、auto-merge 設定が repo で無効など）はワークフローは success のまま warning ログのみ。人手マージ運用は維持される
-- `done` 後に人間が新たに commit を push した場合は、auto-merge 有効のまま CI 通過時にマージされる（GitHub native auto-merge の仕様）。再レビューしたい運用では `AUTO_REVIEW_AUTO_MERGE=false` のまま使う
+- `gh pr merge --squash` 自体や API 呼び出しが失敗した場合（権限不足、`mergeable=false`、auto-merge 設定が repo で無効など）はワークフローは success のまま warning ログのみ。人手マージ運用は維持される
+- `done` 後に人間が新たに commit を push した場合は polling 中に HEAD 変化を検知して skip する。新 commit を再評価したい場合は `/restart-review` を使う
+
+関連 Repository variable / action input:
+
+| variable | input | default | 役割 |
+|----------|-------|---------|------|
+| `AUTO_REVIEW_AUTO_MERGE` | `auto-merge-on-clean` | `false` | 機能の opt-in トグル |
+| `AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS` | `auto-merge-poll-seconds` | `15` | polling 間隔 |
+| `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` | `auto-merge-timeout-minutes` | `10` | CI 待ちの上限 |
 
 ### 強制停止
 - iteration_count >= `MAX_REVIEW_ITERATIONS`

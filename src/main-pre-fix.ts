@@ -25,7 +25,7 @@ import {
   postStopComment as defaultPostStopComment,
   postInitIncompleteComment as defaultPostInitIncompleteComment,
 } from "./comment-poster.js";
-import { enableAutoMergeSquash as defaultEnableAutoMergeSquash } from "./pr-merger.js";
+import { mergeIfChecksPass as defaultMergeIfChecksPass } from "./pr-merger.js";
 import { registerAllSecrets } from "./secrets.js";
 import {
   fetchPrLabels as defaultFetchPrLabels,
@@ -81,7 +81,7 @@ export interface PreFixDeps {
   postCompletionComment: typeof defaultPostCompletionComment;
   postStopComment: typeof defaultPostStopComment;
   postInitIncompleteComment: typeof defaultPostInitIncompleteComment;
-  enableAutoMergeSquash: typeof defaultEnableAutoMergeSquash;
+  mergeIfChecksPass: typeof defaultMergeIfChecksPass;
   fetchPrLabels: typeof defaultFetchPrLabels;
   handleRestartCommand: typeof defaultHandleRestartCommand;
   setSecret: (secret: string) => void;
@@ -105,7 +105,7 @@ const defaultDeps: PreFixDeps = {
   postCompletionComment: defaultPostCompletionComment,
   postStopComment: defaultPostStopComment,
   postInitIncompleteComment: defaultPostInitIncompleteComment,
-  enableAutoMergeSquash: defaultEnableAutoMergeSquash,
+  mergeIfChecksPass: defaultMergeIfChecksPass,
   fetchPrLabels: defaultFetchPrLabels,
   handleRestartCommand: defaultHandleRestartCommand,
   setSecret: (secret) => core.setSecret(secret),
@@ -489,12 +489,16 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       config.githubToken,
     );
     if (config.autoMergeOnClean) {
-      await deps.enableAutoMergeSquash(
+      await deps.mergeIfChecksPass(
         config.repoOwner,
         config.repoName,
         config.prNumber,
         config.githubToken,
         { info: deps.info, warning: deps.warning },
+        {
+          pollIntervalMs: config.autoMergePollSeconds * 1000,
+          timeoutMs: config.autoMergeTimeoutMinutes * 60 * 1000,
+        },
       );
     }
     return;

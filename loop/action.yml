@@ -110,9 +110,17 @@ inputs:
     required: false
     default: ""
   auto-merge-on-clean:
-    description: "Set to 'true' to enable GitHub native auto-merge (squash) when the loop terminates with done/no_findings. Default 'false' preserves manual merge."
+    description: "Set to 'true' to auto-merge (squash) the PR when the loop terminates with done/no_findings. Default 'false' preserves manual merge. Auto-merge waits for every other workflow run on HEAD to settle, refuses to merge if any concluded as failure/cancelled/timed_out/action_required/startup_failure/stale, and bails if HEAD changes during the wait (TY-277)."
     required: false
     default: "false"
+  auto-merge-poll-seconds:
+    description: "Poll interval (seconds) for the CI wait before auto-merge (TY-277). Default 15. Lower bound 1."
+    required: false
+    default: "15"
+  auto-merge-timeout-minutes:
+    description: "Hard timeout (minutes) on the CI wait before auto-merge skips with a warning (TY-277). Default 10. Lower bound 1."
+    required: false
+    default: "10"
   severity-threshold:
     description: "Severity threshold for the auto-fix pipeline. One of P0|P1|P2|P3. Default 'P2' preserves prior behavior (TY-256). NOTE (TY-268 #23): the parser fallback only catches P0 / P1 keywords without an explicit badge. When using P2 or P3 thresholds, ensure Codex prompts emit explicit severity badges for every finding — otherwise P2/P3 findings without a badge fall through to the `unparseable` counter and are not auto-fixed."
     required: false
@@ -173,6 +181,8 @@ runs:
         claude-code-model-base: ${{ inputs.claude-code-model-base }}
         claude-code-model-escalated: ${{ inputs.claude-code-model-escalated }}
         auto-merge-on-clean: ${{ inputs.auto-merge-on-clean }}
+        auto-merge-poll-seconds: ${{ inputs.auto-merge-poll-seconds }}
+        auto-merge-timeout-minutes: ${{ inputs.auto-merge-timeout-minutes }}
         severity-threshold: ${{ inputs.severity-threshold }}
 
     - name: Claude Code Action (repo-level repair)

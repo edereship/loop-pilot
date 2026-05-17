@@ -42,10 +42,23 @@ export interface BaseConfig {
   //   variables to the same value to operate without tiering.
   claudeCodeModelBase: string;
   claudeCodeModelEscalated: string;
-  // Opt-in PR auto-merge (TY-245). When true, the loop calls
-  // `gh pr merge --auto --squash` after a `done / no_findings` transition.
-  // Other stop reasons never enable auto-merge.
+  // Opt-in PR auto-merge (TY-245, hardened in TY-277). When true, the loop
+  // calls `mergeIfChecksPass` after a `done / no_findings` transition: it
+  // polls HEAD's workflow runs (excluding the loop's own run) and merges
+  // with `gh pr merge --squash` only when every other run has a non-failed
+  // conclusion. Other stop reasons never enable auto-merge.
   autoMergeOnClean: boolean;
+  /**
+   * Poll interval (seconds) between workflow-run status reads while waiting
+   * for CI to settle before auto-merge. Default 15. Lower bound 1 to keep
+   * the loop from spinning.
+   */
+  autoMergePollSeconds: number;
+  /**
+   * Hard timeout (minutes) on the CI wait before `mergeIfChecksPass` skips
+   * with a warning. Default 10. Lower bound 1.
+   */
+  autoMergeTimeoutMinutes: number;
   // Severity threshold (TY-256). Findings whose severity is strictly below the
   // threshold (numerically larger; e.g., P3 when threshold is P2) are excluded
   // from the auto-fix pipeline and counted under `belowThreshold` in observability
@@ -210,6 +223,18 @@ function loadBaseConfig(): BaseConfig {
       DEFAULT_CLAUDE_CODE_MODEL_ESCALATED,
     ),
     autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
+    autoMergePollSeconds: intInput(
+      "auto-merge-poll-seconds",
+      "AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS",
+      15,
+      1,
+    ),
+    autoMergeTimeoutMinutes: intInput(
+      "auto-merge-timeout-minutes",
+      "AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES",
+      10,
+      1,
+    ),
     severityThreshold: severityThresholdInput(
       "severity-threshold",
       "AUTO_REVIEW_SEVERITY_THRESHOLD",

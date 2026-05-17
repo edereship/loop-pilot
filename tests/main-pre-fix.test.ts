@@ -34,6 +34,8 @@ const baseConfig: Config = {
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-7",
   autoMergeOnClean: false,
+  autoMergePollSeconds: 15,
+  autoMergeTimeoutMinutes: 10,
   severityThreshold: "P2",
   autoReviewBlockPaths: "",
   scopeMaxFiles: 0,
@@ -64,7 +66,7 @@ function makeDeps(
     postCompletionComment: vi.fn().mockResolvedValue(1),
     postStopComment: vi.fn().mockResolvedValue(2),
     postInitIncompleteComment: vi.fn().mockResolvedValue(3),
-    enableAutoMergeSquash: vi.fn().mockResolvedValue(undefined),
+    mergeIfChecksPass: vi.fn().mockResolvedValue(undefined),
     fetchPrLabels: vi.fn().mockResolvedValue(["auto-review-fix"]),
     handleRestartCommand: vi.fn().mockResolvedValue({ handled: false }),
     setSecret: vi.fn(),
@@ -201,7 +203,7 @@ describe("runPreFix", () => {
       expect.any(Object),
     );
     expect(deps.postCompletionComment).toHaveBeenCalled();
-    expect(deps.enableAutoMergeSquash).not.toHaveBeenCalled();
+    expect(deps.mergeIfChecksPass).not.toHaveBeenCalled();
   });
 
   it("enables auto-merge on done/no_findings when AUTO_REVIEW_AUTO_MERGE is true", async () => {
@@ -219,12 +221,16 @@ describe("runPreFix", () => {
     await runPreFix({ ...baseConfig, autoMergeOnClean: true }, deps);
 
     expect(deps.postCompletionComment).toHaveBeenCalled();
-    expect(deps.enableAutoMergeSquash).toHaveBeenCalledWith(
+    expect(deps.mergeIfChecksPass).toHaveBeenCalledWith(
       "team-yubune",
       "test-auto-ai-review",
       99,
       "github-token",
       expect.objectContaining({ info: expect.any(Function), warning: expect.any(Function) }),
+      expect.objectContaining({
+        pollIntervalMs: expect.any(Number),
+        timeoutMs: expect.any(Number),
+      }),
     );
   });
 
@@ -263,7 +269,7 @@ describe("runPreFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalled();
     // auto-merge must only fire on done/no_findings, not max_iterations.
-    expect(deps.enableAutoMergeSquash).not.toHaveBeenCalled();
+    expect(deps.mergeIfChecksPass).not.toHaveBeenCalled();
   });
 
   it("propagates checkoutBranch failure so claude-code-action does not run on the wrong ref", async () => {

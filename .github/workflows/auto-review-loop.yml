@@ -31,6 +31,12 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # actions: read is required by the AUTO_REVIEW_AUTO_MERGE guard (TY-277):
+  # `mergeIfChecksPass` reads `/repos/.../actions/runs?head_sha=...` to
+  # verify every other workflow run on HEAD finished green before calling
+  # `gh pr merge --squash`. Without this scope the API returns 403 and
+  # auto-merge would always skip with a warning even on clean CI.
+  actions: read
 
 jobs:
   auto-fix:
@@ -180,6 +186,8 @@ jobs:
           claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-7' }}
           claude-code-max-turns: ${{ vars.CLAUDE_CODE_MAX_TURNS || '40' }}
           auto-merge-on-clean: ${{ vars.AUTO_REVIEW_AUTO_MERGE || 'false' }}
+          auto-merge-poll-seconds: ${{ vars.AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS || '15' }}
+          auto-merge-timeout-minutes: ${{ vars.AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES || '10' }}
           severity-threshold: ${{ vars.AUTO_REVIEW_SEVERITY_THRESHOLD || 'P2' }}
 
       # PoC: Save Codex comments as artifact for parser validation

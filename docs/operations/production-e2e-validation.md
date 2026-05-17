@@ -215,8 +215,13 @@ Local verification on 2026-05-16:
 Production guidance:
 
 - Keep repository required checks aligned with `CHECK_COMMAND`.
-- If the production repo requires additional CI checks, keep auto-merge disabled
-  until those checks report on the repair commit.
+- Since TY-277, `AUTO_REVIEW_AUTO_MERGE=true` polls every workflow run on the
+  PR HEAD before merging and refuses to merge when any concluded as failure /
+  cancelled / timed_out / action_required / startup_failure / stale. Auto-merge
+  no longer depends on branch protection's required checks; the gate is
+  enforced inside `src/pr-merger.ts:mergeIfChecksPass`. Tune the wait window via
+  `AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS` (default 15) and
+  `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` (default 10).
 - If `CHECK_COMMAND` differs from the required checks, document which signal is
   authoritative for auto-review completion.
 - If required checks must run on repair commits, configure
