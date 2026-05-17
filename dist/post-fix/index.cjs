@@ -19670,8 +19670,6 @@ function clearUrlRewriteRules() {
   }
 }
 function rewriteValueCanRedirect(rewriteValue, destinationUrl) {
-  if (rewriteValue === "")
-    return false;
   return destinationUrl.startsWith(rewriteValue);
 }
 function parseRewriteEntry(line) {
