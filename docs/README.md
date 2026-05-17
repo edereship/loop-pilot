@@ -44,6 +44,7 @@ PoC の主要 E2E は PR #7 / TY-11 で確認済み。
 | [検証コマンドとロールバック](operations/check-and-rollback.md) | CHECK_COMMAND・失敗時ロールバック・出力サニタイズ |
 | [停止条件とリカバリ](operations/stop-and-recovery.md) | 正常/強制/異常停止・停止コメント・`/restart-review` による再実行手順 |
 | [Production E2E Validation Notes](operations/production-e2e-validation.md) | TY-145 の本番移植前 E2E 検証結果・本番 repo で必要な人間確認手順 |
+| [TY-233 Codex 徹底レビュー E2E](operations/ty-233-thorough-review-e2e.md) | 徹底レビュー有効時の `claude-code-action` repair loop E2E 観測値（PR #79）|
 
 ### Testing — テスト
 
