@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import * as core from "@actions/core";
 import {
   loadInitConfig,
-  type Config,
+  type BaseConfig,
 } from "./config.js";
 import { runIfNotVitest } from "./entrypoint.js";
 import { demoteFixingOnCrash } from "./crash-recovery.js";
@@ -177,7 +177,7 @@ function detectMaxTurnsExceeded(executionFileContents: string | null): boolean {
 }
 
 interface FailureExitOptions {
-  config: Config;
+  config: BaseConfig;
   inputs: PostFixInputs;
   state: ReviewState;
   stopReason: StopReason;
@@ -189,7 +189,7 @@ interface FailureExitOptions {
 }
 
 export async function runPostFix(
-  config: Config,
+  config: BaseConfig,
   deps: PostFixDeps = defaultDeps,
   inputs: PostFixInputs = readPostFixInputs(),
 ): Promise<void> {

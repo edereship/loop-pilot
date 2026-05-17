@@ -19148,11 +19148,7 @@ var DEFAULT_SEVERITY_THRESHOLD = "P2";
 var DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
 var DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-7";
 function loadInitConfig() {
-  return {
-    ...loadBaseConfig(),
-    anthropicApiKey: "",
-    claudeCodeOauthToken: ""
-  };
+  return loadBaseConfig();
 }
 function loadBaseConfig() {
   const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
@@ -19165,12 +19161,12 @@ function loadBaseConfig() {
   const codexReviewRequestToken = input("codex-review-request-token", "CODEX_REVIEW_REQUEST_TOKEN", githubToken);
   const autoReviewPushToken = input("auto-review-push-token", "AUTO_REVIEW_PUSH_TOKEN", "");
   return {
-    maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
-    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
+    maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
+    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
-    stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
-    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
+    stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1),
+    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
     githubToken,
     codexReviewRequestToken,
@@ -19227,13 +19223,16 @@ function boolInput(inputName, envName, defaultValue) {
     return false;
   throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
-function intInput(inputName, envName, defaultValue) {
+function intInput(inputName, envName, defaultValue, min) {
   const raw = input(inputName, envName, "");
   if (raw === "")
     return defaultValue;
   const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) {
     throw new Error(`Input ${inputName} / env ${envName} must be an integer, got: ${raw}`);
+  }
+  if (min !== void 0 && parsed < min) {
+    throw new Error(`Input ${inputName} / env ${envName} must be >= ${min}, got: ${parsed}`);
   }
   return parsed;
 }
@@ -19591,8 +19590,9 @@ var SECRET_CONFIG_FIELDS = [
   "claudeCodeOauthToken"
 ];
 function registerAllSecrets(config, setSecret2) {
+  const lookup = config;
   for (const field of SECRET_CONFIG_FIELDS) {
-    const value = config[field];
+    const value = lookup[field];
     if (typeof value === "string" && value !== "") {
       setSecret2(value);
     }

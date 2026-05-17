@@ -1,4 +1,4 @@
-import type { Config } from "./config.js";
+import type { BaseConfig, Config } from "./config.js";
 
 /**
  * `Config` のうち secret 扱いするフィールド。
@@ -44,13 +44,20 @@ export const SECRET_ENV_NAMES = [
  *
  * init/pre-fix/post-fix すべての entrypoint がこの関数を通すことで、新しい secret を
  * `SECRET_CONFIG_FIELDS` に追加するだけで 3 ヶ所すべてに自動反映される。
+ *
+ * TY-267 で `Config` を `BaseConfig` (init / post-fix) と `ClaudeAuthConfig`
+ * (pre-fix) に分割したため、ここでは `BaseConfig` を受けて Anthropic
+ * credential フィールドは optional として扱う。`BaseConfig` を渡した場合は
+ * 対応するキーが存在せず undefined なので、`typeof === "string"` の早期
+ * skip で問題ない。
  */
 export function registerAllSecrets(
-  config: Config,
+  config: BaseConfig | Config,
   setSecret: (secret: string) => void,
 ): void {
+  const lookup = config as Partial<Record<SecretConfigField, unknown>>;
   for (const field of SECRET_CONFIG_FIELDS) {
-    const value = config[field];
+    const value = lookup[field];
     if (typeof value === "string" && value !== "") {
       setSecret(value);
     }

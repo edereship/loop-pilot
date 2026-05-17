@@ -8,7 +8,7 @@ import {
   readState,
 } from "./state-manager.js";
 import { postCodexReviewRequest } from "./comment-poster.js";
-import type { Config } from "./config.js";
+import type { BaseConfig } from "./config.js";
 import { registerAllSecrets } from "./secrets.js";
 
 type ReadState = typeof readState;
@@ -38,7 +38,7 @@ const defaultDeps: InitDeps = {
   setOutput: core.setOutput,
 };
 
-export async function runInit(config: Config, deps: InitDeps = defaultDeps): Promise<void> {
+export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps): Promise<void> {
   registerAllSecrets(config, deps.setSecret);
   deps.info(`Initializing auto-review for PR #${config.prNumber}`);
 

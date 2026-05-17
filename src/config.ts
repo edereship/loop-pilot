@@ -2,7 +2,14 @@ import * as core from "@actions/core";
 import { isSeverity } from "./severity-parser.js";
 import type { Severity } from "./types.js";
 
-export interface Config {
+/**
+ * Subset of `Config` shared by init / pre-fix / post-fix. Anthropic credentials
+ * are intentionally excluded so that the type system can prevent post-fix /
+ * init from reading `anthropicApiKey` or `claudeCodeOauthToken` — both are
+ * empty strings under `loadInitConfig` and meaningless outside pre-fix
+ * (TY-267 #10).
+ */
+export interface BaseConfig {
   maxReviewIterations: number;
   debounceSeconds: number;
   checkCommand: string;
@@ -12,15 +19,6 @@ export interface Config {
   codexReviewMarker: string;
   codexReviewRequestToken: string;
   autoReviewPushToken: string;
-  // Claude authentication (TY-260). Exactly one is set after input
-  // validation: `anthropicApiKey` for direct Anthropic API billing, or
-  // `claudeCodeOauthToken` for a Pro / Max subscription via OAuth. Both
-  // values are forwarded to `anthropics/claude-code-action@v1` (the upstream
-  // SDK ignores the empty one). Setting neither or both at the same time is
-  // rejected at startup so the caller can never be ambiguous about which
-  // credential the loop is billing against.
-  anthropicApiKey: string;
-  claudeCodeOauthToken: string;
   githubToken: string;
   repoOwner: string;
   repoName: string;
@@ -61,6 +59,27 @@ export interface Config {
   // regardless of this list, since CI rewrites would defeat the scope check.
   hardBlockOverride: readonly string[];
 }
+
+/**
+ * Claude authentication credentials (TY-260). Exactly one of the two is set
+ * after input validation: `anthropicApiKey` for direct Anthropic API billing,
+ * or `claudeCodeOauthToken` for a Pro / Max subscription via OAuth. Both
+ * values are forwarded to `anthropics/claude-code-action@v1` (the upstream SDK
+ * ignores the empty one). Setting neither or both at the same time is
+ * rejected at startup in `loadConfig` so the caller can never be ambiguous
+ * about which credential the loop is billing against. Only pre-fix consumes
+ * these; init / post-fix use `BaseConfig` so the type system blocks
+ * accidental reads (TY-267 #10).
+ */
+export interface ClaudeAuthConfig {
+  anthropicApiKey: string;
+  claudeCodeOauthToken: string;
+}
+
+/**
+ * Full pre-fix config: shared base + Claude credentials.
+ */
+export type Config = BaseConfig & ClaudeAuthConfig;
 
 export const DEFAULT_SEVERITY_THRESHOLD: Severity = "P2";
 
@@ -103,17 +122,14 @@ export function loadConfig(): Config {
   };
 }
 
-export function loadInitConfig(): Config {
-  // Init / post-fix do not call Claude directly, so neither credential is
-  // required here; the gate is enforced in `loadConfig` (pre-fix).
-  return {
-    ...loadBaseConfig(),
-    anthropicApiKey: "",
-    claudeCodeOauthToken: "",
-  };
+export function loadInitConfig(): BaseConfig {
+  // Init / post-fix do not call Claude directly. They receive `BaseConfig`,
+  // which has no Anthropic credential fields at all, so accidental reads
+  // (`config.anthropicApiKey`) are rejected at compile time (TY-267 #10).
+  return loadBaseConfig();
 }
 
-function loadBaseConfig(): Omit<Config, "anthropicApiKey" | "claudeCodeOauthToken"> {
+function loadBaseConfig(): BaseConfig {
   const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
   const [repoOwner, repoName] = repoFullName.split("/");
   const validRepoSegment = /^[a-zA-Z0-9._-]+$/;
@@ -132,12 +148,17 @@ function loadBaseConfig(): Omit<Config, "anthropicApiKey" | "claudeCodeOauthToke
   const autoReviewPushToken = input("auto-review-push-token", "AUTO_REVIEW_PUSH_TOKEN", "");
 
   return {
-    maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
-    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
+    maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
+    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
-    stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
-    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
+    stabilizeIntervalSeconds: intInput(
+      "stabilize-interval-seconds",
+      "STABILIZE_INTERVAL_SECONDS",
+      10,
+      1,
+    ),
+    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
     githubToken,
     codexReviewRequestToken,
@@ -236,12 +257,30 @@ function boolInput(inputName: string, envName: string, defaultValue: boolean): b
   throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
 
-function intInput(inputName: string, envName: string, defaultValue: number): number {
+/**
+ * Read an integer input with an optional minimum-value guard (TY-267 #15).
+ *
+ * Without `min`, behaves like the legacy reader (accepts any integer incl.
+ * 0 / negative). With `min`, rejects values below the threshold at startup so
+ * obvious misconfigurations like `MAX_REVIEW_ITERATIONS=0` cannot silently
+ * disable the loop.
+ */
+function intInput(
+  inputName: string,
+  envName: string,
+  defaultValue: number,
+  min?: number,
+): number {
   const raw = input(inputName, envName, "");
   if (raw === "") return defaultValue;
   const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) {
     throw new Error(`Input ${inputName} / env ${envName} must be an integer, got: ${raw}`);
+  }
+  if (min !== undefined && parsed < min) {
+    throw new Error(
+      `Input ${inputName} / env ${envName} must be >= ${min}, got: ${parsed}`,
+    );
   }
   return parsed;
 }

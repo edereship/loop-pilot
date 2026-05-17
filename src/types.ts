@@ -56,20 +56,30 @@ export type ReviewStatus =
   | "done"
   | "stopped";
 
-export type StopReason =
-  | "no_findings"
-  | "max_iterations"
-  | "loop_detected"
-  | "claude_api_error"
-  | "test_failure"
-  | "manual_stop"
-  | "state_corrupted"
-  | "state_conflict"
-  | "action_timeout"
-  | "action_failure"
-  | "scope_violation"
-  | "max_turns_exceeded"
-  | "codex_usage_limit";
+/**
+ * Each entry pairs the canonical `StopReason` key with the human-readable label
+ * surfaced in status / stop comments. The single object is the source of truth
+ * for both the type union and the display text (TY-267 #24) so adding a new
+ * reason requires one edit here instead of three locations across `types.ts`,
+ * `comment-poster.ts`, and tests.
+ */
+export const STOP_REASON_LABELS = {
+  no_findings: "no findings at or above the configured severity threshold",
+  max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
+  loop_detected: "same findings detected in loop",
+  claude_api_error: "Claude API error",
+  test_failure: "CHECK_COMMAND failed after fix",
+  manual_stop: "manual stop requested",
+  state_corrupted: "hidden comment state corrupted",
+  state_conflict: "hidden comment state changed concurrently",
+  action_timeout: "Claude Code Action workflow timeout",
+  action_failure: "Claude Code Action exited with a non-zero status",
+  scope_violation: "repair touched paths or exceeded the size budget allowed for auto-fix",
+  max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
+  codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
+} as const satisfies Record<string, string>;
+
+export type StopReason = keyof typeof STOP_REASON_LABELS;
 
 /** Claude API に渡す PR コンテキスト */
 export interface PrContext {

@@ -19216,11 +19216,7 @@ function loadConfig() {
   };
 }
 function loadInitConfig() {
-  return {
-    ...loadBaseConfig(),
-    anthropicApiKey: "",
-    claudeCodeOauthToken: ""
-  };
+  return loadBaseConfig();
 }
 function loadBaseConfig() {
   const repoFullName = requireInput("github-repository", "GITHUB_REPOSITORY");
@@ -19233,12 +19229,12 @@ function loadBaseConfig() {
   const codexReviewRequestToken = input("codex-review-request-token", "CODEX_REVIEW_REQUEST_TOKEN", githubToken);
   const autoReviewPushToken = input("auto-review-push-token", "AUTO_REVIEW_PUSH_TOKEN", "");
   return {
-    maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20),
-    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90),
+    maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
+    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
-    stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10),
-    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3),
+    stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1),
+    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
     githubToken,
     codexReviewRequestToken,
@@ -19295,13 +19291,16 @@ function boolInput(inputName, envName, defaultValue) {
     return false;
   throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
-function intInput(inputName, envName, defaultValue) {
+function intInput(inputName, envName, defaultValue, min) {
   const raw = input(inputName, envName, "");
   if (raw === "")
     return defaultValue;
   const parsed = parseInt(raw, 10);
   if (isNaN(parsed)) {
     throw new Error(`Input ${inputName} / env ${envName} must be an integer, got: ${raw}`);
+  }
+  if (min !== void 0 && parsed < min) {
+    throw new Error(`Input ${inputName} / env ${envName} must be >= ${min}, got: ${parsed}`);
   }
   return parsed;
 }
@@ -20059,7 +20058,7 @@ async function upsertStatusComment(owner, name, pr, update, token, deps = defaul
   return existing.id;
 }
 
-// dist/comment-poster.js
+// dist/types.js
 var STOP_REASON_LABELS = {
   no_findings: "no findings at or above the configured severity threshold",
   max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
@@ -20075,6 +20074,8 @@ var STOP_REASON_LABELS = {
   max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
   codex_usage_limit: "Codex reported usage / quota limits; no review was performed"
 };
+
+// dist/comment-poster.js
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -20200,8 +20201,9 @@ var SECRET_CONFIG_FIELDS = [
   "claudeCodeOauthToken"
 ];
 function registerAllSecrets(config, setSecret2) {
+  const lookup = config;
   for (const field of SECRET_CONFIG_FIELDS) {
-    const value = config[field];
+    const value = lookup[field];
     if (typeof value === "string" && value !== "") {
       setSecret2(value);
     }

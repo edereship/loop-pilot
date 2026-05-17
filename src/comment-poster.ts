@@ -5,23 +5,7 @@ import {
   type StatusEntry,
   type StatusUpdate,
 } from "./status-comment.js";
-import type { StopReason } from "./types.js";
-
-const STOP_REASON_LABELS: Record<StopReason, string> = {
-  no_findings: "no findings at or above the configured severity threshold",
-  max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
-  loop_detected: "same findings detected in loop",
-  claude_api_error: "Claude API error",
-  test_failure: "CHECK_COMMAND failed after fix",
-  manual_stop: "manual stop requested",
-  state_corrupted: "hidden comment state corrupted",
-  state_conflict: "hidden comment state changed concurrently",
-  action_timeout: "Claude Code Action workflow timeout",
-  action_failure: "Claude Code Action exited with a non-zero status",
-  scope_violation: "repair touched paths or exceeded the size budget allowed for auto-fix",
-  max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
-  codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
-};
+import { STOP_REASON_LABELS, type StopReason } from "./types.js";
 
 /** Returns an ISO-8601 timestamp at second resolution (UTC). */
 function nowIso(): string {

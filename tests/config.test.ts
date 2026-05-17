@@ -84,11 +84,14 @@ describe("loadConfig — Claude authentication (TY-260)", () => {
     );
   });
 
-  it("loadInitConfig leaves both credential slots empty (init has no Claude call)", () => {
+  it("loadInitConfig omits Claude credential fields entirely (TY-267 #10)", () => {
     const config = loadInitConfig();
 
-    expect(config.anthropicApiKey).toBe("");
-    expect(config.claudeCodeOauthToken).toBe("");
+    // BaseConfig has no Anthropic credentials at the type level, so the
+    // runtime object should not carry them either. Init / post-fix consumers
+    // that try to read these are flagged at compile time.
+    expect("anthropicApiKey" in config).toBe(false);
+    expect("claudeCodeOauthToken" in config).toBe(false);
   });
 });
 
@@ -130,5 +133,58 @@ describe("loadInitConfig — hard-block override (TY-255)", () => {
       "package.json",
       "tsconfig.json",
     ]);
+  });
+});
+
+describe("loadInitConfig — integer input range validation (TY-267 #15)", () => {
+  let restore: (() => void) | null = null;
+
+  beforeEach(() => {
+    restore = withEnv({
+      ...REQUIRED_ENV,
+      MAX_REVIEW_ITERATIONS: undefined,
+      DEBOUNCE_SECONDS: undefined,
+      STABILIZE_INTERVAL_SECONDS: undefined,
+      STABILIZE_COUNT: undefined,
+    });
+  });
+
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  it("rejects MAX_REVIEW_ITERATIONS=0 with a fail-fast error", () => {
+    process.env.MAX_REVIEW_ITERATIONS = "0";
+    expect(() => loadInitConfig()).toThrow(
+      /max-review-iterations.*must be >= 1, got: 0/,
+    );
+  });
+
+  it("rejects negative MAX_REVIEW_ITERATIONS", () => {
+    process.env.MAX_REVIEW_ITERATIONS = "-3";
+    expect(() => loadInitConfig()).toThrow(/must be >= 1, got: -3/);
+  });
+
+  it("accepts MAX_REVIEW_ITERATIONS=1 (boundary)", () => {
+    process.env.MAX_REVIEW_ITERATIONS = "1";
+    expect(loadInitConfig().maxReviewIterations).toBe(1);
+  });
+
+  it("rejects negative DEBOUNCE_SECONDS but accepts 0", () => {
+    process.env.DEBOUNCE_SECONDS = "-1";
+    expect(() => loadInitConfig()).toThrow(/must be >= 0/);
+    process.env.DEBOUNCE_SECONDS = "0";
+    expect(loadInitConfig().debounceSeconds).toBe(0);
+  });
+
+  it("rejects STABILIZE_INTERVAL_SECONDS=0", () => {
+    process.env.STABILIZE_INTERVAL_SECONDS = "0";
+    expect(() => loadInitConfig()).toThrow(/stabilize-interval-seconds.*must be >= 1/);
+  });
+
+  it("rejects STABILIZE_COUNT=0", () => {
+    process.env.STABILIZE_COUNT = "0";
+    expect(() => loadInitConfig()).toThrow(/stabilize-count.*must be >= 1/);
   });
 });
