@@ -19802,7 +19802,8 @@ var ROOT_DOTFILE_RE = /^\.[^/]+$/;
 var DEFAULT_SCOPE_POLICY = {
   maxFiles: 20,
   maxLines: 1e3,
-  blockPatterns: DEFAULT_BLOCK_PATTERNS
+  blockPatterns: DEFAULT_BLOCK_PATTERNS,
+  exemptedRootDotfiles: /* @__PURE__ */ new Set()
 };
 function parseBlockPathsSpec(raw) {
   const spec = {
@@ -19817,7 +19818,8 @@ function parseBlockPathsSpec(raw) {
     if (entry2.length === 0)
       continue;
     const isRemoval = entry2.startsWith("!");
-    const path = isRemoval ? entry2.slice(1).trim() : entry2;
+    const rawPath = isRemoval ? entry2.slice(1).trim() : entry2;
+    const path = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
     if (path.length === 0)
       continue;
     const pattern = {
@@ -19838,14 +19840,14 @@ function parseBlockPathsSpec(raw) {
   return spec;
 }
 function legacyAdditionsToPatterns(values) {
-  return values.map((v) => v.trim()).filter((v) => v.length > 0).map((path) => ({
+  return values.map((v) => v.trim()).map((v) => v.startsWith("/") ? v.slice(1) : v).filter((v) => v.length > 0).map((path) => ({
     path,
     isDirectory: path.endsWith("/"),
     locked: false
   }));
 }
 function legacyRemovalsToPatterns(values) {
-  return values.map((v) => v.trim()).filter((v) => v.length > 0).filter((v) => v !== ".github/" && !v.startsWith(".github/")).map((path) => ({
+  return values.map((v) => v.trim()).map((v) => v.startsWith("/") ? v.slice(1) : v).filter((v) => v.length > 0).filter((v) => v !== ".github/" && !v.startsWith(".github/")).map((path) => ({
     path,
     isDirectory: path.endsWith("/"),
     locked: false
@@ -19863,10 +19865,12 @@ function buildScopePolicy(overrides) {
   ];
   const removalKeys = new Set(removals.map((p) => p.path));
   const surviving = DEFAULT_BLOCK_PATTERNS.filter((p) => p.locked || !removalKeys.has(p.path));
+  const exemptedRootDotfiles = new Set(removals.map((p) => p.path).filter((p) => ROOT_DOTFILE_RE.test(p)));
   return {
     maxFiles: overrides.maxFiles && overrides.maxFiles > 0 ? overrides.maxFiles : DEFAULT_SCOPE_POLICY.maxFiles,
     maxLines: overrides.maxLines && overrides.maxLines > 0 ? overrides.maxLines : DEFAULT_SCOPE_POLICY.maxLines,
-    blockPatterns: [...surviving, ...additions]
+    blockPatterns: [...surviving, ...additions],
+    exemptedRootDotfiles
   };
 }
 function isUnsafePath(path) {
@@ -19878,7 +19882,7 @@ function isUnsafePath(path) {
     return true;
   return path.split("/").includes("..");
 }
-function matchBlockPattern(path, patterns) {
+function matchBlockPattern(path, patterns, exemptedRootDotfiles = /* @__PURE__ */ new Set()) {
   for (const p of patterns) {
     if (p.isDirectory) {
       if (path.startsWith(p.path))
@@ -19887,7 +19891,7 @@ function matchBlockPattern(path, patterns) {
       return p;
     }
   }
-  if (ROOT_DOTFILE_RE.test(path)) {
+  if (ROOT_DOTFILE_RE.test(path) && !exemptedRootDotfiles.has(path)) {
     return { path, isDirectory: false, locked: false };
   }
   return null;
@@ -19903,7 +19907,7 @@ function checkScope(files, policy = DEFAULT_SCOPE_POLICY) {
       traversal.push(file.path);
       continue;
     }
-    const match = matchBlockPattern(file.path, policy.blockPatterns);
+    const match = matchBlockPattern(file.path, policy.blockPatterns, policy.exemptedRootDotfiles);
     if (match !== null) {
       blocked.push(file.path);
       blockedMatches.push(match);
