@@ -188,3 +188,53 @@ describe("loadInitConfig — integer input range validation (TY-267 #15)", () =>
     expect(() => loadInitConfig()).toThrow(/stabilize-count.*must be >= 1/);
   });
 });
+
+describe("loadInitConfig — scope policy env-var fallback (TY-266 Codex follow-up)", () => {
+  let restore: (() => void) | null = null;
+
+  beforeEach(() => {
+    restore = withEnv({
+      ...REQUIRED_ENV,
+      AUTO_REVIEW_SCOPE_MAX_FILES: undefined,
+      AUTO_REVIEW_SCOPE_MAX_LINES: undefined,
+      AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES: undefined,
+      AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES: undefined,
+    });
+  });
+
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  it("falls back to 0 when both action input and Repository variable are unset", () => {
+    const config = loadInitConfig();
+    expect(config.scopeMaxFiles).toBe(0);
+    expect(config.scopeMaxLines).toBe(0);
+    expect(config.scopeAllowedPathPrefixes).toEqual([]);
+    expect(config.scopeAdditionalHardBlockPrefixes).toEqual([]);
+  });
+
+  it("reads AUTO_REVIEW_SCOPE_MAX_FILES / _MAX_LINES from env when input is empty", () => {
+    process.env.AUTO_REVIEW_SCOPE_MAX_FILES = "5";
+    process.env.AUTO_REVIEW_SCOPE_MAX_LINES = "250";
+
+    const config = loadInitConfig();
+
+    // Empty action input must not shadow Repository variable. Previously the
+    // action default of "0" leaked into core.getInput and prevented this
+    // env-var override from being seen.
+    expect(config.scopeMaxFiles).toBe(5);
+    expect(config.scopeMaxLines).toBe(250);
+  });
+
+  it("reads AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES / _ADDITIONAL_HARD_BLOCK_PREFIXES from env", () => {
+    process.env.AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES = "packages/,apps/";
+    process.env.AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES = "scripts/,Justfile";
+
+    const config = loadInitConfig();
+
+    expect(config.scopeAllowedPathPrefixes).toEqual(["packages/", "apps/"]);
+    expect(config.scopeAdditionalHardBlockPrefixes).toEqual(["scripts/", "Justfile"]);
+  });
+});

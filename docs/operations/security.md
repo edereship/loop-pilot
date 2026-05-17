@@ -341,14 +341,27 @@ git log
 
 claude-code-action 実行後、workflow 側で diff を検査し、以下のいずれかを満たさない場合は **revert + `stop_reason: scope_violation`**。
 
-| 項目 | 上限 / 規則 |
-|------|------------|
-| changed files | `≤ 20` |
-| changed lines（追加+削除） | `≤ 1000` |
-| allowed paths | `src/`, `tests/`, `docs/` のみ |
-| **hard block paths**（変更があれば即 violation） | `.github/`, `node_modules/`, `dist/`, `package.json`, `package-lock.json`, `tsconfig.json`, dotfiles 一式 |
+| 項目 | デフォルト上限 / 規則 | 上書き input |
+|------|----------------------|--------------|
+| changed files | `≤ 20` | `scope-max-files` (TY-266) |
+| changed lines（追加+削除） | `≤ 1000` | `scope-max-lines` (TY-266) |
+| allowed paths | `src/`, `tests/`, `docs/` のみ | `scope-allowed-path-prefixes` (TY-266) |
+| **hard block paths**（変更があれば即 violation） | `.github/`, `node_modules/`, `dist/`, `package.json`, `package-lock.json`, `tsconfig.json`, `.husky/`, `.devcontainer/`, `.vscode/`, `.cursor/`, `.git-hooks/`, `hooks/`, `Makefile`, root dotfiles 一式 (TY-266 #8) | `scope-additional-hard-block-prefixes` で追加、`auto-review-hard-block-override` で除外 |
 
-`.github/` を hard block するのは privilege escalation（workflow 経由で secrets 漏洩や任意コード実行が可能になる）の入口を塞ぐため。`package.json` / `package-lock.json` を hard block するのは依存追加による供給チェーン汚染防止。これらの変更が必要な repair は **手動対応** として PR コメントで報告する（または下記の Hard-block override で path 単位に opt-in する）。
+`.github/` を hard block するのは privilege escalation（workflow 経由で secrets 漏洩や任意コード実行が可能になる）の入口を塞ぐため。`package.json` / `package-lock.json` を hard block するのは依存追加による供給チェーン汚染防止。`.husky/` / `.git-hooks/` / `hooks/` は pre-commit hook の経路、`.vscode/` / `.cursor/` / `.devcontainer/` は editor / container 設定、`Makefile` は CI 入口として副作用範囲が大きいため hard block 対象に含めている (TY-266 #8)。これらの変更が必要な repair は **手動対応** として PR コメントで報告する（または下記の Hard-block override で path 単位に opt-in する）。
+
+#### policy のカスタマイズ（TY-266 #7）
+
+`auto-review-action/loop` を他リポジトリで再利用する場合、`src/` / `tests/` / `docs/` というディレクトリ layout が一致しない可能性がある。以下の action input / Repository variable で scope policy を上書きできる:
+
+| input | env (Repository variable) | 役割 |
+|-------|---------------------------|------|
+| `scope-allowed-path-prefixes` | `AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES` | allow-list の差し替え。例: `src/,tests/,docs/,packages/` |
+| `scope-max-files` | `AUTO_REVIEW_SCOPE_MAX_FILES` | ファイル数上限。空文字 / `0` / 未設定はデフォルト 20。**action input を `"0"` で明示すると Repository variable のフォールバックを上書きしてしまう** ため、Repository variable 主導で運用する場合は input を空のまま (`with:` で渡さない / 空文字を渡す) にする |
+| `scope-max-lines` | `AUTO_REVIEW_SCOPE_MAX_LINES` | 行数上限。空文字 / `0` / 未設定はデフォルト 1000。`scope-max-files` と同じ注意点 |
+| `scope-additional-hard-block-prefixes` | `AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES` | hard-block の追加。trailing slash 付きはディレクトリ prefix (`.scripts/`)、無しは exact file (`Justfile`) |
+
+未設定 / 空の場合はすべてデフォルトを維持するため、後方互換性が保たれる。`scope-additional-hard-block-prefixes` は既存のデフォルト hard-block を弱められない（デフォルトはそのまま残し、上に追加するだけ）。
 
 #### Hard-block override の運用（TY-255）
 

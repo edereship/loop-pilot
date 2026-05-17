@@ -16,7 +16,7 @@ import { runCheckCommand as defaultRunCheckCommand } from "./check-runner.js";
 import {
   parseGitNumstat,
   checkScope,
-  DEFAULT_SCOPE_POLICY,
+  buildScopePolicy,
   type ChangedFile,
   type ScopeCheckResult,
 } from "./scope-checker.js";
@@ -452,10 +452,27 @@ export async function runPostFix(
       `[scope-check] hard-block override paths: [${config.hardBlockOverride.join(", ")}]`,
     );
   }
-  const scopeResult: ScopeCheckResult = checkScope(changedFiles, {
-    ...DEFAULT_SCOPE_POLICY,
+  // TY-266: build the policy from action inputs so consumers can reshape
+  // allowed prefixes / budgets / additional hard-block prefixes without
+  // forking. Empty / zero values fall back to DEFAULT_SCOPE_POLICY.
+  const scopePolicy = buildScopePolicy({
+    allowedPathPrefixes: config.scopeAllowedPathPrefixes,
+    maxFiles: config.scopeMaxFiles > 0 ? config.scopeMaxFiles : undefined,
+    maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : undefined,
+    additionalHardBlockPrefixes: config.scopeAdditionalHardBlockPrefixes,
     hardBlockOverride: config.hardBlockOverride,
   });
+  if (config.scopeAllowedPathPrefixes.length > 0) {
+    deps.info(
+      `[scope-check] allowed path prefixes (override): [${config.scopeAllowedPathPrefixes.join(", ")}]`,
+    );
+  }
+  if (config.scopeAdditionalHardBlockPrefixes.length > 0) {
+    deps.info(
+      `[scope-check] additional hard-block prefixes: [${config.scopeAdditionalHardBlockPrefixes.join(", ")}]`,
+    );
+  }
+  const scopeResult: ScopeCheckResult = checkScope(changedFiles, scopePolicy);
   if (!scopeResult.ok) {
     deps.warning(`[post-fix] Scope violation: ${scopeResult.message}`);
     try {

@@ -19151,7 +19151,11 @@ function loadBaseConfig() {
     claudeCodeModelEscalated: input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED),
     autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
     severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
-    hardBlockOverride: stringListInput("auto-review-hard-block-override", "AUTO_REVIEW_HARD_BLOCK_OVERRIDE")
+    hardBlockOverride: stringListInput("auto-review-hard-block-override", "AUTO_REVIEW_HARD_BLOCK_OVERRIDE"),
+    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES"),
+    scopeMaxFiles: intInput("scope-max-files", "AUTO_REVIEW_SCOPE_MAX_FILES", 0),
+    scopeMaxLines: intInput("scope-max-lines", "AUTO_REVIEW_SCOPE_MAX_LINES", 0),
+    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
   };
 }
 function stringListInput(inputName, envName) {
@@ -19721,21 +19725,47 @@ async function runCheckCommand(checkCommand, modifiedFiles) {
 }
 
 // dist/scope-checker.js
+var DEFAULT_HARD_BLOCK_PATTERNS = [
+  /^\.github\//,
+  /^node_modules\//,
+  /^dist\//,
+  /^package\.json$/,
+  /^package-lock\.json$/,
+  /^tsconfig\.json$/,
+  /^\.husky\//,
+  /^\.devcontainer\//,
+  /^\.vscode\//,
+  /^\.cursor\//,
+  /^\.git-hooks\//,
+  /^hooks\//,
+  /^Makefile$/,
+  /^\.[^/]+$/
+];
 var DEFAULT_SCOPE_POLICY = {
   maxFiles: 20,
   maxLines: 1e3,
   allowedPathPrefixes: ["src/", "tests/", "docs/"],
-  hardBlockPatterns: [
-    /^\.github\//,
-    /^node_modules\//,
-    /^dist\//,
-    /^package\.json$/,
-    /^package-lock\.json$/,
-    /^tsconfig\.json$/,
-    /^\.[^/]+$/
-  ],
+  hardBlockPatterns: DEFAULT_HARD_BLOCK_PATTERNS,
   hardBlockOverride: []
 };
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function buildScopePolicy(overrides) {
+  const additional = (overrides.additionalHardBlockPrefixes ?? []).map((p) => p.trim()).filter((p) => p.length > 0).map((p) => {
+    if (p.endsWith("/")) {
+      return new RegExp(`^${escapeRegex(p)}`);
+    }
+    return new RegExp(`^${escapeRegex(p)}$`);
+  });
+  return {
+    maxFiles: overrides.maxFiles ?? DEFAULT_SCOPE_POLICY.maxFiles,
+    maxLines: overrides.maxLines ?? DEFAULT_SCOPE_POLICY.maxLines,
+    allowedPathPrefixes: overrides.allowedPathPrefixes && overrides.allowedPathPrefixes.length > 0 ? overrides.allowedPathPrefixes : DEFAULT_SCOPE_POLICY.allowedPathPrefixes,
+    hardBlockPatterns: [...DEFAULT_HARD_BLOCK_PATTERNS, ...additional],
+    hardBlockOverride: overrides.hardBlockOverride ?? []
+  };
+}
 function isUnsafePath(path) {
   if (path.length === 0)
     return true;
@@ -20411,10 +20441,20 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   if (config.hardBlockOverride.length > 0) {
     deps.info(`[scope-check] hard-block override paths: [${config.hardBlockOverride.join(", ")}]`);
   }
-  const scopeResult = checkScope(changedFiles, {
-    ...DEFAULT_SCOPE_POLICY,
+  const scopePolicy = buildScopePolicy({
+    allowedPathPrefixes: config.scopeAllowedPathPrefixes,
+    maxFiles: config.scopeMaxFiles > 0 ? config.scopeMaxFiles : void 0,
+    maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : void 0,
+    additionalHardBlockPrefixes: config.scopeAdditionalHardBlockPrefixes,
     hardBlockOverride: config.hardBlockOverride
   });
+  if (config.scopeAllowedPathPrefixes.length > 0) {
+    deps.info(`[scope-check] allowed path prefixes (override): [${config.scopeAllowedPathPrefixes.join(", ")}]`);
+  }
+  if (config.scopeAdditionalHardBlockPrefixes.length > 0) {
+    deps.info(`[scope-check] additional hard-block prefixes: [${config.scopeAdditionalHardBlockPrefixes.join(", ")}]`);
+  }
+  const scopeResult = checkScope(changedFiles, scopePolicy);
   if (!scopeResult.ok) {
     deps.warning(`[post-fix] Scope violation: ${scopeResult.message}`);
     try {

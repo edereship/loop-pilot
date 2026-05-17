@@ -58,6 +58,20 @@ export interface BaseConfig {
   // keeps the strict security boundary; paths under `.github/` are always blocked
   // regardless of this list, since CI rewrites would defeat the scope check.
   hardBlockOverride: readonly string[];
+  // Scope-checker policy overrides (TY-266 #7). All optional; empty values
+  // fall back to `DEFAULT_SCOPE_POLICY`. Letting downstream repos reshape the
+  // policy via Repository variables means the action can be reused on
+  // layouts other than `src/` / `tests/` / `docs/` without forking.
+  // - scopeAllowedPathPrefixes: replaces the allow-list when non-empty.
+  // - scopeMaxFiles / scopeMaxLines: 0 means "use default".
+  // - scopeAdditionalHardBlockPrefixes: augments the default hard-block set
+  //   with extra path prefixes (trailing slash → directory prefix; no slash →
+  //   exact file match). Cannot weaken existing blocks; that is what
+  //   `hardBlockOverride` is for.
+  scopeAllowedPathPrefixes: readonly string[];
+  scopeMaxFiles: number;
+  scopeMaxLines: number;
+  scopeAdditionalHardBlockPrefixes: readonly string[];
 }
 
 /**
@@ -197,6 +211,16 @@ function loadBaseConfig(): BaseConfig {
     hardBlockOverride: stringListInput(
       "auto-review-hard-block-override",
       "AUTO_REVIEW_HARD_BLOCK_OVERRIDE",
+    ),
+    scopeAllowedPathPrefixes: stringListInput(
+      "scope-allowed-path-prefixes",
+      "AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES",
+    ),
+    scopeMaxFiles: intInput("scope-max-files", "AUTO_REVIEW_SCOPE_MAX_FILES", 0),
+    scopeMaxLines: intInput("scope-max-lines", "AUTO_REVIEW_SCOPE_MAX_LINES", 0),
+    scopeAdditionalHardBlockPrefixes: stringListInput(
+      "scope-additional-hard-block-prefixes",
+      "AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES",
     ),
   };
 }

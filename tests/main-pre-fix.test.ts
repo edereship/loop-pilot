@@ -36,6 +36,10 @@ const baseConfig: Config = {
   autoMergeOnClean: false,
   severityThreshold: "P2",
   hardBlockOverride: [],
+  scopeAllowedPathPrefixes: [],
+  scopeMaxFiles: 0,
+  scopeMaxLines: 0,
+  scopeAdditionalHardBlockPrefixes: [],
 };
 
 function makeState(overrides: Partial<ReviewState> = {}): ReviewState {

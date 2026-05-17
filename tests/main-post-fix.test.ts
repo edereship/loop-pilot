@@ -38,6 +38,10 @@ const baseConfig: Config = {
   autoMergeOnClean: false,
   severityThreshold: "P2",
   hardBlockOverride: [],
+  scopeAllowedPathPrefixes: [],
+  scopeMaxFiles: 0,
+  scopeMaxLines: 0,
+  scopeAdditionalHardBlockPrefixes: [],
 };
 
 const baseInputs: PostFixInputs = {

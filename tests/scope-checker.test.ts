@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SCOPE_POLICY,
+  buildScopePolicy,
   checkScope,
   parseGitNumstat,
   type ChangedFile,
@@ -347,5 +348,108 @@ describe("parseGitNumstat", () => {
     expect(parseGitNumstat(output)).toEqual([
       { path: "src/keep.ts", added: 2, deleted: 1 },
     ]);
+  });
+});
+
+describe("default hard-block patterns include CI / editor / hook directories (TY-266 #8)", () => {
+  it.each([
+    [".husky/pre-commit"],
+    [".devcontainer/devcontainer.json"],
+    [".vscode/settings.json"],
+    [".cursor/rules.md"],
+    [".git-hooks/pre-push"],
+    ["hooks/post-checkout"],
+    ["Makefile"],
+  ])("hard-blocks %s", (path) => {
+    const result = checkScope([file(path, 1, 0)]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toContain(path);
+    }
+  });
+});
+
+describe("buildScopePolicy (TY-266 #7)", () => {
+  it("falls back to defaults when overrides are empty", () => {
+    const policy = buildScopePolicy({});
+    expect(policy.allowedPathPrefixes).toEqual(DEFAULT_SCOPE_POLICY.allowedPathPrefixes);
+    expect(policy.maxFiles).toBe(DEFAULT_SCOPE_POLICY.maxFiles);
+    expect(policy.maxLines).toBe(DEFAULT_SCOPE_POLICY.maxLines);
+    expect(policy.hardBlockOverride).toEqual([]);
+  });
+
+  it("replaces allowedPathPrefixes when a non-empty list is supplied", () => {
+    const policy = buildScopePolicy({
+      allowedPathPrefixes: ["packages/", "apps/"],
+    });
+    const result = checkScope([file("packages/foo/index.ts", 5, 0)], policy);
+    expect(result.ok).toBe(true);
+    const disallowed = checkScope([file("src/foo.ts", 5, 0)], policy);
+    expect(disallowed.ok).toBe(false);
+    if (!disallowed.ok) {
+      expect(disallowed.reason).toBe("disallowed_path");
+    }
+  });
+
+  it("tightens budgets via maxFiles / maxLines", () => {
+    const policy = buildScopePolicy({ maxFiles: 1, maxLines: 5 });
+    const tooMany = checkScope(
+      [file("src/a.ts", 1, 0), file("src/b.ts", 1, 0)],
+      policy,
+    );
+    expect(tooMany.ok).toBe(false);
+    if (!tooMany.ok) expect(tooMany.reason).toBe("too_many_files");
+
+    const tooLong = checkScope([file("src/a.ts", 10, 0)], policy);
+    expect(tooLong.ok).toBe(false);
+    if (!tooLong.ok) expect(tooLong.reason).toBe("too_many_lines");
+  });
+
+  it("augments hard-block via additionalHardBlockPrefixes (directory prefix + exact file)", () => {
+    const policy = buildScopePolicy({
+      additionalHardBlockPrefixes: ["scripts/", "Justfile"],
+    });
+    const dir = checkScope([file("scripts/deploy.sh", 1, 0)], policy);
+    expect(dir.ok).toBe(false);
+    if (!dir.ok) expect(dir.reason).toBe("hard_block_path");
+
+    const exact = checkScope([file("Justfile", 1, 0)], policy);
+    expect(exact.ok).toBe(false);
+    if (!exact.ok) expect(exact.reason).toBe("hard_block_path");
+
+    // The "exact" form must not match a longer path that merely starts with the same segment.
+    const longer = checkScope([file("Justfile.bak", 1, 0)], policy);
+    if (longer.ok) {
+      // src/-only allow-list rejects it as disallowed_path; either way it is not a hard block.
+      expect(longer.ok).toBe(true);
+    } else {
+      expect(longer.reason).not.toBe("hard_block_path");
+    }
+  });
+
+  it("does not let additionalHardBlockPrefixes weaken existing defaults", () => {
+    // Even with no overrides for `.husky/`, the default still blocks it.
+    const policy = buildScopePolicy({
+      additionalHardBlockPrefixes: ["unrelated/"],
+    });
+    const result = checkScope([file(".husky/pre-commit", 1, 0)], policy);
+    expect(result.ok).toBe(false);
+  });
+
+  it("honours hardBlockOverride for non-.github paths only", () => {
+    const policy = buildScopePolicy({
+      hardBlockOverride: ["package.json", ".github/workflows/ci.yml"],
+    });
+    // `package.json` escapes the hard block but is still outside the default
+    // allow-list; the override moves it from `hard_block_path` to
+    // `disallowed_path`, which is the documented behaviour.
+    const escaped = checkScope([file("package.json", 1, 0)], policy);
+    expect(escaped.ok).toBe(false);
+    if (!escaped.ok) expect(escaped.reason).toBe("disallowed_path");
+
+    const stillBlocked = checkScope([file(".github/workflows/ci.yml", 1, 0)], policy);
+    expect(stillBlocked.ok).toBe(false);
+    if (!stillBlocked.ok) expect(stillBlocked.reason).toBe("hard_block_path");
   });
 });

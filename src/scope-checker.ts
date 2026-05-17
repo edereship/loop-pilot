@@ -45,21 +45,87 @@ export interface ScopeCheckPolicy {
   hardBlockOverride: readonly string[];
 }
 
+/**
+ * Default hard-block patterns. Includes CI / editor / hook directories
+ * (TY-266 #8) whose contents can re-enable arbitrary execution on the runner
+ * or in developer machines if rewritten by auto-fix. `.husky/` and `hooks/`
+ * are pre-commit hook entry points; `.devcontainer/`, `.vscode/`, `.cursor/`
+ * configure editor / container behaviour; `Makefile` is often the entry
+ * point for CI commands like `make check`.
+ */
+export const DEFAULT_HARD_BLOCK_PATTERNS: readonly RegExp[] = [
+  /^\.github\//,
+  /^node_modules\//,
+  /^dist\//,
+  /^package\.json$/,
+  /^package-lock\.json$/,
+  /^tsconfig\.json$/,
+  /^\.husky\//,
+  /^\.devcontainer\//,
+  /^\.vscode\//,
+  /^\.cursor\//,
+  /^\.git-hooks\//,
+  /^hooks\//,
+  /^Makefile$/,
+  /^\.[^/]+$/,
+];
+
 export const DEFAULT_SCOPE_POLICY: ScopeCheckPolicy = {
   maxFiles: 20,
   maxLines: 1000,
   allowedPathPrefixes: ["src/", "tests/", "docs/"],
-  hardBlockPatterns: [
-    /^\.github\//,
-    /^node_modules\//,
-    /^dist\//,
-    /^package\.json$/,
-    /^package-lock\.json$/,
-    /^tsconfig\.json$/,
-    /^\.[^/]+$/,
-  ],
+  hardBlockPatterns: DEFAULT_HARD_BLOCK_PATTERNS,
   hardBlockOverride: [],
 };
+
+/**
+ * Build a `ScopeCheckPolicy` from action-input style overrides (TY-266 #7).
+ *
+ * Defaults match `DEFAULT_SCOPE_POLICY`. Callers can:
+ *   - swap the allowed prefix list wholesale via `allowedPathPrefixes`
+ *   - tune the file / line budgets via `maxFiles` / `maxLines`
+ *   - augment (not replace) the hard-block set via
+ *     `additionalHardBlockPrefixes` (plain path prefixes converted to anchored
+ *     regexes — keeps the input schema simple so users don't author regex
+ *     fragments via Repository variables)
+ *   - opt specific paths out of the hard-block via `hardBlockOverride`
+ */
+export interface ScopePolicyOverrides {
+  allowedPathPrefixes?: readonly string[];
+  maxFiles?: number;
+  maxLines?: number;
+  additionalHardBlockPrefixes?: readonly string[];
+  hardBlockOverride?: readonly string[];
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function buildScopePolicy(overrides: ScopePolicyOverrides): ScopeCheckPolicy {
+  const additional = (overrides.additionalHardBlockPrefixes ?? [])
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => {
+      // Trailing-slash prefix → directory prefix match (`.husky/`).
+      // No trailing slash → exact file match (`Makefile`).
+      if (p.endsWith("/")) {
+        return new RegExp(`^${escapeRegex(p)}`);
+      }
+      return new RegExp(`^${escapeRegex(p)}$`);
+    });
+
+  return {
+    maxFiles: overrides.maxFiles ?? DEFAULT_SCOPE_POLICY.maxFiles,
+    maxLines: overrides.maxLines ?? DEFAULT_SCOPE_POLICY.maxLines,
+    allowedPathPrefixes:
+      overrides.allowedPathPrefixes && overrides.allowedPathPrefixes.length > 0
+        ? overrides.allowedPathPrefixes
+        : DEFAULT_SCOPE_POLICY.allowedPathPrefixes,
+    hardBlockPatterns: [...DEFAULT_HARD_BLOCK_PATTERNS, ...additional],
+    hardBlockOverride: overrides.hardBlockOverride ?? [],
+  };
+}
 
 export type ScopeViolationReason =
   | "path_traversal"
