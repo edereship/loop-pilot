@@ -149,6 +149,10 @@ inputs:
     description: "[DEPRECATED — TY-271, removed in next minor] Use `auto-review-block-paths` instead. Existing values are folded into the new spec as additions, but emit a warning."
     required: false
     default: ""
+  auto-review-state-comment-authors:
+    description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -184,6 +188,7 @@ runs:
         auto-merge-poll-seconds: ${{ inputs.auto-merge-poll-seconds }}
         auto-merge-timeout-minutes: ${{ inputs.auto-merge-timeout-minutes }}
         severity-threshold: ${{ inputs.severity-threshold }}
+        auto-review-state-comment-authors: ${{ inputs.auto-review-state-comment-authors }}
 
     - name: Claude Code Action (repo-level repair)
       id: claude
@@ -255,3 +260,4 @@ runs:
         auto-review-hard-block-override: ${{ inputs.auto-review-hard-block-override }}
         scope-allowed-path-prefixes: ${{ inputs.scope-allowed-path-prefixes }}
         scope-additional-hard-block-prefixes: ${{ inputs.scope-additional-hard-block-prefixes }}
+        auto-review-state-comment-authors: ${{ inputs.auto-review-state-comment-authors }}

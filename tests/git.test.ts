@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const warning = vi.fn();
+const setSecret = vi.fn();
 const execFileSync = vi.fn();
 
 vi.mock("@actions/core", () => ({
   warning: (msg: string) => warning(msg),
+  setSecret: (secret: string) => setSecret(secret),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -85,6 +87,7 @@ describe("readHeadSha", () => {
 describe("subprocess wrappers", () => {
   beforeEach(() => {
     execFileSync.mockReset();
+    setSecret.mockReset();
   });
 
   it("gitDiffNumstat invokes the expected git args", () => {
@@ -186,15 +189,22 @@ describe("subprocess wrappers", () => {
     );
   });
 
-  it("pushWithToken: full happy path — unset extraheader, list+clear rewrite rules, push to pinned URL", () => {
+  it("pushWithToken: full happy path — unset extraheader, check global, list+clear local rewrite rules, push to pinned URL", () => {
     let call = 0;
     execFileSync.mockImplementation(((..._args: unknown[]) => {
       call += 1;
+      // 1: unset checkout extraheader (returns undefined = ok)
+      // 2: global --get-regexp (no matches → exit 1)
       if (call === 2) {
-        // `git config --get-regexp` returns matched keys with their values.
+        const e = new Error("no matches") as Error & { status?: number };
+        e.status = 1;
+        throw e;
+      }
+      // 3: local --get-regexp (returns matched keys for cleanup)
+      if (call === 3) {
         return [
-          "url.https://evil/.insteadOf https://github.com/",
-          "url.https://github.com/.insteadOf https://corp/",
+          "url.https://corp/.insteadOf https://github.com/team-yubune/",
+          "url.https://corp2/.insteadOf https://github.com/",
         ].join("\n") + "\n";
       }
       return undefined;
@@ -203,10 +213,11 @@ describe("subprocess wrappers", () => {
     git.pushWithToken("team-yubune", "test-auto-ai-review", "claude/some-branch", "push-token");
 
     // 1: unset checkout extraheader
-    // 2: list rewrite rules (returns 2 keys)
-    // 3, 4: unset each rewrite key
-    // 5: push
-    expect(execFileSync).toHaveBeenCalledTimes(5);
+    // 2: global get-regexp (exit 1, no global rewrite rules)
+    // 3: local list rewrite rules (returns 2 keys)
+    // 4, 5: unset each local rewrite key
+    // 6: push
+    expect(execFileSync).toHaveBeenCalledTimes(6);
 
     expect(execFileSync.mock.calls[0][1]).toEqual([
       "config",
@@ -217,7 +228,7 @@ describe("subprocess wrappers", () => {
 
     expect(execFileSync.mock.calls[1][1]).toEqual([
       "config",
-      "--local",
+      "--global",
       "--get-regexp",
       "^url\\..*\\.(insteadOf|pushInsteadOf)$",
     ]);
@@ -225,24 +236,36 @@ describe("subprocess wrappers", () => {
     expect(execFileSync.mock.calls[2][1]).toEqual([
       "config",
       "--local",
-      "--unset-all",
-      "url.https://evil/.insteadOf",
+      "--get-regexp",
+      "^url\\..*\\.(insteadOf|pushInsteadOf)$",
     ]);
+
     expect(execFileSync.mock.calls[3][1]).toEqual([
       "config",
       "--local",
       "--unset-all",
-      "url.https://github.com/.insteadOf",
+      "url.https://corp/.insteadOf",
+    ]);
+    expect(execFileSync.mock.calls[4][1]).toEqual([
+      "config",
+      "--local",
+      "--unset-all",
+      "url.https://corp2/.insteadOf",
     ]);
 
     const basic = Buffer.from("x-access-token:push-token").toString("base64");
-    expect(execFileSync.mock.calls[4][1]).toEqual([
+    expect(execFileSync.mock.calls[5][1]).toEqual([
       "-c",
       `http.extraheader=AUTHORIZATION: Basic ${basic}`,
       "push",
       "https://github.com/team-yubune/test-auto-ai-review.git",
       "HEAD:refs/heads/claude/some-branch",
     ]);
+
+    // TY-272 #B: the base64-encoded Basic credential must be registered as a
+    // GitHub Actions secret before the push so any echo of argv in failure
+    // logs is masked.
+    expect(setSecret).toHaveBeenCalledWith(basic);
   });
 
   it("pushWithToken: swallows exit 5 from extraheader unset (key not present)", () => {
@@ -254,7 +277,8 @@ describe("subprocess wrappers", () => {
         e.status = 5;
         throw e;
       }
-      if (call === 2) {
+      if (call === 2 || call === 3) {
+        // global + local get-regexp: no matches.
         const e = new Error("no matches") as Error & { status?: number };
         e.status = 1;
         throw e;
@@ -266,9 +290,10 @@ describe("subprocess wrappers", () => {
       git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok"),
     ).not.toThrow();
 
-    // 1: failing extraheader unset (status 5), 2: failing get-regexp (status 1), 3: push.
-    expect(execFileSync).toHaveBeenCalledTimes(3);
-    expect(execFileSync.mock.calls[2][1]).toContain("push");
+    // 1: failing extraheader unset (status 5), 2: failing global get-regexp,
+    // 3: failing local get-regexp, 4: push.
+    expect(execFileSync).toHaveBeenCalledTimes(4);
+    expect(execFileSync.mock.calls[3][1]).toContain("push");
   });
 
   it("pushWithToken: rethrows non-exit-5 failures from extraheader unset (Codex P2)", () => {
@@ -293,7 +318,8 @@ describe("subprocess wrappers", () => {
     let call = 0;
     execFileSync.mockImplementation(((..._args: unknown[]) => {
       call += 1;
-      if (call === 2) {
+      if (call === 2 || call === 3) {
+        // global + local get-regexp: no matches.
         const e = new Error("no matches") as Error & { status?: number };
         e.status = 1;
         throw e;
@@ -303,12 +329,12 @@ describe("subprocess wrappers", () => {
 
     git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok");
 
-    // 1: unset extraheader, 2: failing get-regexp, 3: push (no unset calls).
-    expect(execFileSync).toHaveBeenCalledTimes(3);
-    expect(execFileSync.mock.calls[2][1]).toContain("push");
+    // 1: unset extraheader, 2: global get-regexp, 3: local get-regexp, 4: push.
+    expect(execFileSync).toHaveBeenCalledTimes(4);
+    expect(execFileSync.mock.calls[3][1]).toContain("push");
   });
 
-  it("pushWithToken: rethrows non-exit-1 failures from get-regexp (corrupt config)", () => {
+  it("pushWithToken: rethrows non-exit-1 failures from local get-regexp (corrupt config)", () => {
     let call = 0;
     execFileSync.mockImplementation(((..._args: unknown[]) => {
       call += 1;
@@ -319,6 +345,12 @@ describe("subprocess wrappers", () => {
         throw e;
       }
       if (call === 2) {
+        // global get-regexp: no matches.
+        const e = new Error("no matches") as Error & { status?: number };
+        e.status = 1;
+        throw e;
+      }
+      if (call === 3) {
         const e = new Error("config is corrupt") as Error & { status?: number };
         e.status = 128;
         throw e;
@@ -330,7 +362,119 @@ describe("subprocess wrappers", () => {
       git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok"),
     ).toThrow(/corrupt/);
 
+    expect(execFileSync).toHaveBeenCalledTimes(3);
+  });
+
+  it("pushWithToken: refuses to push when a global git config rewrite rule can redirect the GitHub destination (TY-272 #D)", () => {
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 2) {
+        // global get-regexp: one malicious rule whose value is a prefix of
+        // the destination URL.
+        return "url.https://evil.example.com/.insteadOf https://github.com/\n";
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
+
+    expect(() =>
+      git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok"),
+    ).toThrow(/global git config carries .* url rewrite rule/);
+
+    // 1: unset extraheader, 2: global get-regexp (returned rules → throw).
+    // Push must NOT have been attempted.
     expect(execFileSync).toHaveBeenCalledTimes(2);
+    for (const c of execFileSync.mock.calls) {
+      expect(c[1] as string[]).not.toContain("push");
+    }
+  });
+
+  it("pushWithToken: ignores global rewrite rules that cannot redirect GitHub destinations (Codex P2 on PR #85)", () => {
+    // self-hosted runners commonly carry org-wide GitLab rewrites; pushes
+    // to github.com must not be blocked by them.
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 2) {
+        return "url.https://gitlab.internal/.insteadOf https://gitlab.com/\n";
+      }
+      if (call === 3) {
+        // local get-regexp: no matches.
+        const e = new Error("no matches") as Error & { status?: number };
+        e.status = 1;
+        throw e;
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
+
+    expect(() =>
+      git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok"),
+    ).not.toThrow();
+
+    // 1: unset extraheader, 2: global get-regexp (rule ignored), 3: local
+    // get-regexp (no matches), 4: push.
+    expect(execFileSync).toHaveBeenCalledTimes(4);
+    expect(execFileSync.mock.calls[3][1]).toContain("push");
+  });
+
+  it("pushWithToken: error message omits both key and value to avoid leaking credentials (Codex P1 on PR #85)", () => {
+    let call = 0;
+    execFileSync.mockImplementation(((..._args: unknown[]) => {
+      call += 1;
+      if (call === 2) {
+        // Both key (rewrite base) and value can carry credentials. Echo a
+        // worst-case entry to confirm neither side leaks.
+        return [
+          "url.https://x-access-token:ghp_keyleak@evil/.insteadOf https://github.com/",
+          "url.https://attacker/.insteadOf https://x-access-token:ghp_valueleak@github.com/",
+        ].join("\n") + "\n";
+      }
+      return undefined;
+    }) as unknown as typeof execFileSync);
+
+    try {
+      git.pushWithToken("team-yubune", "test-auto-ai-review", "main", "tok");
+      throw new Error("expected pushWithToken to throw");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Neither credential surface (key-embedded or value-embedded) may
+      // appear in the surfaced error.
+      expect(message).not.toMatch(/ghp_keyleak/);
+      expect(message).not.toMatch(/ghp_valueleak/);
+      // The error must still be actionable: it states the count and tells
+      // the operator how to enumerate the offending rules locally.
+      expect(message).toMatch(/Refusing to push/);
+      expect(message).toMatch(/git config --global --get-regexp/);
+    }
+  });
+
+  it("rewriteValueCanRedirect: matches values that are a prefix of the destination", () => {
+    const dest = "https://github.com/team-yubune/test-auto-ai-review.git";
+    expect(git.rewriteValueCanRedirect("https://", dest)).toBe(true);
+    expect(git.rewriteValueCanRedirect("https://github.com/", dest)).toBe(true);
+    expect(
+      git.rewriteValueCanRedirect("https://github.com/team-yubune/", dest),
+    ).toBe(true);
+    // An empty insteadOf value is a prefix of every URL — git applies it to
+    // all pushes, so it must be treated as redirecting (not safe).
+    expect(git.rewriteValueCanRedirect("", dest)).toBe(true);
+  });
+
+  it("rewriteValueCanRedirect: ignores unrelated rewrite values", () => {
+    const dest = "https://github.com/team-yubune/test-auto-ai-review.git";
+    expect(git.rewriteValueCanRedirect("https://gitlab.com/", dest)).toBe(false);
+    expect(git.rewriteValueCanRedirect("git@github.com:", dest)).toBe(false);
+    expect(
+      git.rewriteValueCanRedirect("https://github.com/other-org/", dest),
+    ).toBe(false);
+    // Values longer than the destination cannot match — git only applies rules
+    // whose value is a prefix of the URL.
+    expect(
+      git.rewriteValueCanRedirect(
+        "https://github.com/team-yubune/test-auto-ai-review.git/extra",
+        dest,
+      ),
+    ).toBe(false);
   });
 
   it("pushWithToken: uses owner/repo/ref from Config (not remote.origin) for the destination URL", () => {
@@ -340,8 +484,8 @@ describe("subprocess wrappers", () => {
     let call = 0;
     execFileSync.mockImplementation(((..._args: unknown[]) => {
       call += 1;
-      if (call === 2) {
-        // No rewrite rules.
+      if (call === 2 || call === 3) {
+        // global + local get-regexp: no matches.
         const e = new Error("no matches") as Error & { status?: number };
         e.status = 1;
         throw e;

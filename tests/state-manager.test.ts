@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildTrustedAuthorJqFilter,
   createInitialState,
   serializeState,
   deserializeState,
+  getTrustedStateCommentAuthors,
   parseStateCommentRecord,
   updateStateComment,
   StateUpdateConflictError,
@@ -314,6 +316,51 @@ describe("deserializeState (forward compatibility)", () => {
     expect(restored).not.toBeNull();
     expect(restored!.previousCheckFailure).toBeNull();
     expect(restored!.status).toBe("waiting_codex");
+  });
+});
+
+describe("getTrustedStateCommentAuthors (TY-272 #A)", () => {
+  it("defaults to github-actions[bot] when the env var is unset", () => {
+    expect(getTrustedStateCommentAuthors({})).toEqual(["github-actions[bot]"]);
+  });
+
+  it("parses a comma-separated list, trimming whitespace and ignoring empties", () => {
+    expect(
+      getTrustedStateCommentAuthors({
+        AUTO_REVIEW_STATE_COMMENT_AUTHORS: "github-actions[bot], my-app[bot], ,foo",
+      }),
+    ).toEqual(["github-actions[bot]", "my-app[bot]", "foo"]);
+  });
+
+  it("falls back to the default when the env var is whitespace-only or all-empty", () => {
+    expect(
+      getTrustedStateCommentAuthors({
+        AUTO_REVIEW_STATE_COMMENT_AUTHORS: " , , ",
+      }),
+    ).toEqual(["github-actions[bot]"]);
+  });
+});
+
+describe("buildTrustedAuthorJqFilter (TY-272 #A)", () => {
+  it("composes an `or` chain of `.user.login == ...` clauses", () => {
+    expect(buildTrustedAuthorJqFilter(["github-actions[bot]"])).toBe(
+      '.user.login == "github-actions[bot]"',
+    );
+    expect(
+      buildTrustedAuthorJqFilter(["github-actions[bot]", "my-app[bot]"]),
+    ).toBe('.user.login == "github-actions[bot]" or .user.login == "my-app[bot]"');
+  });
+
+  it("rejects authors with characters outside the GitHub username spec to prevent jq injection", () => {
+    // `"` / `\` / `)` / spaces / `$()` would break out of the jq string and
+    // splice arbitrary filter expressions into the readState query.
+    expect(buildTrustedAuthorJqFilter(['evil") | .user.login == ("attacker'])).toBe(
+      "false",
+    );
+    expect(buildTrustedAuthorJqFilter(["bad name"])).toBe("false");
+    expect(buildTrustedAuthorJqFilter(["github-actions[bot]", "bad name"])).toBe(
+      '.user.login == "github-actions[bot]"',
+    );
   });
 });
 

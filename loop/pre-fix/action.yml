@@ -107,6 +107,10 @@ inputs:
     description: "Severity threshold for the auto-fix pipeline. One of P0|P1|P2|P3. Default 'P2' preserves prior behavior; P3 includes everything; P1/P0 narrow the scope. Invalid values fall back to P2 with a warning (TY-256). NOTE (TY-268 #23): the parser fallback only catches P0 / P1 keywords without an explicit badge — P2/P3 findings without a badge are counted as `unparseable` and skipped."
     required: false
     default: "P2"
+  auto-review-state-comment-authors:
+    description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
+    required: false
+    default: ""
 
 outputs:
   should_run:

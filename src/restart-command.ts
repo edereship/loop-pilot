@@ -175,6 +175,24 @@ export async function handleRestartCommand(
     return { handled: false };
   }
 
+  // TY-272 #E: gate every side effect — including the "unsupported option" /
+  // "state corrupted" rejection comments and the state read implied by them —
+  // on the permission check first. The previous order let an unauthenticated
+  // commenter trigger a state read + a PR comment per `/restart-review`,
+  // which combined with the workflow `if` ungated for /restart-review (also
+  // closed in this ticket, #C) formed a small amplification surface.
+  const hasPermission = await canRestart(context, deps);
+  if (!hasPermission) {
+    await deps.postComment(
+      context.owner,
+      context.repo,
+      context.prNumber,
+      `❌ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`,
+      context.githubToken,
+    );
+    return { handled: true };
+  }
+
   if (command.invalidReason) {
     await deps.postComment(
       context.owner,
@@ -202,18 +220,6 @@ export async function handleRestartCommand(
       context.repo,
       context.prNumber,
       "❌ Restart cannot apply: auto-review state was not found.",
-      context.githubToken,
-    );
-    return { handled: true };
-  }
-
-  const hasPermission = await canRestart(context, deps);
-  if (!hasPermission) {
-    await deps.postComment(
-      context.owner,
-      context.repo,
-      context.prNumber,
-      `❌ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`,
       context.githubToken,
     );
     return { handled: true };

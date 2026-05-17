@@ -1,3 +1,4 @@
+import * as core from "@actions/core";
 import { ghApi } from "./gh.js";
 import type { ReviewState } from "./types.js";
 
@@ -8,6 +9,47 @@ const STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.
 const MAX_HISTORY_ENTRIES = 3;
 const MAX_SERIALIZED_BYTES = 65000;
 const VALID_STATUSES = new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+
+// TY-272 #A: trust-boundary author filter for the hidden state comment.
+//
+// Public PRs let any commenter post a body that contains our hidden state
+// marker. The body-only jq filter would happily pick the attacker's comment as
+// the "latest" state (gh paginate is ascending, the last match wins) and an
+// adversary could stuff `{"status":"done"}` to silently stop auto-review.
+//
+// State comments are always created by the workflow's `GITHUB_TOKEN` /
+// `secrets.AUTO_REVIEW_PUSH_TOKEN`-equivalent identity, so the author is
+// `github-actions[bot]` (or whatever bot the deployment runs as). Deployments
+// using a GitHub App / machine user may add their own author via the env var
+// below; the default still covers the standard `GITHUB_TOKEN` flow.
+const DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
+const TRUSTED_STATE_AUTHORS_ENV = "AUTO_REVIEW_STATE_COMMENT_AUTHORS";
+
+export function getTrustedStateCommentAuthors(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  // Check the action input first (highest priority) so operators can set the
+  // value via a repository variable mapped through the action's
+  // `auto-review-state-comment-authors` input without also needing to inject
+  // the env var directly. Outside GitHub Actions, core.getInput returns "".
+  const fromInput = core.getInput("auto-review-state-comment-authors");
+  const raw = fromInput !== "" ? fromInput : (env[TRUSTED_STATE_AUTHORS_ENV] ?? "");
+  const parsed = raw
+    .split(",")
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0);
+  return parsed.length > 0 ? parsed : [DEFAULT_TRUSTED_STATE_AUTHOR];
+}
+
+export function buildTrustedAuthorJqFilter(authors: string[]): string {
+  // The jq expression must be safe to splice into the larger filter. GitHub
+  // usernames are restricted to `[A-Za-z0-9_-]` plus the `[bot]` suffix on bot
+  // accounts; no jq metacharacters can appear, but we still validate
+  // defensively so a future env-driven author cannot inject jq syntax.
+  const safe = authors.filter((a) => /^[A-Za-z0-9_\-]+(?:\[bot\])?$/.test(a));
+  if (safe.length === 0) return "false";
+  return safe.map((a) => `.user.login == "${a}"`).join(" or ");
+}
 
 /**
  * Runtime validation for deserialized state to prevent state tampering
@@ -212,6 +254,7 @@ export async function readState(
   pr: number,
   token: string,
 ): Promise<ReadStateResult> {
+  const authorFilter = buildTrustedAuthorJqFilter(getTrustedStateCommentAuthors());
   const stdout = await ghApi(
     [
       "api",
@@ -232,9 +275,12 @@ export async function readState(
       // The additional `contains(MARKER)` guards against the rare case where a
       // user writes a comment that legitimately begins with the visible text
       // but is not a state comment.
+      // The `.user.login` author filter (TY-272 #A) discards comments posted
+      // by anyone other than the trusted writer identity so a third-party
+      // commenter on a public PR cannot inject a forged "latest" state.
       // @json emits each match as a single-line JSON-encoded string so
       // split("\n") parsing below stays correct.
-      `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`,
+      `.[] | select(${authorFilter}) | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`,
     ],
     token,
   );

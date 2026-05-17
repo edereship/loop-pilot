@@ -539,6 +539,76 @@ describe("handleRestartCommand", () => {
   });
 });
 
+describe("handleRestartCommand permission gate (TY-272 #E)", () => {
+  it("checks permission before reading state so unauthorized commenters never trigger a state-corrupted comment", async () => {
+    const deps = makeDeps();
+    deps.getCollaboratorPermission.mockResolvedValue("read");
+
+    // State is corrupted — previously this would have posted the
+    // "state is corrupted" comment to anyone (including unauthorized
+    // commenters), giving public-PR drive-by users a way to amplify noise.
+    const corruptedState: ReadStateResult = {
+      found: false,
+      corrupted: true,
+      commentId: 42,
+      commentUpdatedAt: "2026-05-09T00:00:00Z",
+    };
+
+    await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "stranger",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        stateResult: corruptedState,
+      },
+      deps,
+    );
+
+    // Only the permission-rejection comment is posted; the corrupted-state
+    // comment never appears, because permission is checked first.
+    expect(deps.postComment).toHaveBeenCalledTimes(1);
+    expect(deps.postComment.mock.calls[0][3]).toContain(
+      "❌ Restart rejected: insufficient permission.",
+    );
+    expect(deps.postComment.mock.calls[0][3]).not.toContain("state is corrupted");
+    expect(deps.updateStateComment).not.toHaveBeenCalled();
+    expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+  });
+
+  it("checks permission before answering the unsupported-option rejection", async () => {
+    const deps = makeDeps();
+    deps.getCollaboratorPermission.mockResolvedValue("read");
+
+    await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review now",
+        triggerUserLogin: "stranger",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    expect(deps.postComment).toHaveBeenCalledTimes(1);
+    expect(deps.postComment.mock.calls[0][3]).toContain(
+      "❌ Restart rejected: insufficient permission.",
+    );
+    expect(deps.postComment.mock.calls[0][3]).not.toContain("unsupported option");
+  });
+});
+
 describe("isValidGitHubLogin", () => {
   it("accepts well-formed logins", () => {
     expect(isValidGitHubLogin("octocat")).toBe(true);

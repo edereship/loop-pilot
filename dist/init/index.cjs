@@ -19320,6 +19320,20 @@ var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 3;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
+var TRUSTED_STATE_AUTHORS_ENV = "AUTO_REVIEW_STATE_COMMENT_AUTHORS";
+function getTrustedStateCommentAuthors(env = process.env) {
+  const fromInput = getInput("auto-review-state-comment-authors");
+  const raw = fromInput !== "" ? fromInput : env[TRUSTED_STATE_AUTHORS_ENV] ?? "";
+  const parsed = raw.split(",").map((a) => a.trim()).filter((a) => a.length > 0);
+  return parsed.length > 0 ? parsed : [DEFAULT_TRUSTED_STATE_AUTHOR];
+}
+function buildTrustedAuthorJqFilter(authors) {
+  const safe = authors.filter((a) => /^[A-Za-z0-9_\-]+(?:\[bot\])?$/.test(a));
+  if (safe.length === 0)
+    return "false";
+  return safe.map((a) => `.user.login == "${a}"`).join(" or ");
+}
 function validateState(obj) {
   if (typeof obj !== "object" || obj === null)
     return false;
@@ -19437,6 +19451,7 @@ function parseStateCommentRecord(line) {
   return null;
 }
 async function readState(owner, name, pr, token) {
+  const authorFilter = buildTrustedAuthorJqFilter(getTrustedStateCommentAuthors());
   const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
@@ -19456,9 +19471,12 @@ async function readState(owner, name, pr, token) {
     // The additional `contains(MARKER)` guards against the rare case where a
     // user writes a comment that legitimately begins with the visible text
     // but is not a state comment.
+    // The `.user.login` author filter (TY-272 #A) discards comments posted
+    // by anyone other than the trusted writer identity so a third-party
+    // commenter on a public PR cannot inject a forged "latest" state.
     // @json emits each match as a single-line JSON-encoded string so
     // split("\n") parsing below stays correct.
-    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
+    `.[] | select(${authorFilter}) | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
   ], token);
   const trimmed = stdout.trim();
   if (!trimmed) {

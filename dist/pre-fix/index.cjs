@@ -19388,6 +19388,20 @@ var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 3;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
+var TRUSTED_STATE_AUTHORS_ENV = "AUTO_REVIEW_STATE_COMMENT_AUTHORS";
+function getTrustedStateCommentAuthors(env = process.env) {
+  const fromInput = getInput("auto-review-state-comment-authors");
+  const raw = fromInput !== "" ? fromInput : env[TRUSTED_STATE_AUTHORS_ENV] ?? "";
+  const parsed = raw.split(",").map((a) => a.trim()).filter((a) => a.length > 0);
+  return parsed.length > 0 ? parsed : [DEFAULT_TRUSTED_STATE_AUTHOR];
+}
+function buildTrustedAuthorJqFilter(authors) {
+  const safe = authors.filter((a) => /^[A-Za-z0-9_\-]+(?:\[bot\])?$/.test(a));
+  if (safe.length === 0)
+    return "false";
+  return safe.map((a) => `.user.login == "${a}"`).join(" or ");
+}
 function validateState(obj) {
   if (typeof obj !== "object" || obj === null)
     return false;
@@ -19505,6 +19519,7 @@ function parseStateCommentRecord(line) {
   return null;
 }
 async function readState(owner, name, pr, token) {
+  const authorFilter = buildTrustedAuthorJqFilter(getTrustedStateCommentAuthors());
   const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
@@ -19524,9 +19539,12 @@ async function readState(owner, name, pr, token) {
     // The additional `contains(MARKER)` guards against the rare case where a
     // user writes a comment that legitimately begins with the visible text
     // but is not a state comment.
+    // The `.user.login` author filter (TY-272 #A) discards comments posted
+    // by anyone other than the trusted writer identity so a third-party
+    // commenter on a public PR cannot inject a forged "latest" state.
     // @json emits each match as a single-line JSON-encoded string so
     // split("\n") parsing below stays correct.
-    `.[] | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
+    `.[] | select(${authorFilter}) | select(.body | startswith("${STATE_COMMENT_VISIBLE_TEXT}")) | select(.body | contains("${STATE_COMMENT_OPEN}")) | {id: .id, body: .body, updated_at: .updated_at} | @json`
   ], token);
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -20019,12 +20037,13 @@ function isStatusCommentRecord(value) {
   return typeof v.id === "number" && typeof v.body === "string";
 }
 async function findStatusComment(owner, name, pr, token) {
+  const authorFilter = buildTrustedAuthorJqFilter(getTrustedStateCommentAuthors());
   const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
     "--paginate",
     "--jq",
-    `.[] | select(.body | startswith("${STATUS_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+    `.[] | select(${authorFilter}) | select(.body | startswith("${STATUS_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
   ], token);
   const trimmed = stdout.trim();
   if (!trimmed)
@@ -20245,6 +20264,16 @@ function defaultMergerDeps(overrides = {}) {
       ], token);
       return stdout.trim();
     },
+    getPrMergeSha: async (owner, name, pr, token) => {
+      const stdout = await ghApi([
+        "api",
+        `/repos/${owner}/${name}/pulls/${pr}`,
+        "--jq",
+        ".merge_commit_sha // empty"
+      ], token);
+      const trimmed = stdout.trim();
+      return trimmed || null;
+    },
     listWorkflowRuns: async (owner, name, sha, token) => {
       const stdout = await ghApi([
         "api",
@@ -20261,6 +20290,7 @@ function defaultMergerDeps(overrides = {}) {
         try {
           runs.push(JSON.parse(trimmed));
         } catch {
+          throw new Error(`Failed to parse workflow-run record: ${trimmed}`);
         }
       }
       return runs;
@@ -20270,6 +20300,7 @@ function defaultMergerDeps(overrides = {}) {
         "pr",
         "merge",
         String(pr),
+        "--auto",
         "--squash",
         "--match-head-commit",
         expectedHeadSha,
@@ -20280,6 +20311,12 @@ function defaultMergerDeps(overrides = {}) {
     sleep: (ms) => (0, import_promises.setTimeout)(ms),
     now: () => Date.now(),
     selfRunId: process.env.GITHUB_RUN_ID ?? "",
+    selfWorkflowName: process.env.GITHUB_WORKFLOW ?? "",
+    selfWorkflowPath: (() => {
+      const ref = process.env.GITHUB_WORKFLOW_REF ?? "";
+      const m = ref.match(/^[^/]+\/[^/]+\/(.+)@/);
+      return m ? m[1] : "";
+    })(),
     pollIntervalMs: DEFAULT_AUTO_MERGE_POLL_INTERVAL_MS,
     timeoutMs: DEFAULT_AUTO_MERGE_TIMEOUT_MS,
     ...overrides
@@ -20325,15 +20362,69 @@ async function mergeIfChecksPass(owner, name, pr, token, log, overrides = {}) {
       log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: failed to list workflow runs (${errMessage(err)}).`);
       return;
     }
-    const others = deps.selfRunId === "" ? runs : runs.filter((r) => String(r.id) !== deps.selfRunId);
-    const failed = others.filter((r) => r.conclusion !== null && FAILED_CONCLUSIONS.has(r.conclusion));
+    let mergeSha = null;
+    let mergeShaLookupNull = false;
+    if (deps.getPrMergeSha) {
+      try {
+        const ms = await deps.getPrMergeSha(owner, name, pr, token);
+        if (ms && ms !== initialHeadSha) {
+          mergeSha = ms;
+        } else if (!ms) {
+          mergeShaLookupNull = true;
+        }
+      } catch (err) {
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: failed to read PR merge commit sha (${errMessage(err)}).`);
+        return;
+      }
+    }
+    let allRuns = runs;
+    if (mergeSha) {
+      let mergeRuns;
+      try {
+        mergeRuns = await deps.listWorkflowRuns(owner, name, mergeSha, token);
+      } catch (err) {
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: failed to list workflow runs (${errMessage(err)}).`);
+        return;
+      }
+      const seenIds = new Set(runs.map((r) => r.id));
+      allRuns = [...runs];
+      for (const r of mergeRuns) {
+        if (!seenIds.has(r.id))
+          allRuns.push(r);
+      }
+    }
+    const selfWorkflowId = deps.selfRunId !== "" ? allRuns.find((r) => String(r.id) === deps.selfRunId)?.workflow_id : void 0;
+    const others = selfWorkflowId !== void 0 ? allRuns.filter((r) => r.workflow_id !== selfWorkflowId) : deps.selfRunId !== "" && deps.selfWorkflowName !== "" ? (() => {
+      const inferredId = allRuns.find((r) => r.name === deps.selfWorkflowName && (deps.selfWorkflowPath === "" || r.path === void 0 || r.path.replace(/@.*$/, "") === deps.selfWorkflowPath))?.workflow_id;
+      return inferredId !== void 0 ? allRuns.filter((r) => r.workflow_id !== inferredId) : allRuns;
+    })() : deps.selfRunId !== "" ? allRuns.filter((r) => String(r.id) !== deps.selfRunId) : allRuns;
+    const latestByWorkflowAndEvent = /* @__PURE__ */ new Map();
+    for (const r of others) {
+      const key = `${r.workflow_id}:${r.event}`;
+      const existing = latestByWorkflowAndEvent.get(key);
+      if (!existing || r.id > existing.id) {
+        latestByWorkflowAndEvent.set(key, r);
+      }
+    }
+    const deduped = Array.from(latestByWorkflowAndEvent.values());
+    const failed = deduped.filter((r) => r.conclusion !== null && FAILED_CONCLUSIONS.has(r.conclusion));
     if (failed.length > 0) {
       const names = failed.map((r) => `${r.name} (${r.conclusion})`).join(", ");
       log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: ${failed.length} CI run(s) failed: ${names}.`);
       return;
     }
-    const pending = others.filter((r) => r.status !== "completed");
-    if (pending.length === 0) {
+    const pending = deduped.filter((r) => r.status !== "completed");
+    const elapsedMs = deps.now() - startedAt;
+    if (elapsedMs >= deps.timeoutMs) {
+      if (others.length === 0) {
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${Math.round(deps.timeoutMs / 6e4)} min waiting for non-self CI runs to appear.`);
+      } else {
+        const pendingNames = pending.map((r) => r.name).join(", ");
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${Math.round(deps.timeoutMs / 6e4)} min with ${pending.length} CI run(s) still pending: ${pendingNames}.`);
+      }
+      return;
+    }
+    if (pending.length === 0 && !mergeShaLookupNull && (others.length > 0 || pollCount >= 2)) {
       try {
         await deps.mergeSquash(owner, name, pr, initialHeadSha, token);
         log.info(`[pr-merger] Auto-merge (squash) succeeded for PR #${pr} at ${initialHeadSha}.`);
@@ -20342,15 +20433,13 @@ async function mergeIfChecksPass(owner, name, pr, token, log, overrides = {}) {
       }
       return;
     }
-    const elapsedMs = deps.now() - startedAt;
-    if (elapsedMs >= deps.timeoutMs) {
-      const pendingNames2 = pending.map((r) => r.name).join(", ");
-      log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${Math.round(deps.timeoutMs / 6e4)} min with ${pending.length} CI run(s) still pending: ${pendingNames2}.`);
-      return;
-    }
     pollCount += 1;
-    const pendingNames = pending.map((r) => r.name).join(", ");
-    log.info(`[pr-merger] Waiting for ${pending.length} CI run(s) on PR #${pr} (poll ${pollCount}): ${pendingNames}.`);
+    if (others.length === 0) {
+      log.info(`[pr-merger] Waiting for non-self CI runs to appear for PR #${pr} (poll ${pollCount}).`);
+    } else {
+      const pendingNames = pending.map((r) => r.name).join(", ");
+      log.info(`[pr-merger] Waiting for ${pending.length} CI run(s) on PR #${pr} (poll ${pollCount}): ${pendingNames}.`);
+    }
     await deps.sleep(deps.pollIntervalMs);
   }
 }
@@ -20450,6 +20539,11 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   if (!command.isRestart) {
     return { handled: false };
   }
+  const hasPermission = await canRestart(context, deps);
+  if (!hasPermission) {
+    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`, context.githubToken);
+    return { handled: true };
+  }
   if (command.invalidReason) {
     await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.", context.githubToken);
     return { handled: true };
@@ -20460,11 +20554,6 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   }
   if (!context.stateResult.found) {
     await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart cannot apply: auto-review state was not found.", context.githubToken);
-    return { handled: true };
-  }
-  const hasPermission = await canRestart(context, deps);
-  if (!hasPermission) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`, context.githubToken);
     return { handled: true };
   }
   const preflight = applyRestartToState(context.stateResult.state, command.mode, null);

@@ -206,6 +206,111 @@ function clearUrlRewriteRules(): void {
 }
 
 /**
+ * TY-272 #D: refuse to push when `~/.gitconfig` (or `$XDG_CONFIG_HOME/git/config`)
+ * carries a `url.<base>.insteadOf` / `pushInsteadOf` entry **whose value can
+ * rewrite the GitHub HTTPS destination this function pushes to**.
+ *
+ * `clearUrlRewriteRules` strips rewrites from `.git/config` (local scope) but
+ * leaves global config untouched — `git push` honours global rules before
+ * resolving the URL we hand it, so a global rewrite rule could redirect the
+ * authenticated PAT to an attacker host. claude-code-action runs with
+ * `Write` allowed, so a compromised repair could in principle drop a rule
+ * into `$HOME/.gitconfig` (the action's HOME is shared with the runner
+ * filesystem after PR #77's hardening).
+ *
+ * Codex P2 (PR #85): only reject rules whose `<value>` is actually a prefix
+ * of the GitHub destination URL (or that GitHub destination is a prefix of —
+ * meaning the rule still matches narrower paths like
+ * `https://github.com/<owner>/`). Self-hosted runners with org-wide GitLab
+ * rewrites (`url.https://gitlab.com/.insteadOf = https://gitlab.com/`) must
+ * not have their `AUTO_REVIEW_PUSH_TOKEN` pushes blocked by an over-broad
+ * check.
+ *
+ * Codex P1 (PR #85): include only the matching rule **key** in the error
+ * message — `git config --get-regexp` output is `<key> <value>` and the
+ * value can carry a credential prefix (e.g.,
+ * `url.https://x-access-token:<token>@github.com/.insteadOf <something>`)
+ * that would otherwise be echoed verbatim into Actions logs.
+ *
+ * `git config --global --get-regexp` exits 1 when no entries match. Any other
+ * non-zero exit is treated as a corrupt-config situation and surfaced rather
+ * than swallowed, so a tampered global config cannot silently disable the
+ * check.
+ */
+/**
+ * Pure predicate: would a git rewrite rule whose `insteadOf` / `pushInsteadOf`
+ * value is `rewriteValue` actually redirect a push to `destinationUrl`?
+ *
+ * Git applies `url.<base>.insteadOf <value>` when the URL **starts with**
+ * `<value>` (then replaces that prefix with `<base>`). The check therefore
+ * reduces to a single prefix test — narrower values (e.g.,
+ * `https://github.com/<owner>/<repo>.git/extra`) cannot match because the
+ * destination is shorter than them.
+ */
+export function rewriteValueCanRedirect(
+  rewriteValue: string,
+  destinationUrl: string,
+): boolean {
+  // An empty insteadOf value is a valid prefix of every URL in git — treat it
+  // as redirecting rather than safe, because git would apply such a rule to all
+  // pushes regardless of the destination.
+  return destinationUrl.startsWith(rewriteValue);
+}
+
+function parseRewriteEntry(line: string): { key: string; value: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  // `git config --get-regexp` separates key and value with whitespace. The
+  // value may itself contain spaces; split on the first run of whitespace
+  // only so we preserve the full value for the prefix check.
+  const match = trimmed.match(/^(\S+)\s+(.*)$/);
+  if (!match) return { key: trimmed, value: "" };
+  return { key: match[1], value: match[2] };
+}
+
+function assertNoGlobalUrlRewriteRules(destinationUrl: string): void {
+  let listOutput: string;
+  try {
+    listOutput = execFileSync(
+      "git",
+      [
+        "config",
+        "--global",
+        "--get-regexp",
+        "^url\\..*\\.(insteadOf|pushInsteadOf)$",
+      ],
+      { encoding: "utf-8" },
+    );
+  } catch (err) {
+    const status = (err as { status?: unknown }).status;
+    if (status === 1) {
+      // No matching keys → safe.
+      return;
+    }
+    throw err;
+  }
+
+  let offendingCount = 0;
+  for (const line of listOutput.split("\n")) {
+    const entry = parseRewriteEntry(line);
+    if (!entry) continue;
+    if (rewriteValueCanRedirect(entry.value, destinationUrl)) {
+      offendingCount += 1;
+    }
+  }
+  if (offendingCount === 0) return;
+
+  // Important: never include the rewrite key or value in the error — both
+  // sides can carry credentials (e.g.,
+  // `url.https://x-access-token:<token>@.../.insteadOf <value>`). Surface
+  // only a count and tell the operator how to enumerate locally.
+  throw new Error(
+    `Refusing to push: global git config carries ${offendingCount} url rewrite rule(s) that can redirect the push to ${destinationUrl}.\n` +
+      `Inspect with \`git config --global --get-regexp '^url\\..*\\.(insteadOf|pushInsteadOf)$'\` and remove the offending entries with \`git config --global --unset-all <key>\` before re-running auto-review.`,
+  );
+}
+
+/**
  * Push using a one-shot `http.extraheader` Authorization when `token` is
  * configured (TY-270 #20).
  *
@@ -238,10 +343,18 @@ export function pushWithToken(
   }
 
   unsetCheckoutExtraheader();
-  clearUrlRewriteRules();
-
   const destUrl = `https://github.com/${owner}/${repo}.git`;
+  assertNoGlobalUrlRewriteRules(destUrl);
+  clearUrlRewriteRules();
   const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+  // TY-272 #B: GitHub Actions masks values seen by `core.setSecret` via exact
+  // string match. The raw `token` is registered upstream by
+  // `registerAllSecrets`, but the `Basic <base64>` form is a derived secret
+  // that bypasses that registration. With `stdio: "inherit"` below, git may
+  // echo argv to stderr on certain failures (e.g., `fatal: unable to access
+  // ...`), leaking the encoded credential to the run log. Registering the
+  // base64 form keeps that escape route closed.
+  core.setSecret(basic);
   execFileSync(
     "git",
     [

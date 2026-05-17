@@ -160,6 +160,15 @@ hard restart。soft restart の操作に加えて、`iterationCount` を `0`、`
 
 権限不足の場合、状態は変更せず、PR に拒否コメントを残す。
 
+**Workflow 起動レイヤーの追加ゲート (TY-272 #C):**
+- `auto-review-loop.yml` の job `if` で、`/restart-review` 経路では `github.event.comment.author_association` が `OWNER` / `MEMBER` / `COLLABORATOR` のいずれか、**または** commenter が PR 作者本人 (`github.event.comment.user.login == github.event.issue.user.login`) でない場合は workflow run 自体が起動しない
+- これは TS 側の `handleRestartCommand` 内の permission check (上記 `AUTO_REVIEW_RESTART_ROLES`) を補完する defense-in-depth。public PR で関係ない第三者が `/restart-review` を連投しても、workflow run / Actions minutes / 並行 job スロットを消費しない
+- 外部コントリビューター (`CONTRIBUTOR` / `FIRST_TIME_CONTRIBUTOR` / `NONE`) の PR 作者は `AUTO_REVIEW_RESTART_ROLES` のデフォルト `author` に含まれるため、自分の PR 上で `/restart-review` を発火できる (Codex P1 on PR #85 の指摘を受けて緩和)。それ以外の外部ユーザーが restart したい正当な要件は基本的に発生しないため、本 gate を緩める運用は非推奨。例外運用が必要な場合は workflow YAML の `if` 条件を明示的に編集する
+
+**実行内部の順序 (TY-272 #E):**
+- `handleRestartCommand` は parse 直後に `canRestart` で権限を確認し、不足時は 1 件の拒否コメントだけ投稿して return する
+- state read / `state_corrupted` 通知 / `unsupported_option` 通知などの side effect は全て権限チェックの後に走る。これにより、権限のない `/restart-review` が誤って state や追加コメントを生成する経路を塞ぐ
+
 ### 再開フロー
 
 1. 人間が修正を commit / push する

@@ -16,6 +16,28 @@
 
 ---
 
+## State / status comment の trust boundary (TY-272 #A)
+
+`auto-review-state` (hidden JSON) と `auto-review-status` (visible markdown) の 2 種類のコメントは、それぞれ workflow run の `GITHUB_TOKEN` が書き込む唯一の真実の状態である。Public PR では誰でも PR にコメントを投稿できるため、body marker (`<!-- auto-review-state` / `<!-- auto-review-status -->`) だけで一致判定すると、第三者が偽 state を仕込むことで auto-review を以下のように撹乱できる:
+
+- `{"status":"done"}` を含む forged state を投稿し、`readState` が最後の match を採用する仕様 (`state-manager.ts:251`) を利用して auto-review を停止させる
+- 「Auto-review status」コメントを偽装して `current` / `nextAction` を改ざんし、運用者を混乱させる
+
+**対策:**
+- `readState` (`src/state-manager.ts`) / `findStatusComment` (`src/status-comment.ts`) の jq filter に `.user.login` の author 検証を追加。デフォルトは `github-actions[bot]` のみを信頼
+- Repository variable `AUTO_REVIEW_STATE_COMMENT_AUTHORS` で許可 author を上書きできる (GitHub App / 別 machine user で state を書く運用に備える)。カンマ区切り (例: `github-actions[bot],my-app[bot]`)
+- author allowlist は jq への injection を防ぐため `^[A-Za-z0-9_-]+(\[bot\])?$` で validate される。未知の文字を含む author は無視され、安全側 (= `false`) に倒れる
+
+**Workflow への wiring:**
+- Repository variable は workflow run の env に **自動マップされない**。本リポジトリの `auto-review-loop.yml` / `auto-review-init.yml` は composite action の input `auto-review-state-comment-authors` に `${{ vars.AUTO_REVIEW_STATE_COMMENT_AUTHORS }}` を渡し、`loop/action.yml` がそれを `init` / `loop/pre-fix` / `loop/post-fix` に forward する。Node 側は `core.getInput("auto-review-state-comment-authors")` を最優先で読み、未設定なら従来の `AUTO_REVIEW_STATE_COMMENT_AUTHORS` env にフォールバックする
+- 自分の workflow を書き起こす場合は同じ input を必ず渡す。未設定でも default (`github-actions[bot]`) で動くため、標準の `GITHUB_TOKEN` 運用なら追加設定は不要
+
+**運用上の注意:**
+- 自分の repo で異なる writer identity (例: 専用 GitHub App) を使う場合は、必ず `AUTO_REVIEW_STATE_COMMENT_AUTHORS` を設定する。設定漏れがあると state read が常に空を返し、Workflow A の初期化からやり直すことになる
+- 設定値を変更した場合、既存 in-flight PR の state コメントの author が変わっていないか (履歴) を確認する。古いコメントが新 allowlist に含まれないと、復旧経路として human が hidden コメントを削除→Workflow A 再実行が必要
+
+---
+
 ## Repository variables と trigger guard
 
 Workflow B は Codex 総評レビュー/コメントだけで起動する。Repository variables は外部サービス側の bot 名や総評文言が変わった場合の上書き用途であり、未設定でも安全に動く必要がある。
@@ -126,6 +148,7 @@ PR #7 では、Repository UI で default workflow permission を write に変更
 **注意事項:**
 - シークレットは workflow のログに出力されない (GitHub の自動マスク + `src/secrets.ts:registerAllSecrets` で `githubToken` / `codexReviewRequestToken` / `autoReviewPushToken` / `anthropicApiKey` / `claudeCodeOauthToken` を init / pre-fix / post-fix 各 entrypoint から一括登録 — TY-264)
 - `CHECK_COMMAND` を実行する子プロセスには `stripSecretEnv` (src/secrets.ts) が上記 secret 系の素 env (`GITHUB_TOKEN`, `CODEX_REVIEW_REQUEST_TOKEN`, `AUTO_REVIEW_PUSH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` 等) と `INPUT_*` 系すべてを削除した env を渡す。新しい secret を `Config` に足す際は `SECRET_CONFIG_FIELDS` / `SECRET_ENV_NAMES` の 1 ヶ所に追加すれば init/pre-fix/post-fix の `setSecret` と CHECK_COMMAND 隔離の両方に自動で反映される
+- **TY-272 #B**: `AUTO_REVIEW_PUSH_TOKEN` を使った push 経路では、`pushWithToken` が `http.extraheader=AUTHORIZATION: Basic <base64>` の **base64 形式も `core.setSecret` で登録** する。素のトークンは `registerAllSecrets` でマスク済みだが、`Buffer.from("x-access-token:" + token).toString("base64")` は派生 secret として別文字列扱いになるため、git の失敗時 stderr が argv をエコーした場合のログ漏洩経路を防ぐ
 - Fork PR の workflow ではシークレットにアクセスできない (GitHub のデフォルト挙動で保護される)
 - 認証情報のローテーション手順は API キー / OAuth トークン共に本番移植時に定める
 
@@ -206,6 +229,12 @@ public repo E2E でこの挙動を確認したため、Repository secret
 - `CODEX_REVIEW_REQUEST_TOKEN` とは分離する。レビュー依頼用 token に push 権限を持たせない
 - ログ出力前に mask されるよう、必ず Repository secrets に保存する
 - 未設定時は既存互換のため `GITHUB_TOKEN` 相当の push 経路を使う
+
+**Defense-in-depth (TY-272):**
+- `pushWithToken` 実行直前に `git config --global --get-regexp '^url\..*\.(insteadOf|pushInsteadOf)$'` で **global git config の URL rewrite rule** を検査する。claude-code-action は `Write` ツール許可で動くため、`$HOME/.gitconfig` への書き込みで rewrite rule を仕込まれると、`destUrl` を attacker host に redirect される可能性がある。`destUrl` (`https://github.com/<owner>/<repo>.git`) を実際に rewrite できる value を持つ entry が検出された場合のみ push を実行せず例外を投げて停止する。GitLab 等の関係ない host への rewrite (`url.https://gitlab.com/.insteadOf = ...`) は通す（self-hosted runner で org 全体の rewrite を運用しているケースを誤って break しない、Codex P2 on PR #85）
+- 例外メッセージには rule の **key のみ** を含める。`git config --get-regexp` の出力は `<key> <value>` 形式で、value 側に credential prefix (`https://x-access-token:<token>@...`) が混入していると Actions ログへ漏洩しうるため (Codex P1 on PR #85)
+- `.git/config` 側の rewrite rule は従来通り `clearUrlRewriteRules` でクリアする
+- 上記の base64 トークンマスク (#B) と組み合わせて、push 経路が万一失敗した場合でも secret がログに残らないことを担保する
 
 ## Branch protection / required checks under production settings
 

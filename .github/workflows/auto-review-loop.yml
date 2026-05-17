@@ -53,6 +53,20 @@ jobs:
     # even after the gate label has been removed. The
     # fork guard inside steps and the runtime permission check in
     # handleRestartCommand still apply.
+    #
+    # TY-272 #C: gate the restart trigger on `author_association` so a public-PR
+    # commenter cannot spin up Workflow B runs (and burn Actions minutes /
+    # concurrency slots) before the inner permission check rejects them.
+    # `OWNER` / `MEMBER` / `COLLABORATOR` are the GitHub-asserted trusted
+    # associations; any drive-by commenter falls outside this set and the
+    # workflow simply won't start.
+    #
+    # PR 作者は `author_association` が `CONTRIBUTOR` / `FIRST_TIME_CONTRIBUTOR`
+    # / `NONE` の場合でも、`auto-review-restart-roles` の default に `author`
+    # が含まれている限り restart 権限を持つ (`canRestart` で許可される)。
+    # その経路を残すため、author == commenter の場合は author_association
+    # の枠を緩める。これにより外部コントリビューターの PR 作者が `/restart-review`
+    # で復旧する経路が welcoming されたまま、関係ない第三者の連投だけが弾かれる。
     if: >
       (
         github.event_name == 'issue_comment' &&
@@ -60,6 +74,12 @@ jobs:
         (
           github.event.comment.body == '/restart-review' ||
           startsWith(github.event.comment.body, '/restart-review ')
+        ) &&
+        (
+          github.event.comment.author_association == 'OWNER' ||
+          github.event.comment.author_association == 'MEMBER' ||
+          github.event.comment.author_association == 'COLLABORATOR' ||
+          github.event.comment.user.login == github.event.issue.user.login
         )
       ) ||
       (
@@ -189,6 +209,10 @@ jobs:
           auto-merge-poll-seconds: ${{ vars.AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS || '15' }}
           auto-merge-timeout-minutes: ${{ vars.AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES || '10' }}
           severity-threshold: ${{ vars.AUTO_REVIEW_SEVERITY_THRESHOLD || 'P2' }}
+          # TY-272 #A: trusted state-comment author override. Empty falls
+          # back to `github-actions[bot]`. Set the Repository variable when
+          # state comments are authored by a GitHub App / machine user.
+          auto-review-state-comment-authors: ${{ vars.AUTO_REVIEW_STATE_COMMENT_AUTHORS }}
 
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact

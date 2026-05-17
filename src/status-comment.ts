@@ -1,4 +1,8 @@
 import { ghApi } from "./gh.js";
+import {
+  buildTrustedAuthorJqFilter,
+  getTrustedStateCommentAuthors,
+} from "./state-manager.js";
 
 export const STATUS_COMMENT_MARKER = "auto-review-status";
 const STATUS_COMMENT_OPEN = `<!-- ${STATUS_COMMENT_MARKER} -->`;
@@ -273,6 +277,11 @@ function isStatusCommentRecord(value: unknown): value is StatusCommentRecord {
 /**
  * Find an existing status comment on the PR, or return `null`. Identified by
  * presence of `STATUS_COMMENT_MARKER` in the body header.
+ *
+ * TY-272 #A: the jq filter additionally requires `.user.login` to match a
+ * trusted bot author so a third-party commenter on a public PR cannot forge a
+ * status comment whose `current` / `nextAction` confuses operators or whose
+ * data block redirects upsert merges to attacker-controlled history.
  */
 export async function findStatusComment(
   owner: string,
@@ -280,13 +289,14 @@ export async function findStatusComment(
   pr: number,
   token: string,
 ): Promise<StatusCommentRecord | null> {
+  const authorFilter = buildTrustedAuthorJqFilter(getTrustedStateCommentAuthors());
   const stdout = await ghApi(
     [
       "api",
       `repos/${owner}/${name}/issues/${pr}/comments`,
       "--paginate",
       "--jq",
-      `.[] | select(.body | startswith("${STATUS_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`,
+      `.[] | select(${authorFilter}) | select(.body | startswith("${STATUS_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`,
     ],
     token,
   );
