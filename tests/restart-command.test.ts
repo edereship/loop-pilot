@@ -209,9 +209,82 @@ describe("applyRestartToState", () => {
       ok: false,
       reason: "unsupported_status",
     });
-    expect(applyRestartToState(makeState({ status: "stopped", stopReason: "state_corrupted" }), "hard", 1)).toEqual({
-      ok: false,
-      reason: "state_corrupted",
+    // TY-282 #1C: --hard now recovers from stopReason=state_corrupted because
+    // hard restart clears iterationCount + findingsHashHistory so the next run
+    // starts from scratch. Only the soft mode is still rejected.
+    expect(
+      applyRestartToState(
+        makeState({ status: "stopped", stopReason: "state_corrupted" }),
+        "soft",
+        1,
+      ),
+    ).toEqual({ ok: false, reason: "state_corrupted" });
+  });
+
+  it("allows --hard restart from stopReason=state_corrupted (TY-282 #1C)", () => {
+    const state = makeState({
+      status: "stopped",
+      stopReason: "state_corrupted",
+      iterationCount: 5,
+      findingsHashHistory: [
+        { iteration: 5, hash: "stale-hash" },
+      ],
+      lastFindingsHash: "stale-hash",
+    });
+    const result = applyRestartToState(state, "hard", 9999);
+    if (!result.ok) {
+      throw new Error(`expected --hard to recover state_corrupted: ${result.reason}`);
+    }
+    expect(result.nextState).toMatchObject({
+      status: "waiting_codex",
+      // Source state.stopReason is preserved per TY-258 across restart; the
+      // next iteration's clean commit will null it out (one-shot).
+      stopReason: "state_corrupted",
+      iterationCount: 0,
+      findingsHashHistory: [],
+      lastFindingsHash: null,
+      lastCodexRequestCommentId: 9999,
+    });
+  });
+
+  it("rejects soft restart from stopReason=state_corrupted with a --hard escape-hatch message (TY-282 #1C)", () => {
+    const state = makeState({
+      status: "stopped",
+      stopReason: "state_corrupted",
+    });
+    const result = applyRestartToState(state, "soft", 1);
+    expect(result).toEqual({ ok: false, reason: "state_corrupted" });
+  });
+
+  it("soft-restarts the new workflow_crashed stop reason without ceremony (TY-282 #2A)", () => {
+    // workflow_crashed is the new auto-recoverable stop reason for crash
+    // recovery + stale fixing detection. Unlike state_corrupted it accepts
+    // both soft and hard restart so the operator does not have to think
+    // about which mode to use.
+    const state = makeState({
+      status: "stopped",
+      stopReason: "workflow_crashed",
+      iterationCount: 3,
+      findingsHashHistory: [{ iteration: 3, hash: "hash-a" }],
+      lastFindingsHash: "hash-a",
+    });
+    const soft = applyRestartToState(state, "soft", 100);
+    if (!soft.ok) throw new Error("expected soft restart to succeed");
+    expect(soft.nextState).toMatchObject({
+      status: "waiting_codex",
+      stopReason: "workflow_crashed",
+      iterationCount: 3,
+      lastCodexRequestCommentId: 100,
+    });
+
+    const hard = applyRestartToState(state, "hard", 200);
+    if (!hard.ok) throw new Error("expected hard restart to succeed");
+    expect(hard.nextState).toMatchObject({
+      status: "waiting_codex",
+      iterationCount: 0,
+      findingsHashHistory: [],
+      lastFindingsHash: null,
+      lastCodexRequestCommentId: 200,
     });
   });
 

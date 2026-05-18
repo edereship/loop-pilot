@@ -334,10 +334,16 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     deps.warning(
       `[pre-fix] Status stuck in 'fixing' for ${Math.round(elapsed / 60000)}min. Recovering.`,
     );
+    // TY-282 #1B: previously the stale recovery wrote `state_corrupted`,
+    // which `applyRestartToState` reject outright, forcing manual hidden-
+    // comment surgery. The fixing claim is stale because some prior workflow
+    // exited without finalizing state — the data itself is still parseable
+    // and the loop should be restartable. Downgrade to `workflow_crashed`
+    // so `/restart-review` recovers cleanly.
     const recoveredState: ReviewState = {
       ...state,
       status: "stopped",
-      stopReason: "state_corrupted",
+      stopReason: "workflow_crashed",
       fixingStartedAt: null,
     };
     if (
@@ -351,10 +357,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       config.repoOwner,
       config.repoName,
       config.prNumber,
-      "state_corrupted",
+      "workflow_crashed",
       triggerCommentId,
       0,
-      "Previous fixing state timed out — recovered automatically",
+      "Previous fixing state timed out — recovered automatically. Use /restart-review to resume.",
       config.githubToken,
     );
     return;

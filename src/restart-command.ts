@@ -103,7 +103,25 @@ export function applyRestartToState(
   if (state.status === "initialized" || (state.status === "fixing" && mode !== "hard")) {
     return { ok: false, reason: "unsupported_status" };
   }
-  if (state.status === "stopped" && state.stopReason === "state_corrupted") {
+  // TY-282 #1C: previously `state_corrupted` was an absolute reject so the
+  // only recovery was hand-editing the hidden state comment. In practice that
+  // path was hit by automatic recoveries (`demoteFixingOnCrash`, stale
+  // `fixing` detector) writing a parseable state with stopReason
+  // `state_corrupted`, not by genuine JSON corruption. Those crash paths are
+  // now downgraded to `workflow_crashed` (which restart accepts without
+  // ceremony), but legacy / future writes of `state_corrupted` still need an
+  // escape hatch — `--hard` clears iteration count + findings history so the
+  // next run starts from scratch, making it safe to apply even when the
+  // recorded state machine looked off.
+  //
+  // Genuine JSON corruption (readState `corrupted=true`) is rejected earlier
+  // in `handleRestartCommand` and never reaches this function, so this
+  // branch always operates on a parseable state.
+  if (
+    state.status === "stopped" &&
+    state.stopReason === "state_corrupted" &&
+    mode !== "hard"
+  ) {
     return { ok: false, reason: "state_corrupted" };
   }
   // TY-274 #1: soft restart from `secret_leak_suspected` is rejected so the
@@ -458,7 +476,12 @@ function parseRoles(raw: string, warn: (msg: string) => void): Set<string> {
 function restartRejectionMessage(reason: Exclude<RestartApplyResult, { ok: true }>["reason"]): string {
   switch (reason) {
     case "state_corrupted":
-      return "❌ Restart cannot apply: state is corrupted. See docs/operations/stop-and-recovery.md.";
+      return (
+        "❌ Restart cannot apply: state is corrupted. " +
+        "Soft `/restart-review` is rejected from a corrupted-state stop because the hidden state may not reflect reality. " +
+        "Use `/restart-review --hard` to clear iteration history and resume — `--hard` resets iterationCount + findingsHashHistory so the next run starts from scratch (TY-282 #1C). " +
+        "See docs/operations/stop-and-recovery.md."
+      );
     case "unsupported_status":
       return "❌ Restart cannot apply: current review status is not restartable.";
     case "secret_leak_requires_hard_restart":

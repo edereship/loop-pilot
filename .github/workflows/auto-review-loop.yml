@@ -173,6 +173,7 @@ jobs:
         run: npm ci
 
       - name: Run auto-fix loop
+        id: loop
         uses: ./loop
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -214,6 +215,75 @@ jobs:
           # back to `github-actions[bot]`. Set the Repository variable when
           # state comments are authored by a GitHub App / machine user.
           auto-review-state-comment-authors: ${{ vars.AUTO_REVIEW_STATE_COMMENT_AUTHORS }}
+
+      # TY-282 #2B: workflow-level fail-safe. If the composite `./loop` action
+      # ends in `failure` or `cancelled` we cannot rely on `postStopComment`
+      # firing from inside `demoteFixingOnCrash` (e.g. token revoked, GitHub
+      # API outage, Node process killed before the catch handler runs, or a
+      # job-level timeout that cancels the step). This step talks to the
+      # GitHub API directly with the workflow's bundled `GITHUB_TOKEN` and
+      # posts a top-level 🛑 comment so the operator at least *knows* the
+      # loop stopped, even when every code-path inside the action has
+      # already gone silent. The comment intentionally links the workflow
+      # run rather than the (potentially stale) status comment.
+      #
+      # The guard intentionally inspects `steps.loop.conclusion` rather than
+      # `failure()`:
+      #   - `failure()` is true when *any* previous step failed, so an
+      #     earlier guard (Get PR info, Check fork PR, npm ci) failing
+      #     leaves `steps.loop.conclusion == 'skipped'` and would otherwise
+      #     post a misleading "auto-review crashed" comment for events the
+      #     loop never even saw.
+      #   - GitHub Actions exposes cancellation via `cancelled()` separately
+      #     from `failure()`. Keying on the conclusion captures both real
+      #     loop crashes and job-timeout cancellations in a single check.
+      # `always()` is required so this step still runs after a failed step;
+      # without it, `if:` defaults to an implicit `success()` AND.
+      #
+      # Dedup with 2A (Codex review on PR #96): when `demoteFixingOnCrash`
+      # successfully posts the in-process 🛑 stop notification, this step
+      # would otherwise post a *second* 🛑 comment for the same crash. The
+      # design intent of 2B is to backstop 2A when 2A *cannot* fire — so
+      # before posting we check whether a recent in-process stop comment
+      # exists from `github-actions[bot]`. If so, 2A handled it cleanly
+      # and 2B has nothing to add. The window is short (90s) so unrelated
+      # earlier stops on the same PR cannot accidentally suppress us, and
+      # the dedup check falls open (treats the API as if no recent stop
+      # exists) on any failure so 2B's safety-net property is preserved.
+      - name: Post crash notification on workflow failure
+        if: >
+          always() &&
+          (steps.loop.conclusion == 'failure' ||
+           steps.loop.conclusion == 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LOOP_CONCLUSION: ${{ steps.loop.conclusion }}
+        run: |
+          set -euo pipefail
+          # Dedup window: look for any `🛑 **Auto-review stopped**` body
+          # authored by github-actions[bot] in the last 90s. That string
+          # is the literal prefix `buildTerminalNotificationBody` emits
+          # for every `stopped` terminal notification, so a hit means 2A
+          # (or `postStopComment` from `failureExit`) already covered
+          # this crash. Network / parse errors default to 0 so we still
+          # post the fail-safe.
+          SINCE=$(date -u -d '90 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
+          RECENT_STOP=$(gh api \
+            "repos/${REPO}/issues/${PR_NUM}/comments?since=${SINCE}&per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("🛑 **Auto-review stopped**")))] | length' \
+            2>/dev/null || echo 0)
+          if [ "${RECENT_STOP:-0}" -gt 0 ]; then
+            echo "::notice::TY-282 2A already posted a top-level stop notification within 90s (${RECENT_STOP} found); skipping 2B fail-safe to avoid duplicate."
+            exit 0
+          fi
+          BODY=$'🛑 **Auto-review crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post (TY-282 #2B).\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
+          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
+            --method POST \
+            --raw-field body="$BODY" \
+            >/dev/null || echo "::warning::Failed to post crash notification comment via gh api; check GITHUB_TOKEN scope."
 
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact

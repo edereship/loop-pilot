@@ -92,6 +92,8 @@ export const STOP_REASON_LABELS = {
   manual_stop: "manual stop requested",
   state_corrupted: "hidden comment state corrupted",
   state_conflict: "hidden comment state changed concurrently",
+  workflow_crashed:
+    "Auto-fix workflow crashed before it could post a clean stop comment (TY-282)",
   action_timeout: "Claude Code Action workflow timeout",
   action_failure: "Claude Code Action exited with a non-zero status",
   scope_violation: "Auto-fix blocked — the repair diff touched protected paths.",

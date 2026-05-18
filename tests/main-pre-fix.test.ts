@@ -135,7 +135,7 @@ describe("runPreFix", () => {
     },
   );
 
-  it("recovers stale 'fixing' state with action_timeout-style detail", async () => {
+  it("recovers stale 'fixing' state via workflow_crashed so /restart-review can resume (TY-282 #1B)", async () => {
     const staleStartedAt = new Date("2026-05-14T10:00:00Z").toISOString();
     const deps = makeDeps({
       found: true,
@@ -154,15 +154,25 @@ describe("runPreFix", () => {
     await runPreFix(baseConfig, deps);
 
     expect(deps.outputs.should_run).toBe("false");
+    // TY-282 #1B: stale recovery used to write state_corrupted, which
+    // applyRestartToState rejects. Switched to workflow_crashed so the
+    // operator can /restart-review without manual hidden-comment surgery.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
       "test-auto-ai-review",
       100,
-      expect.objectContaining({ status: "stopped", stopReason: "state_corrupted" }),
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "workflow_crashed",
+        fixingStartedAt: null,
+      }),
       "github-token",
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalled();
+    expect((deps.postStopComment as ReturnType<typeof vi.fn>).mock.calls[0][3]).toBe(
+      "workflow_crashed",
+    );
   });
 
   // TY-273 #B4: `fixingStartedAt` is the authoritative stale-detection

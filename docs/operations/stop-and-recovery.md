@@ -76,6 +76,50 @@ Codex が `@codex review` 要求に対して通常のレビュー結果ではな
 
 ---
 
+### Workflow crash (`workflow_crashed`, TY-282 #2A)
+
+pre-fix / post-fix が `failureExit` を呼ぶ前に例外で死んだ場合 (state-comment-locker の予期せぬ throw / Claude API error / Node unhandled rejection / network 障害など) は、`runIfNotVitest` の `onError` から `demoteFixingOnCrash` (`src/crash-recovery.ts`) が走り、`fixing` だった hidden state を `stopped / workflow_crashed` に降格させた上で `postStopComment` で top-level 🛑 通知を投稿する。
+
+PR #93 / #94 / #95 で 3 連続観測した「workflow が `conclusion=failure` で終わるが通知が出ない silent failure」の構造的対策。TY-282 以前は同じ経路が `state_corrupted` を書いていたため `/restart-review` が拒否され続け、運用者は hidden state を手編集するしかなかった。
+
+復旧: `/restart-review` (soft) で再開できる。iteration history を消したい場合は `/restart-review --hard`。
+
+#### 二重の safety-net
+
+`demoteFixingOnCrash` 自体が token 失効 / API outage 等で死んだ場合に備え、`.github/workflows/auto-review-loop.yml` の `auto-fix` job 末尾に YAML 側 fail-safe step がある (`Post crash notification on workflow failure`)。これは workflow の `GITHUB_TOKEN` で `gh api` を直接叩き、最低限「止まったこと」を PR に通知する。`postStopComment` のような綺麗な書式は出ないが、workflow run の URL は載るので運用者はログから根本原因を辿れる。
+
+##### dedup ロジック (PR #96 の Codex review 反映)
+
+2A (`demoteFixingOnCrash` の `postStopComment`) と 2B (YAML fail-safe step) は **片方が死んでも通知が届くこと** を目的にしているため、両方成功すると 🛑 通知が重複する。PR #96 でこの事象を実観測。
+
+2B step は post する直前に「直前 90 秒以内に `github-actions[bot]` が `🛑 **Auto-review stopped**` で始まる top-level コメントを投稿しているか」を `gh api` で check し、ある場合は skip する (`::notice::` ログのみ残す)。dedup check が API 障害等で失敗した場合は **fall open** (post を強行) するので 2B の safety-net 性質は保たれる。
+
+90 秒という短い window は、無関係な過去の停止通知を誤って dedup 対象にしないため。`demoteFixingOnCrash` は crash 検出から数秒以内に 2A を投稿するので、この window で取りこぼすことはない。
+
+##### state demotion 失敗時の挙動 (Codex PR #96 P2 review on commit 8346b0d 反映)
+
+`demoteFixingOnCrash` の `updateStateComment` が失敗 (412 conflict / 5xx / token 失効) した場合、`postStopComment` は **呼び出されない** (commit 8346b0d 時点では呼ばれていたが、Codex P2 review の指摘で gate を追加)。理由は次の通り:
+
+- `updateStateComment` 失敗 ⇒ hidden state は `fixing` のまま
+- そこで `postStopComment` を呼ぶと、可視 status comment header が `Stopped — workflow_crashed` に書き換わり、top-level 🛑 通知も「stopped」を主張する
+- 運用者は `/restart-review` を投げるが `applyRestartToState` は hidden state が `fixing` のため reject
+- 結果: 「Stopped が見えるのに restart できない」silent-unrecoverable UX が再発 (TY-282 が解消したはずの原状回帰)
+
+代わりに 2B step が `🛑 Auto-review crashed` (`stopped` ではない) を post する。これは demotion を主張しないので状態不整合は起きない。ただし hidden state は `fixing` のままなので、`/restart-review` は STALE_THRESHOLD_MS (30 分) 経過後の pre-fix stale check で初めて demote される。30 分以内に復旧したい場合は hidden state comment を手編集する必要がある。
+
+トレードオフ:
+
+- **gate あり (現状)**: state 不整合が発生しない代わりに、demotion 失敗時は 30 分待つか hidden state 手編集が必要
+- **gate なし (旧 behavior)**: 即時 `/restart-review` を試みられるが、hidden state が `fixing` のため reject されて操作不能
+
+silent-unrecoverable を再発させないため gate ありを採用。実運用での demotion 失敗頻度は低い (concurrent writer は restart race 等の特殊事例のみ) ので、30 分待ち or 手編集の運用コストは許容範囲。
+
+#### 関連経路
+
+`fixing` のまま停止していて 30 分以上経過した状態を pre-fix が次の trigger で検出した場合も同じ `workflow_crashed` で降格する (`src/main-pre-fix.ts` の stale-fixing 検出)。TY-282 以前は `state_corrupted` だった。
+
+---
+
 ### Secret leak の疑い (`secret_leak_suspected`, TY-274 #1)
 
 post-fix の secret-scanner (`src/secret-scanner.ts`) が **hard-fail パターン**（既知 token prefix / PEM private-key ブロック）を変更ファイルの内容から検出した場合、scope check 通過後 / CHECK_COMMAND 実行前にロールバック + `stopped / secret_leak_suspected` で停止する。
@@ -161,6 +205,7 @@ soft restart。state を `waiting_codex` に戻し、同じ run で `@codex revi
 - `max_turns_exceeded`（soft 推奨。次 iteration が自動で escalated tier になる、TY-258）
 - `codex_usage_limit`（quota リセット後に soft、TY-229）
 - `codex_request_failed`（Codex 認証 / 接続を直してから soft、TY-273 #B5）
+- `workflow_crashed`（soft で復旧可能、TY-282 #2A — pre-fix / post-fix が `failureExit` を呼ぶ前に死んだケース）
 - `no_findings`（`done` 状態）
 - `waiting_codex`
 
@@ -222,15 +267,29 @@ hard restart。soft restart の操作に加えて、`iterationCount` を `0`、`
 - `fixing` のまま停止している場合: 実行中の Workflow B がないことを確認してから `/restart-review --hard`
 - `codex_usage_limit` で停止した場合: Codex 側の quota がリセットされたタイミングで `/restart-review` (soft)。`iterationCount` は保持される
 - `max_turns_exceeded` で停止した場合: `/restart-review` (soft) で再開する。次 iteration は自動で escalated tier (default Opus) に上がる (`previous_max_turns_exceeded`、TY-258)。1 回 clean commit に到達すると `stopReason` がクリアされ通常 tiering に戻る (one-shot)
+- `workflow_crashed` で停止した場合 (TY-282 #2A): `/restart-review` (soft) で再開する。workflow crash 時には `iterationCount` が消費済みなので、connector / runner 側の不安定さが継続する場合は `/restart-review --hard` を検討
 
-### `state_corrupted` の手動復旧
+### `state_corrupted` の復旧
 
-state JSON が壊れている場合、`/restart-review` は状態を安全に読めないため拒否される。この場合のみ、maintainer が hidden comment を削除して再初期化する。
+`stopped / state_corrupted` には 2 種類の発生経路がある:
+
+1. **JSON unparseable**: pre-fix が hidden comment の `<!-- auto-review-state ... -->` JSON を読めなかった場合 (`stateResult.corrupted === true`)。この場合 `handleRestartCommand` は state を安全に読めないため `/restart-review` を即拒否する (`src/restart-command.ts`)。
+2. **論理的 corrupted**: state JSON は parseable だが `stopReason === "state_corrupted"` が記録されている場合。TY-282 以前は workflow crash / stale-fixing recovery 経路もここに集約されていた (現在はそれぞれ `workflow_crashed` に降格、上記参照)。
+
+#### 復旧手順
+
+**1 番目の経路 (JSON unparseable)** は依然として hidden comment の手動編集が必要:
 
 1. PR の hidden comment（`<!-- auto-review-state ... -->` を含むコメント）を特定する
 2. `gh api -X DELETE /repos/:owner/:repo/issues/comments/:id` で削除する
 3. Workflow A を手動 dispatch、またはPR操作で再実行して hidden comment を再作成する
 4. PR に復旧理由・操作者を含む audit コメントを投稿する
+
+**2 番目の経路 (論理的 corrupted)** は TY-282 #1C で `/restart-review --hard` での復旧が可能になった:
+
+- `applyRestartToState` (`src/restart-command.ts`) は `state.stopReason === "state_corrupted"` + `mode === "soft"` の組合せのみを reject する
+- `--hard` は iterationCount を 0、findingsHashHistory を `[]` にクリアするため、状態機械がどんな歪み方をしていても安全に再開できる
+- soft restart を拒否するのは、論理的 corrupted は何らかの不整合を示すため、明示的なオペレータ操作 (history clear) を求める意図
 
 PR #7 では人間が再度 `@codex review` を投稿して検証を再開する手順を複数回実施した。PR #14 では `claude_api_error` 停止後に hidden comment を手動でリセットして検証を継続した。TY-162 以降は、通常の再実行では `/restart-review` を使い、hidden JSON の直接編集は運用に組み込まない。
 
