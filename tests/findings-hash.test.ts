@@ -47,6 +47,19 @@ describe("computeFindingsHash", () => {
     );
   });
 
+  it("returns the same hash for line:null and line:0 since line is excluded from the key (TY-280)", () => {
+    // TY-280 surfaces `line: null` for file-level findings. `findings-hash`
+    // historically excluded `line` from the key (line drifts as code is
+    // edited), so `null` and `0` MUST produce the same hash — otherwise the
+    // pre-TY-280 → post-TY-280 transition would falsely flag the same Codex
+    // file-level finding as "new" and consume an extra iteration.
+    const fileLevel: Finding = { ...baseFinding, line: null };
+    const lineZero: Finding = { ...baseFinding, line: 0 };
+    expect(computeFindingsHash([fileLevel])).toBe(
+      computeFindingsHash([lineZero])
+    );
+  });
+
   it("returns a 16-character hex string", () => {
     const hash = computeFindingsHash([baseFinding]);
     expect(hash).toMatch(/^[0-9a-f]{16}$/);

@@ -19765,7 +19765,10 @@ function filterAndParseComments(comments, botLogin, lastReceivedAt, threshold) {
     findings.push({
       severity: parsed.severity,
       path: comment.path,
-      line: comment.line ?? 0,
+      // TY-280: preserve null so the prompt can format file-level / outdated
+      // findings as `(file-level)` instead of `path:0` (which would imply a
+      // real first-line anchor).
+      line: comment.line,
       title: parsed.title,
       body: parsed.body
     });
@@ -20755,8 +20758,10 @@ function compareFindings(a, b) {
     return sev;
   if (a.path !== b.path)
     return a.path < b.path ? -1 : 1;
-  if (a.line !== b.line)
-    return a.line - b.line;
+  const al = a.line ?? -1;
+  const bl = b.line ?? -1;
+  if (al !== bl)
+    return al - bl;
   if (a.title !== b.title)
     return a.title < b.title ? -1 : 1;
   return a.body < b.body ? -1 : a.body > b.body ? 1 : 0;
@@ -20835,9 +20840,10 @@ function buildClaudeCodeRepairRequest(input2) {
   };
 }
 function formatFindingBlock(finding, index) {
+  const entryPoint = finding.line === null ? `${finding.path} (file-level \u2014 no specific line; investigation start, not fix scope)` : `${finding.path}:${finding.line} (investigation start, not fix scope)`;
   return [
     `### Finding ${index + 1} \u2014 ${finding.severity}`,
-    `- Entry point: ${finding.path}:${finding.line} (investigation start, not fix scope)`,
+    `- Entry point: ${entryPoint}`,
     `- Title: ${finding.title}`,
     "",
     finding.body.trim()

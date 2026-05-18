@@ -48,7 +48,13 @@ export interface FindingsTruncationStats {
 export interface ClaudeCodeRepairFinding {
   severity: Severity;
   path: string;
-  line: number;
+  /**
+   * 1-based line number from Codex, or `null` for file-level / outdated
+   * comments (TY-280). The prompt builder formats `null` as `(file-level)`
+   * rather than `path:0`, which would otherwise be read as a real first-line
+   * anchor.
+   */
+  line: number | null;
   title: string;
   body: string;
   /**
@@ -178,7 +184,12 @@ function compareFindings(
   const sev = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
   if (sev !== 0) return sev;
   if (a.path !== b.path) return a.path < b.path ? -1 : 1;
-  if (a.line !== b.line) return a.line - b.line;
+  // TY-280: file-level findings (line === null) sort before inline findings
+  // so Claude reads broader-scope guidance first within the same severity/path
+  // tiebreaker bucket.
+  const al = a.line ?? -1;
+  const bl = b.line ?? -1;
+  if (al !== bl) return al - bl;
   if (a.title !== b.title) return a.title < b.title ? -1 : 1;
   return a.body < b.body ? -1 : a.body > b.body ? 1 : 0;
 }
@@ -321,9 +332,18 @@ function formatFindingBlock(
   finding: ClaudeCodeRepairFinding,
   index: number
 ): string {
+  // TY-280: render file-level findings (line === null) as `path (file-level — …)`
+  // instead of `path:0`, which Claude would otherwise read as a real first-line
+  // anchor. Codex inline review comments use line=null for file-level / outdated
+  // comments and historically all surfaced as `:0` after review-collector
+  // collapsed null to 0.
+  const entryPoint =
+    finding.line === null
+      ? `${finding.path} (file-level — no specific line; investigation start, not fix scope)`
+      : `${finding.path}:${finding.line} (investigation start, not fix scope)`;
   return [
     `### Finding ${index + 1} — ${finding.severity}`,
-    `- Entry point: ${finding.path}:${finding.line} (investigation start, not fix scope)`,
+    `- Entry point: ${entryPoint}`,
     `- Title: ${finding.title}`,
     "",
     finding.body.trim(),

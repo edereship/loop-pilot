@@ -149,7 +149,10 @@ export function filterAndParseComments(
     findings.push({
       severity: parsed.severity,
       path: comment.path,
-      line: comment.line ?? 0,
+      // TY-280: preserve null so the prompt can format file-level / outdated
+      // findings as `(file-level)` instead of `path:0` (which would imply a
+      // real first-line anchor).
+      line: comment.line,
       title: parsed.title,
       body: parsed.body,
     });

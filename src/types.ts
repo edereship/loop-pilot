@@ -5,7 +5,13 @@ export type Severity = "P0" | "P1" | "P2" | "P3";
 export interface Finding {
   severity: Severity;
   path: string;
-  line: number;
+  /**
+   * 1-based line number where Codex anchored the comment, or `null` for
+   * file-level / outdated comments that Codex emits without a line anchor
+   * (TY-280). Consumers must format `null` as "file-level" rather than as
+   * `path:0`, which would imply a real first-line anchor.
+   */
+  line: number | null;
   title: string;
   body: string;
 }

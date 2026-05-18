@@ -445,6 +445,63 @@ describe("buildClaudeCodeRepairPrompt", () => {
     expect(prompt).toContain("(investigation start, not fix scope)");
   });
 
+  it("renders file-level findings (line=null) as `path (file-level …)` rather than `path:0` (TY-280)", () => {
+    const fs: Finding[] = [
+      {
+        severity: "P1",
+        path: "src/auth/session.ts",
+        line: null,
+        title: "File-level concern",
+        body: "Codex did not anchor this on a specific line.",
+      },
+      {
+        severity: "P2",
+        path: "src/auth/logger.ts",
+        line: 17,
+        title: "Inline concern",
+        body: "Anchored on line 17.",
+      },
+    ];
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({ findings: fs })
+    );
+    expect(prompt).toContain(
+      "src/auth/session.ts (file-level — no specific line; investigation start, not fix scope)"
+    );
+    // Sanity: no `:0` slip-through for the null-line finding.
+    expect(prompt).not.toContain("src/auth/session.ts:0");
+    // Inline finding remains formatted as `path:line`.
+    expect(prompt).toContain(
+      "src/auth/logger.ts:17 (investigation start, not fix scope)"
+    );
+  });
+
+  it("sorts file-level findings before inline findings within the same severity + path tiebreaker (TY-280)", () => {
+    const fs: Finding[] = [
+      {
+        severity: "P1",
+        path: "src/foo.ts",
+        line: 5,
+        title: "Inline at line 5",
+        body: "inline body",
+      },
+      {
+        severity: "P1",
+        path: "src/foo.ts",
+        line: null,
+        title: "File-level for foo",
+        body: "file-level body",
+      },
+    ];
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({ findings: fs })
+    );
+    const fileLevelAt = prompt.indexOf("File-level for foo");
+    const inlineAt = prompt.indexOf("Inline at line 5");
+    expect(fileLevelAt).toBeGreaterThanOrEqual(0);
+    expect(inlineAt).toBeGreaterThan(fileLevelAt);
+  });
+
   it("uses the compact findings header when no findings are truncated", () => {
     const prompt = buildClaudeCodeRepairPrompt(buildBaseRequest());
     expect(prompt).toContain("## Codex Findings (3)");

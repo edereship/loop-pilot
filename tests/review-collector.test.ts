@@ -146,7 +146,7 @@ describe("filterAndParseComments", () => {
     expect(findings).toHaveLength(2);
   });
 
-  it("maps null line number to 0", () => {
+  it("preserves null line number for file-level / outdated comments (TY-280)", () => {
     const comments: RawReviewComment[] = [
       makeComment({ id: 1, body: "P0 File-level comment", line: null }),
     ];
@@ -154,7 +154,7 @@ describe("filterAndParseComments", () => {
     const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
     expect(findings).toHaveLength(1);
-    expect(findings[0].line).toBe(0);
+    expect(findings[0].line).toBeNull();
   });
 
   // --- Threshold + skip count (TY-256) ---
