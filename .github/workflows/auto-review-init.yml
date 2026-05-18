@@ -62,3 +62,41 @@ jobs:
           # TY-272 #A: trusted state-comment author override; empty falls
           # back to `github-actions[bot]`.
           auto-review-state-comment-authors: ${{ vars.AUTO_REVIEW_STATE_COMMENT_AUTHORS }}
+
+      # TY-283: Workflow A fail-safe (symmetric with the Workflow B fail-safe
+      # set in `auto-review-loop.yml`). Workflow A has only three steps —
+      # `checkout`, `Check fork PR`, `Run init` — and the Node `Run init` step
+      # has no crash-recovery hook (`main-init.ts` calls
+      # `runIfNotVitest(run)` without an `onError` argument, unlike pre-fix /
+      # post-fix). Any failure here — early-step (checkout failure, fork
+      # rejection) OR a `Run init` Node crash — would otherwise leave the PR
+      # completely silent: no hidden state, no `@codex review`, no notification.
+      # Operators only notice when they wonder "why didn't auto-review fire?"
+      #
+      # Init's state mutations are simpler than the auto-fix loop, so the
+      # complement-style partition that auto-review-loop.yml uses
+      # (`failure`/`cancelled` vs `skipped`) is unnecessary — a single
+      # `failure()` guard covers every failure mode. We deliberately do NOT
+      # mutate `auto-review-state` here: a successful `createStateComment`
+      # leaves status `initialized`, which pre-fix already detects and
+      # surfaces via `postInitIncompleteComment` on the next valid trigger.
+      # If the failure was before `createStateComment` even ran, there is no
+      # state to touch.
+      - name: Post init failure notification
+        # `cancelled()` is required in addition to `failure()` because a job
+        # timeout (timeout-minutes: 5) or a manual workflow cancel does NOT
+        # raise `failure()` — the steps end with conclusion `cancelled` and a
+        # bare `if: failure()` would silently skip the fail-safe.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          BODY=$'⚠️ **Auto-review init failed.**\n\nThe init workflow that prepares auto-review state and posts the initial `@codex review` failed before completing. Auto-review may not be active on this PR until init runs successfully. Re-run this workflow from the Actions tab, or re-trigger init by removing and re-adding the gate label (or closing/reopening the PR in full-auto mode) (TY-283).\n\nWorkflow run: '"$RUN_URL"
+          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
+            --method POST \
+            --raw-field body="$BODY" \
+            >/dev/null || echo "::warning::Failed to post init failure notification via gh api; check GITHUB_TOKEN scope."

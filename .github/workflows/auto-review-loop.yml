@@ -285,6 +285,54 @@ jobs:
             --raw-field body="$BODY" \
             >/dev/null || echo "::warning::Failed to post crash notification comment via gh api; check GITHUB_TOKEN scope."
 
+      # TY-283: complement to TY-282 #2B. The #2B guard intentionally requires
+      # `steps.loop.conclusion == 'failure' || 'cancelled'`, which means an
+      # earlier step failing (e.g. `Get PR info`, `Check fork PR`,
+      # `actions/checkout`, `actions/setup-node`, `npm ci`) leaves
+      # `steps.loop.conclusion == 'skipped'` and produces NO PR notification —
+      # the operator cannot tell from the PR alone that auto-review tried to
+      # run and failed. TY-276 PR #97 observed this when a `node-version-file`
+      # misconfiguration killed `setup-node` 10 seconds in; the loop never
+      # started and the PR went silent for a full Codex iteration.
+      #
+      # This step fires on the exact complement: `failure()` is true AND the
+      # loop step was skipped (= the failure was in an earlier step). It is
+      # mutually exclusive with #2B because the conclusion check partitions
+      # the failure space (`skipped` vs `failure`/`cancelled`). No dedup with
+      # #2A is needed because the Node process for `./loop` never ran, so
+      # `postStopComment` could not have fired.
+      #
+      # The fail-safe intentionally does NOT touch `auto-review-state`. Early-
+      # step failures happen before any state mutation, so the existing
+      # `waiting_codex` (or `done`/`stopped`) remains accurate; the next valid
+      # Codex review trigger will reconcile naturally. The message keeps the
+      # detail vague (the workflow YAML cannot reliably tell which early step
+      # died) and just links the workflow run — Actions UI provides per-step
+      # logs for root-cause investigation.
+      - name: Post early-step failure notification
+        # `cancelled()` is required in addition to `failure()`: a job timeout
+        # (`timeout-minutes: 30`) or a manual workflow cancel during an early
+        # step gives that step conclusion `cancelled`, leaves the loop step
+        # `skipped`, and `failure()` returns false — so a bare `failure()`
+        # would silently skip this fail-safe. TY-282 #2B already handles
+        # cancellation via `loop.conclusion == 'cancelled'` directly.
+        if: >
+          always() &&
+          (failure() || cancelled()) &&
+          steps.loop.conclusion == 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          BODY=$'⚠️ **Auto-review Workflow B failed before the auto-fix loop could start.**\n\nThe failure happened in an early setup step (e.g. `actions/checkout`, `actions/setup-node`, `npm ci`, or the PR info / fork guard step). The auto-review-state was not modified — the next valid Codex review will retry the loop (TY-283).\n\nWorkflow run: '"$RUN_URL"
+          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
+            --method POST \
+            --raw-field body="$BODY" \
+            >/dev/null || echo "::warning::Failed to post early-step failure notification via gh api; check GITHUB_TOKEN scope."
+
       # PoC: Save Codex comments as artifact for parser validation
       - name: Save Codex comments as artifact
         if: always()

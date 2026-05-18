@@ -34,6 +34,28 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
           pr-number: ${{ github.event.pull_request.number }}
+
+      # Fail-safe: surface a PR notification when init fails before posting
+      # the initial `@codex review`. Without this step the PR goes completely
+      # silent on init failure and operators only notice when they wonder
+      # why auto-review never fired. See `.github/workflows/auto-review-init.yml`
+      # for the full rationale (TY-283).
+      - name: Post init failure notification
+        # `cancelled()` covers job timeout / manual cancel: `failure()` alone
+        # returns false when the step ends with conclusion `cancelled`.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          BODY=$'⚠️ **Auto-review init failed.**\n\nThe init workflow that prepares auto-review state and posts the initial `@codex review` failed before completing. Re-run from the Actions tab, or re-trigger by removing and re-adding the gate label (or closing/reopening the PR in full-auto mode).\n\nWorkflow run: '"$RUN_URL"
+          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
+            --method POST \
+            --raw-field body="$BODY" \
+            >/dev/null || echo "::warning::Failed to post init failure notification."
 ```
 
 ### Workflow B — Codex のレビューを受けて修正ループ
@@ -77,7 +99,8 @@ jobs:
             echo "title=$(jq -r .title <<<"$info")"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: team-yubune/test-auto-ai-review/loop@main
+      - id: loop
+        uses: team-yubune/test-auto-ai-review/loop@main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
@@ -95,6 +118,64 @@ jobs:
           trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
           trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
           trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
+
+      # Fail-safe set: ensure the PR always gets a notification even when the
+      # in-process `postStopComment` cannot run. The two steps below partition
+      # the failure space via `steps.loop.conclusion`:
+      #   - `failure`/`cancelled` → the loop ran and crashed (TY-282 #2B)
+      #   - `skipped`             → the loop never started; an earlier setup
+      #                             step (checkout / setup-node / npm ci /
+      #                             `Get PR info` / fork guard) failed (TY-283)
+      # See `.github/workflows/auto-review-loop.yml` for the full inline
+      # rationale (90-second dedup window against TY-282 #2A, why state is
+      # not touched here, etc.).
+      - name: Post crash notification on workflow failure
+        if: >
+          always() &&
+          (steps.loop.conclusion == 'failure' ||
+           steps.loop.conclusion == 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LOOP_CONCLUSION: ${{ steps.loop.conclusion }}
+        run: |
+          set -euo pipefail
+          SINCE=$(date -u -d '90 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
+          RECENT_STOP=$(gh api \
+            "repos/${REPO}/issues/${PR_NUM}/comments?since=${SINCE}&per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("🛑 **Auto-review stopped**")))] | length' \
+            2>/dev/null || echo 0)
+          if [ "${RECENT_STOP:-0}" -gt 0 ]; then
+            echo "::notice::TY-282 2A already posted a top-level stop notification within 90s; skipping fail-safe to avoid duplicate."
+            exit 0
+          fi
+          BODY=$'🛑 **Auto-review crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post (TY-282 #2B).\n\nUse `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
+          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
+            --method POST \
+            --raw-field body="$BODY" \
+            >/dev/null || echo "::warning::Failed to post crash notification."
+
+      - name: Post early-step failure notification
+        # `cancelled()` covers job timeout / manual cancel during an early
+        # step (loop step ends `skipped`, `failure()` is false).
+        if: >
+          always() &&
+          (failure() || cancelled()) &&
+          steps.loop.conclusion == 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          BODY=$'⚠️ **Auto-review Workflow B failed before the auto-fix loop could start.**\n\nThe failure happened in an early setup step (e.g. `actions/checkout`, `actions/setup-node`, `npm ci`, or the PR info / fork guard step). The auto-review-state was not modified — the next valid Codex review will retry the loop (TY-283).\n\nWorkflow run: '"$RUN_URL"
+          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
+            --method POST \
+            --raw-field body="$BODY" \
+            >/dev/null || echo "::warning::Failed to post early-step failure notification."
 ```
 
 完全な workflow サンプルは [`/.github/workflows/auto-review-init.yml`](.github/workflows/auto-review-init.yml) と [`/.github/workflows/auto-review-loop.yml`](.github/workflows/auto-review-loop.yml) を参照。
