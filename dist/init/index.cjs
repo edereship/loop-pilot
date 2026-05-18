@@ -19668,7 +19668,9 @@ async function postComment(owner, name, pr, body, token) {
   const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
-    "-X",
+    // TY-276 #5: prefer the long-form `--method` over `-X` to match
+    // state-manager.ts and reduce stylistic drift across gh invocations.
+    "--method",
     "POST",
     // TY-269: use `--raw-field` for body. Plain `--field` (= `-f`)
     // interprets a leading `@` as a file-read directive, which silently
@@ -19715,10 +19717,14 @@ var defaultDeps = {
   createStateComment,
   updateStateComment,
   postCodexReviewRequest,
-  setSecret,
-  info,
-  warning,
-  setOutput
+  // TY-276 #4: wrap @actions/core methods in arrows for symmetry with
+  // main-pre-fix / main-post-fix. The direct-reference form works today
+  // because `@actions/core` does not use `this`, but a future version that
+  // does would silently break.
+  setSecret: (secret) => setSecret(secret),
+  info: (message) => info(message),
+  warning: (message) => warning(message),
+  setOutput: (name, value) => setOutput(name, value)
 };
 async function runInit(config, deps = defaultDeps) {
   registerAllSecrets(config, deps.setSecret);

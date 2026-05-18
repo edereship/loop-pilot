@@ -20221,7 +20221,9 @@ async function postComment(owner, name, pr, body, token) {
   const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
-    "-X",
+    // TY-276 #5: prefer the long-form `--method` over `-X` to match
+    // state-manager.ts and reduce stylistic drift across gh invocations.
+    "--method",
     "POST",
     // TY-269: use `--raw-field` for body. Plain `--field` (= `-f`)
     // interprets a leading `@` as a file-read directive, which silently
@@ -20929,7 +20931,9 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
     commentId: context.stateResult.commentId,
     token: context.githubToken,
     initialExpectedUpdatedAt: context.stateResult.commentUpdatedAt,
-    label: "pre-fix",
+    // TY-276 #3: `[restart]` matches the module name in operator logs,
+    // avoiding the "why does /restart-review log as [pre-fix]?" confusion.
+    label: "restart",
     updateStateComment: deps.updateStateComment,
     warning: deps.warning,
     onConflict: async (detail) => {
@@ -21054,7 +21058,9 @@ async function addEyesReaction(owner, repo, commentId, token) {
   await ghApi([
     "api",
     `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
-    "-X",
+    // TY-276 #5: prefer `--method` over `-X` for consistency with the rest
+    // of the codebase (state-manager.ts already uses --method).
+    "--method",
     "POST",
     "-H",
     "Accept: application/vnd.github+json",

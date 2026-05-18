@@ -313,7 +313,9 @@ export async function handleRestartCommand(
     commentId: context.stateResult.commentId,
     token: context.githubToken,
     initialExpectedUpdatedAt: context.stateResult.commentUpdatedAt,
-    label: "pre-fix",
+    // TY-276 #3: `[restart]` matches the module name in operator logs,
+    // avoiding the "why does /restart-review log as [pre-fix]?" confusion.
+    label: "restart",
     updateStateComment: deps.updateStateComment,
     warning: deps.warning,
     onConflict: async (detail) => {
@@ -580,7 +582,9 @@ async function addEyesReaction(
     [
       "api",
       `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
-      "-X",
+      // TY-276 #5: prefer `--method` over `-X` for consistency with the rest
+      // of the codebase (state-manager.ts already uses --method).
+      "--method",
       "POST",
       "-H",
       "Accept: application/vnd.github+json",

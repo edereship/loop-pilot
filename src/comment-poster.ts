@@ -26,7 +26,9 @@ export async function postComment(
     [
       "api",
       `repos/${owner}/${name}/issues/${pr}/comments`,
-      "-X",
+      // TY-276 #5: prefer the long-form `--method` over `-X` to match
+      // state-manager.ts and reduce stylistic drift across gh invocations.
+      "--method",
       "POST",
       // TY-269: use `--raw-field` for body. Plain `--field` (= `-f`)
       // interprets a leading `@` as a file-read directive, which silently

@@ -708,23 +708,20 @@ export async function runPostFix(
   }
 
   // ─── CHECK_COMMAND ───────────────────────────────────────────────────────
-  // Pass only tracked paths to runCheckCommand: its rollback is `git checkout
-  // -- <path>`, which errors out for paths git has never seen (untracked
-  // files). Untracked files are reverted below via resetWorkingTree on the
-  // failure path.
   // `modifiedFiles` may be replaced after BUILD_COMMAND when build artifacts
   // expand the staging set (TY-281), so it is `let` rather than `const`.
   let modifiedFiles = changedFiles.map((f) => f.path);
-  const trackedModified = trackedChanges.map((f) => f.path);
   deps.info(`[post-fix] Running CHECK_COMMAND: ${inputs.checkCommand}`);
-  const checkResult = await deps.runCheckCommand(inputs.checkCommand, trackedModified);
+  const checkResult = await deps.runCheckCommand(inputs.checkCommand);
 
   if (!checkResult.success) {
     deps.error("[post-fix] CHECK_COMMAND failed. Reverting working tree (incl. untracked).");
     try {
-      // resetWorkingTree does `git reset --hard HEAD && git clean -ffd`, which
-      // also removes untracked files written by claude-code-action that
-      // check-runner's per-path rollback cannot see.
+      // TY-276 #2: working-tree restore is consolidated here via
+      // `resetWorkingTree` (`git reset --hard HEAD && git clean -ffd`).
+      // Earlier `runCheckCommand` also performed per-file rollback for tracked
+      // paths, but that was a partial duplicate of this reset and could leave
+      // partial restores when the per-file loop failed mid-way.
       deps.resetWorkingTree();
     } catch (resetError) {
       deps.error(

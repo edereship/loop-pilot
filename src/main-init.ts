@@ -32,10 +32,14 @@ const defaultDeps: InitDeps = {
   createStateComment,
   updateStateComment,
   postCodexReviewRequest,
-  setSecret: core.setSecret,
-  info: core.info,
-  warning: core.warning,
-  setOutput: core.setOutput,
+  // TY-276 #4: wrap @actions/core methods in arrows for symmetry with
+  // main-pre-fix / main-post-fix. The direct-reference form works today
+  // because `@actions/core` does not use `this`, but a future version that
+  // does would silently break.
+  setSecret: (secret) => core.setSecret(secret),
+  info: (message) => core.info(message),
+  warning: (message) => core.warning(message),
+  setOutput: (name, value) => core.setOutput(name, value),
 };
 
 export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps): Promise<void> {

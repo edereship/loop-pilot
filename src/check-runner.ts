@@ -1,6 +1,5 @@
-import { execFileSync, exec } from "node:child_process";
+import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import * as core from "@actions/core";
 import { stripSecretEnv } from "./secrets.js";
 
 const execAsync = promisify(exec);
@@ -79,11 +78,13 @@ function extractErrorOutput(
   error: unknown
 ): [string, string, string] {
   if (error instanceof Error) {
-    const anyError = error as any;
-    const stdout = anyError.stdout ? String(anyError.stdout) : "";
-    const stderr = anyError.stderr ? String(anyError.stderr) : "";
-    const message = anyError.message || String(error);
-    return [stdout, stderr, message];
+    // TY-276 #6: narrow the exec-error shape instead of `as any`. node's exec
+    // attaches stdout / stderr as `unknown`-typed properties to the thrown
+    // Error; everything else falls through to `String(error)`.
+    const exec = error as Error & { stdout?: unknown; stderr?: unknown };
+    const stdout = exec.stdout !== undefined ? String(exec.stdout) : "";
+    const stderr = exec.stderr !== undefined ? String(exec.stderr) : "";
+    return [stdout, stderr, exec.message || String(error)];
   }
 
   return ["", "", String(error)];
@@ -96,12 +97,15 @@ function extractErrorOutput(
  * - Runs checkCommand via shell with 5min timeout
  * - Sensitive env vars (ANTHROPIC_API_KEY, INPUT_ANTHROPIC*) are stripped
  * - On success: returns sanitized stdout + stderr
- * - On failure: rolls back modified files via `git checkout -- <file>`,
- *   then returns sanitized error output
+ * - On failure: returns sanitized error output. The caller (post-fix) is
+ *   responsible for reverting the working tree via `resetWorkingTree`
+ *   (`git reset --hard HEAD && git clean -ffd`). Earlier versions of this
+ *   function also did a per-file `git checkout -- <file>` rollback for the
+ *   `modifiedFiles` argument, but that duplicated post-fix's reset and could
+ *   leave partial restores when the per-file loop failed mid-way (TY-276 #2).
  */
 export async function runCheckCommand(
   checkCommand: string,
-  modifiedFiles: string[]
 ): Promise<CheckResult> {
   // Strip sensitive env vars to prevent exfiltration via malicious check commands.
   // The denylist is centralized in `secrets.ts` so a new Config-level secret
@@ -123,22 +127,6 @@ export async function runCheckCommand(
       output: sanitizeOutput(combinedOutput),
     };
   } catch (error) {
-    // Rollback on failure
-    try {
-      // Rollback modified files using execFileSync to prevent shell injection
-      if (modifiedFiles.length > 0) {
-        for (const file of modifiedFiles) {
-          execFileSync("git", ["checkout", "--", file], {
-            encoding: "utf-8",
-          });
-        }
-      }
-
-    } catch (rollbackError) {
-      core.error(`Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
-    }
-
-    // Extract error details
     const [stdout, stderr, errorMessage] = extractErrorOutput(error);
     const combinedOutput =
       stdout +

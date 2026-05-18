@@ -19877,7 +19877,9 @@ async function postComment(owner, name, pr, body, token) {
   const stdout = await ghApi([
     "api",
     `repos/${owner}/${name}/issues/${pr}/comments`,
-    "-X",
+    // TY-276 #5: prefer the long-form `--method` over `-X` to match
+    // state-manager.ts and reduce stylistic drift across gh invocations.
+    "--method",
     "POST",
     // TY-269: use `--raw-field` for body. Plain `--field` (= `-f`)
     // interprets a leading `@` as a file-read directive, which silently
@@ -20311,15 +20313,14 @@ function sanitizeOutput(output) {
 }
 function extractErrorOutput(error2) {
   if (error2 instanceof Error) {
-    const anyError = error2;
-    const stdout = anyError.stdout ? String(anyError.stdout) : "";
-    const stderr = anyError.stderr ? String(anyError.stderr) : "";
-    const message = anyError.message || String(error2);
-    return [stdout, stderr, message];
+    const exec3 = error2;
+    const stdout = exec3.stdout !== void 0 ? String(exec3.stdout) : "";
+    const stderr = exec3.stderr !== void 0 ? String(exec3.stderr) : "";
+    return [stdout, stderr, exec3.message || String(error2)];
   }
   return ["", "", String(error2)];
 }
-async function runCheckCommand(checkCommand, modifiedFiles) {
+async function runCheckCommand(checkCommand) {
   const safeEnv = stripSecretEnv(process.env);
   try {
     const { stdout, stderr } = await execAsync(checkCommand, {
@@ -20334,17 +20335,6 @@ async function runCheckCommand(checkCommand, modifiedFiles) {
       output: sanitizeOutput(combinedOutput)
     };
   } catch (error2) {
-    try {
-      if (modifiedFiles.length > 0) {
-        for (const file of modifiedFiles) {
-          (0, import_node_child_process3.execFileSync)("git", ["checkout", "--", file], {
-            encoding: "utf-8"
-          });
-        }
-      }
-    } catch (rollbackError) {
-      error(`Rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
-    }
     const [stdout, stderr, errorMessage] = extractErrorOutput(error2);
     const combinedOutput = stdout + (stderr ? "\n" + stderr : "") + (errorMessage ? "\nError: " + errorMessage : "");
     return {
@@ -21193,9 +21183,8 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   let modifiedFiles = changedFiles.map((f) => f.path);
-  const trackedModified = trackedChanges.map((f) => f.path);
   deps.info(`[post-fix] Running CHECK_COMMAND: ${inputs.checkCommand}`);
-  const checkResult = await deps.runCheckCommand(inputs.checkCommand, trackedModified);
+  const checkResult = await deps.runCheckCommand(inputs.checkCommand);
   if (!checkResult.success) {
     deps.error("[post-fix] CHECK_COMMAND failed. Reverting working tree (incl. untracked).");
     try {

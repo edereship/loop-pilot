@@ -10,6 +10,9 @@ export function computeFindingsHash(findings: Finding[]): string {
 function normalizeFinding(finding: Finding): string {
   // line is intentionally excluded: it shifts when code is edited,
   // so including it would cause false "different findings" detections.
+  // title is also intentionally excluded (TY-276 #7) — Codex sometimes
+  // refines the title between iterations while pointing at the same issue,
+  // and including it would let those cosmetic rewrites bypass loop detection.
   const bodyHash = stableHash(finding.body);
   return JSON.stringify([finding.severity, finding.path, bodyHash]);
 }

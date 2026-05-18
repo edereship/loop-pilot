@@ -84,6 +84,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          # Omit `cache: npm` here — `actions/setup-node` throws
+          # "Dependencies lock file is not found" when no root lockfile
+          # (package-lock.json / yarn.lock / npm-shrinkwrap.json) exists,
+          # which breaks repos using non-npm CHECK_COMMANDs (pytest, make, …).
+          # Add `cache: npm` only when your repo has a root package-lock.json.
+          #
+          # setup-node v5+ caveat: if your package.json declares
+          # `packageManager: "npm@x.y.z"` (or `devEngines.packageManager`),
+          # the action can auto-detect and enable npm caching even without an
+          # explicit `cache: npm`. In that case, either ensure a root lockfile
+          # exists, or remove the `packageManager` field if you are running a
+          # lockfile-less workflow.
+
       # `issue_comment` events do not carry PR head ref / title in the payload,
       # so resolve them via the GitHub API. pre-fix rejects an empty
       # `pr-head-ref` with `[pre-fix] pr-head-ref is required but not set`, so

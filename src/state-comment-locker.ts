@@ -4,7 +4,7 @@ import {
 } from "./state-manager.js";
 import type { ReviewState } from "./types.js";
 
-export type LockedStateUpdaterLabel = "pre-fix" | "post-fix";
+export type LockedStateUpdaterLabel = "pre-fix" | "post-fix" | "restart";
 
 export interface LockedStateUpdaterArgs {
   owner: string;
