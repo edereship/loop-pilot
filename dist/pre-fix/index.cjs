@@ -20830,6 +20830,7 @@ function buildClaudeCodeRepairRequest(input2) {
       findingsTruncated
     },
     findings,
+    scopePolicy: input2.scopePolicy ?? null,
     instructions: INSTRUCTION_LINES.join("\n")
   };
 }
@@ -20840,6 +20841,25 @@ function formatFindingBlock(finding, index) {
     `- Title: ${finding.title}`,
     "",
     finding.body.trim()
+  ].join("\n");
+}
+function formatBlockedPathEntry(entry2) {
+  return entry2.locked ? `  - ${entry2.path} (structurally locked, cannot be overridden)` : `  - ${entry2.path}`;
+}
+function formatScopePolicySection(policy) {
+  const blockedHeader = policy.blockedPaths.length > 0 ? "- Blocked paths (do not modify; reverted server-side after your run):" : "- Blocked paths: (none configured)";
+  const blockedLines = policy.blockedPaths.map(formatBlockedPathEntry);
+  const exempted = policy.exemptedRootDotfiles ?? [];
+  const dotfileRule = exempted.length > 0 ? `- Root dotfiles (any \`.*\` file at repo root): blocked \u2014 exempted: ${[...exempted].sort().join(", ")}` : "- Root dotfiles (any `.*` file at repo root): blocked";
+  return [
+    "## Scope Policy (your edits must satisfy)",
+    blockedHeader,
+    ...blockedLines,
+    dotfileRule,
+    `- Max files changed: ${policy.maxFiles}`,
+    `- Max lines changed (added + deleted): ${policy.maxLines}`,
+    "",
+    "If a faithful repair would exceed these limits, stop and explain rather than producing a partial fix that will be reverted."
   ].join("\n");
 }
 function buildClaudeCodeRepairPrompt(request) {
@@ -20868,6 +20888,9 @@ function buildClaudeCodeRepairPrompt(request) {
 
 ${blocks}`);
   }
+  if (request.scopePolicy !== null) {
+    sections.push(formatScopePolicySection(request.scopePolicy));
+  }
   sections.push(`## Instructions
 ${INSTRUCTION_LINES.join("\n")}`);
   if (execution.previousCheckFailure != null) {
@@ -20883,6 +20906,95 @@ ${INSTRUCTION_LINES.join("\n")}`);
     ].join("\n"));
   }
   return sections.join("\n\n") + "\n";
+}
+
+// dist/scope-checker.js
+var DEFAULT_BLOCK_PATTERNS = [
+  { path: ".github/", isDirectory: true, locked: true },
+  { path: ".husky/", isDirectory: true, locked: false },
+  { path: ".git-hooks/", isDirectory: true, locked: false },
+  { path: "hooks/", isDirectory: true, locked: false },
+  { path: ".devcontainer/", isDirectory: true, locked: false },
+  { path: ".vscode/", isDirectory: true, locked: false },
+  { path: ".cursor/", isDirectory: true, locked: false },
+  { path: "node_modules/", isDirectory: true, locked: false },
+  { path: "dist/", isDirectory: true, locked: false },
+  { path: "Makefile", isDirectory: false, locked: false },
+  { path: "package.json", isDirectory: false, locked: false },
+  { path: "package-lock.json", isDirectory: false, locked: false },
+  { path: "tsconfig.json", isDirectory: false, locked: false }
+];
+var DEFAULT_BLOCK_PATTERN_PATHS = new Set(DEFAULT_BLOCK_PATTERNS.map((p) => p.path));
+var ROOT_DOTFILE_RE = /^\.[^/]+$/;
+var DEFAULT_SCOPE_POLICY = {
+  maxFiles: 20,
+  maxLines: 1e3,
+  blockPatterns: DEFAULT_BLOCK_PATTERNS,
+  exemptedRootDotfiles: /* @__PURE__ */ new Set()
+};
+function parseBlockPathsSpec(raw) {
+  const spec = {
+    additions: [],
+    removals: [],
+    ignoredRemovals: []
+  };
+  if (raw === "")
+    return spec;
+  for (const rawEntry of raw.split(",")) {
+    const entry2 = rawEntry.trim();
+    if (entry2.length === 0)
+      continue;
+    const isRemoval = entry2.startsWith("!");
+    const rawPath = isRemoval ? entry2.slice(1).trim() : entry2;
+    const path = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
+    if (path.length === 0)
+      continue;
+    if (isRemoval) {
+      if (path === ".github/" || path.startsWith(".github/")) {
+        spec.ignoredRemovals.push(path);
+        continue;
+      }
+      spec.removals.push({ path, isDirectory: path.endsWith("/"), locked: false });
+    } else {
+      spec.additions.push({ path, isDirectory: path.endsWith("/"), locked: false, userAdded: true });
+    }
+  }
+  return spec;
+}
+function legacyAdditionsToPatterns(values) {
+  return values.map((v) => v.trim()).map((v) => v.startsWith("/") ? v.slice(1) : v).filter((v) => v.length > 0).map((path) => ({
+    path,
+    isDirectory: path.endsWith("/"),
+    locked: false,
+    userAdded: true
+  }));
+}
+function legacyRemovalsToPatterns(values) {
+  return values.map((v) => v.trim()).map((v) => v.startsWith("/") ? v.slice(1) : v).filter((v) => v.length > 0).filter((v) => v !== ".github/" && !v.startsWith(".github/")).map((path) => ({
+    path,
+    isDirectory: path.endsWith("/"),
+    locked: false
+  }));
+}
+function buildScopePolicy(overrides) {
+  const spec = parseBlockPathsSpec(overrides.blockPathsSpec ?? "");
+  const removals = [
+    ...spec.removals,
+    ...legacyRemovalsToPatterns(overrides.hardBlockOverride ?? [])
+  ];
+  const additions = [
+    ...spec.additions,
+    ...legacyAdditionsToPatterns(overrides.additionalHardBlockPrefixes ?? [])
+  ];
+  const removalKeys = new Set(removals.map((p) => p.path));
+  const surviving = DEFAULT_BLOCK_PATTERNS.filter((p) => p.locked || !removalKeys.has(p.path));
+  const exemptedRootDotfiles = new Set(removals.map((p) => p.path).filter((p) => ROOT_DOTFILE_RE.test(p)));
+  return {
+    maxFiles: overrides.maxFiles && overrides.maxFiles > 0 ? overrides.maxFiles : DEFAULT_SCOPE_POLICY.maxFiles,
+    maxLines: overrides.maxLines && overrides.maxLines > 0 ? overrides.maxLines : DEFAULT_SCOPE_POLICY.maxLines,
+    blockPatterns: [...surviving, ...additions],
+    exemptedRootDotfiles
+  };
 }
 
 // dist/check-command-allowlist.js
@@ -21263,6 +21375,28 @@ async function runPreFix(config, deps = defaultDeps3) {
     title: config.prTitle,
     branch: prHeadRef
   };
+  let scopePolicyForPrompt = null;
+  try {
+    const effectivePolicy = buildScopePolicy({
+      blockPathsSpec: config.autoReviewBlockPaths,
+      maxFiles: config.scopeMaxFiles > 0 ? config.scopeMaxFiles : void 0,
+      maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : void 0,
+      additionalHardBlockPrefixes: config.scopeAdditionalHardBlockPrefixes,
+      hardBlockOverride: config.hardBlockOverride
+    });
+    scopePolicyForPrompt = {
+      blockedPaths: effectivePolicy.blockPatterns.map((p) => ({
+        path: p.path,
+        locked: p.locked
+      })),
+      maxFiles: effectivePolicy.maxFiles,
+      maxLines: effectivePolicy.maxLines,
+      exemptedRootDotfiles: effectivePolicy.exemptedRootDotfiles ? [...effectivePolicy.exemptedRootDotfiles].sort() : []
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    deps.warning(`[pre-fix] Failed to derive scope policy for the repair prompt; the section will be omitted. Reason: ${reason}`);
+  }
   const repairRequest = buildClaudeCodeRepairRequest({
     prContext,
     headSha,
@@ -21270,7 +21404,8 @@ async function runPreFix(config, deps = defaultDeps3) {
     iteration: fixingState.iterationCount,
     maxIterations: config.maxReviewIterations,
     checkCommand: config.checkCommand,
-    previousCheckFailure: state.previousCheckFailure ?? null
+    previousCheckFailure: state.previousCheckFailure ?? null,
+    scopePolicy: scopePolicyForPrompt
   });
   const prompt = buildClaudeCodeRepairPrompt(repairRequest);
   const allowedBashTools = deriveAllowedBashTools(config.checkCommand);

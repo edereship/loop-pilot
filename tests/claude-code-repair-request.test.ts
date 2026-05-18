@@ -474,6 +474,173 @@ describe("buildClaudeCodeRepairPrompt", () => {
       } — 5 truncated due to per-request cap)`
     );
   });
+
+  it("omits the scope policy section when no policy is provided", () => {
+    const prompt = buildClaudeCodeRepairPrompt(buildBaseRequest());
+    expect(prompt).not.toContain("Scope Policy");
+    expect(prompt).not.toContain("Max files changed");
+  });
+
+  it("renders the scope policy section with locked + unlocked entries", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [
+            { path: ".github/", locked: true },
+            { path: "dist/", locked: false },
+            { path: "package.json", locked: false },
+          ],
+          maxFiles: 20,
+          maxLines: 1000,
+        },
+      })
+    );
+    expect(prompt).toContain("## Scope Policy (your edits must satisfy)");
+    expect(prompt).toContain(
+      "- Blocked paths (do not modify; reverted server-side after your run):"
+    );
+    expect(prompt).toContain(
+      "  - .github/ (structurally locked, cannot be overridden)"
+    );
+    expect(prompt).toContain("  - dist/");
+    expect(prompt).toContain("  - package.json");
+    expect(prompt).toContain("- Max files changed: 20");
+    expect(prompt).toContain("- Max lines changed (added + deleted): 1000");
+    expect(prompt).toContain(
+      "If a faithful repair would exceed these limits, stop and explain rather than producing a partial fix that will be reverted."
+    );
+  });
+
+  it("orders sections as Codex Findings → Scope Policy → Instructions", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [{ path: ".github/", locked: true }],
+          maxFiles: 20,
+          maxLines: 1000,
+        },
+      })
+    );
+    const findingsAt = prompt.indexOf("## Codex Findings");
+    const scopeAt = prompt.indexOf("## Scope Policy");
+    const instructionsAt = prompt.indexOf("## Instructions");
+    expect(findingsAt).toBeGreaterThanOrEqual(0);
+    expect(scopeAt).toBeGreaterThan(findingsAt);
+    expect(instructionsAt).toBeGreaterThan(scopeAt);
+  });
+
+  it("shows effective max-files / max-lines values surfaced by the caller", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [{ path: "dist/", locked: false }],
+          maxFiles: 5,
+          maxLines: 250,
+        },
+      })
+    );
+    expect(prompt).toContain("- Max files changed: 5");
+    expect(prompt).toContain("- Max lines changed (added + deleted): 250");
+  });
+
+  it("renders an empty blocked-paths header without producing a malformed list", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [],
+          maxFiles: 20,
+          maxLines: 1000,
+        },
+      })
+    );
+    expect(prompt).toContain("## Scope Policy (your edits must satisfy)");
+    expect(prompt).toContain("- Blocked paths: (none configured)");
+    // Nothing should look like a bullet item under the empty header.
+    expect(prompt).not.toMatch(/Blocked paths.*\n  - /);
+  });
+
+  it("always renders the root-dotfile wildcard rule when a scope policy is present", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [{ path: ".github/", locked: true }],
+          maxFiles: 20,
+          maxLines: 1000,
+        },
+      })
+    );
+    expect(prompt).toContain(
+      "- Root dotfiles (any `.*` file at repo root): blocked"
+    );
+  });
+
+  it("renders the root-dotfile wildcard without exemptions when exemptedRootDotfiles is undefined", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [],
+          maxFiles: 20,
+          maxLines: 1000,
+          // no exemptedRootDotfiles field
+        },
+      })
+    );
+    expect(prompt).toContain(
+      "- Root dotfiles (any `.*` file at repo root): blocked"
+    );
+    expect(prompt).not.toContain("exempted");
+  });
+
+  it("renders the root-dotfile wildcard without exemptions when exemptedRootDotfiles is empty", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [],
+          maxFiles: 20,
+          maxLines: 1000,
+          exemptedRootDotfiles: [],
+        },
+      })
+    );
+    expect(prompt).toContain(
+      "- Root dotfiles (any `.*` file at repo root): blocked"
+    );
+    expect(prompt).not.toContain("exempted");
+  });
+
+  it("lists sorted exemptions in the root-dotfile rule when present", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [{ path: ".github/", locked: true }],
+          maxFiles: 20,
+          maxLines: 1000,
+          exemptedRootDotfiles: [".npmrc", ".gitignore", ".editorconfig"],
+        },
+      })
+    );
+    expect(prompt).toContain(
+      "- Root dotfiles (any `.*` file at repo root): blocked — exempted: .editorconfig, .gitignore, .npmrc"
+    );
+  });
+
+  it("places the root-dotfile rule between the blocked-paths list and Max files line", () => {
+    const prompt = buildClaudeCodeRepairPrompt(
+      buildBaseRequest({
+        scopePolicy: {
+          blockedPaths: [{ path: ".github/", locked: true }],
+          maxFiles: 20,
+          maxLines: 1000,
+          exemptedRootDotfiles: [".gitignore"],
+        },
+      })
+    );
+    const blockedAt = prompt.indexOf("  - .github/");
+    const dotfileAt = prompt.indexOf("- Root dotfiles");
+    const maxFilesAt = prompt.indexOf("- Max files changed");
+    expect(dotfileAt).toBeGreaterThan(blockedAt);
+    expect(maxFilesAt).toBeGreaterThan(dotfileAt);
+  });
 });
 
 describe("serializeClaudeCodeRepairRequest", () => {
@@ -497,6 +664,7 @@ describe("serializeClaudeCodeRepairRequest", () => {
       "pr",
       "execution",
       "findings",
+      "scopePolicy",
       "instructions",
     ];
     const positions = expectedOrder.map((key) =>

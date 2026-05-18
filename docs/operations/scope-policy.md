@@ -124,6 +124,36 @@ build 後は **緩和版 scope check** (`checkScopeBuildMode`) が走る。Build
 | 生成物が `.github/` 等 locked path に該当 / `..` 含む path | `scope_violation` (同上で復元、停止コメントは `formatScopeViolationDetail` の表現) |
 | 生成物が無い (no-op) | 何もせず claude-code-action の差分のみ commit |
 
+## repair prompt への事前共有 (TY-278)
+
+pre-fix は `buildScopePolicy()` で得た effective policy を `claude-code-action@v1` の repair prompt に `## Scope Policy (your edits must satisfy)` セクションとして埋め込む。Claude が事前に境界を知っていれば、そもそも違反 diff を生成しないため、scope_violation 経由の revert + iteration 浪費を構造的に減らせる。
+
+prompt 上の表示は以下の構造:
+
+```
+## Scope Policy (your edits must satisfy)
+- Blocked paths (do not modify; reverted server-side after your run):
+  - .github/ (structurally locked, cannot be overridden)
+  - dist/
+  - node_modules/
+  - package.json
+  - ...
+- Max files changed: 20
+- Max lines changed (added + deleted): 1000
+
+If a faithful repair would exceed these limits, stop and explain rather than producing a partial fix that will be reverted.
+```
+
+仕様:
+
+- block-list は override (`!path`) を **解除済みの effective list**。Claude には override syntax を露出させない。
+- `.github/` は locked 注記 (`(structurally locked, cannot be overridden)`) を inline で付与。
+- `max-files` / `max-lines` は Repository variable で上書きされていれば override 後の値。default 値と一致する場合も省略しない。
+- セクションは **`## Codex Findings` の直後 / `## Instructions` の直前**に挿入される。
+- `buildScopePolicy()` が失敗した場合 (parse error 等) はセクションを省略する。pre-TY-278 と同じ挙動 (Claude が知らない状態) に戻るだけで安全側。`core.warning` でログのみ残す。
+
+実装: `src/claude-code-repair-request.ts`（`buildClaudeCodeRepairPrompt`, `formatScopePolicySection`）, `src/main-pre-fix.ts`。
+
 ## scope_violation 時の停止コメント
 
 post-fix は違反種別ごとに actionable な `Detail:` を生成する。
@@ -186,6 +216,7 @@ See docs/operations/scope-policy.md.
 ## 関連
 
 - 実装: `src/scope-checker.ts`（`parseBlockPathsSpec`, `buildScopePolicy`, `checkScope`）
+- pre-fix 配線 (prompt 共有): `src/main-pre-fix.ts` / `src/claude-code-repair-request.ts`（`formatScopePolicySection`, TY-278）
 - post-fix 配線: `src/main-post-fix.ts`（`formatScopeViolationDetail`）
 - セキュリティ運用全般: [security.md](security.md)
 - 停止条件とリカバリ: [stop-and-recovery.md](stop-and-recovery.md)

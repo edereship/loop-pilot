@@ -23,6 +23,14 @@ export interface ClaudeCodeRepairRequest {
     findingsTruncated: FindingsTruncationStats;
   };
   findings: ClaudeCodeRepairFinding[];
+  /**
+   * Effective scope policy applied by the post-fix step (TY-278). `null` when
+   * the caller could not derive the policy (e.g. unexpected parse error); the
+   * prompt then omits the policy section and Claude falls back to the
+   * pre-TY-278 behaviour of learning the boundary from `scope_violation`
+   * rejections after the fact.
+   */
+  scopePolicy: ClaudeCodeRepairScopePolicy | null;
   instructions: string;
 }
 
@@ -49,6 +57,41 @@ export interface ClaudeCodeRepairFinding {
    * callers, type definitions, tests, and configuration from there.
    */
   entryPointOnly: true;
+}
+
+/**
+ * Effective scope policy surfaced to claude-code-action via the repair prompt
+ * (TY-278). The post-fix step enforces the same policy after the run, so
+ * sharing it up-front lets Claude avoid edits that would be reverted server-
+ * side (e.g. modifications under `.github/`).
+ */
+export interface ClaudeCodeRepairScopePolicy {
+  /**
+   * Effective blocked paths in display order. Removals (`!path`) are already
+   * resolved — the operator's spec is not exposed to Claude verbatim.
+   */
+  blockedPaths: readonly ClaudeCodeBlockedPath[];
+  /** Effective max changed-file count. Mirrors `ScopeCheckPolicy.maxFiles`. */
+  maxFiles: number;
+  /** Effective max changed-line count (added + deleted). */
+  maxLines: number;
+  /**
+   * Root-level dotfiles (paths matching /^\.[^/]+$/) are always blocked by
+   * the post-fix step via its ROOT_DOTFILE_RE fallback unless they appear here.
+   * `undefined` is treated as an empty array (no exemptions, all root dotfiles
+   * blocked). Mirrors `ScopeCheckPolicy.exemptedRootDotfiles`.
+   */
+  exemptedRootDotfiles?: readonly string[];
+}
+
+export interface ClaudeCodeBlockedPath {
+  /** Repo-relative path or directory prefix (trailing slash for directories). */
+  path: string;
+  /**
+   * True iff the entry cannot be unblocked via `AUTO_REVIEW_BLOCK_PATHS=!path`.
+   * Currently only `.github/` is locked.
+   */
+  locked: boolean;
 }
 
 /** Maximum characters preserved from a previous `CHECK_COMMAND` failure output. */
@@ -237,6 +280,11 @@ export function buildClaudeCodeRepairRequest(input: {
   maxIterations: number;
   checkCommand: string;
   previousCheckFailure?: string | null;
+  /**
+   * Effective scope policy enforced by post-fix (TY-278). `null` / undefined
+   * omits the scope policy section from the rendered prompt.
+   */
+  scopePolicy?: ClaudeCodeRepairScopePolicy | null;
 }): ClaudeCodeRepairRequest {
   // Sort once, then apply count + body caps in that locked order. Do not
   // re-sort afterwards — body truncation would otherwise alter the tiebreaker.
@@ -264,6 +312,7 @@ export function buildClaudeCodeRepairRequest(input: {
       findingsTruncated,
     },
     findings,
+    scopePolicy: input.scopePolicy ?? null,
     instructions: INSTRUCTION_LINES.join("\n"),
   };
 }
@@ -278,6 +327,35 @@ function formatFindingBlock(
     `- Title: ${finding.title}`,
     "",
     finding.body.trim(),
+  ].join("\n");
+}
+
+function formatBlockedPathEntry(entry: ClaudeCodeBlockedPath): string {
+  return entry.locked
+    ? `  - ${entry.path} (structurally locked, cannot be overridden)`
+    : `  - ${entry.path}`;
+}
+
+function formatScopePolicySection(policy: ClaudeCodeRepairScopePolicy): string {
+  const blockedHeader =
+    policy.blockedPaths.length > 0
+      ? "- Blocked paths (do not modify; reverted server-side after your run):"
+      : "- Blocked paths: (none configured)";
+  const blockedLines = policy.blockedPaths.map(formatBlockedPathEntry);
+  const exempted = policy.exemptedRootDotfiles ?? [];
+  const dotfileRule =
+    exempted.length > 0
+      ? `- Root dotfiles (any \`.*\` file at repo root): blocked — exempted: ${[...exempted].sort().join(", ")}`
+      : "- Root dotfiles (any `.*` file at repo root): blocked";
+  return [
+    "## Scope Policy (your edits must satisfy)",
+    blockedHeader,
+    ...blockedLines,
+    dotfileRule,
+    `- Max files changed: ${policy.maxFiles}`,
+    `- Max lines changed (added + deleted): ${policy.maxLines}`,
+    "",
+    "If a faithful repair would exceed these limits, stop and explain rather than producing a partial fix that will be reverted.",
   ].join("\n");
 }
 
@@ -318,6 +396,13 @@ export function buildClaudeCodeRepairPrompt(
   } else {
     const blocks = findings.map((f, i) => formatFindingBlock(f, i)).join("\n\n");
     sections.push(`${findingsHeader}\n\n${blocks}`);
+  }
+
+  // TY-278: Surface the effective scope policy between Codex Findings and
+  // Instructions so Claude can read the boundary right before the action
+  // checklist. `null` falls back to the pre-TY-278 behaviour (section omitted).
+  if (request.scopePolicy !== null) {
+    sections.push(formatScopePolicySection(request.scopePolicy));
   }
 
   sections.push(`## Instructions\n${INSTRUCTION_LINES.join("\n")}`);

@@ -38,7 +38,9 @@ import {
 import {
   buildClaudeCodeRepairRequest,
   buildClaudeCodeRepairPrompt,
+  type ClaudeCodeRepairScopePolicy,
 } from "./claude-code-repair-request.js";
+import { buildScopePolicy } from "./scope-checker.js";
 import {
   deriveAllowedBashTools,
   serializeAllowedBashTools,
@@ -651,6 +653,38 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     branch: prHeadRef,
   };
 
+  // TY-278: Derive the effective scope policy and surface it in the prompt so
+  // claude-code-action knows which paths post-fix will revert. `buildScopePolicy`
+  // is defensive and should not throw under normal config, but we wrap it so
+  // any future parse-time failure simply omits the section (== pre-TY-278
+  // behaviour) instead of failing the entire pre-fix run.
+  let scopePolicyForPrompt: ClaudeCodeRepairScopePolicy | null = null;
+  try {
+    const effectivePolicy = buildScopePolicy({
+      blockPathsSpec: config.autoReviewBlockPaths,
+      maxFiles: config.scopeMaxFiles > 0 ? config.scopeMaxFiles : undefined,
+      maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : undefined,
+      additionalHardBlockPrefixes: config.scopeAdditionalHardBlockPrefixes,
+      hardBlockOverride: config.hardBlockOverride,
+    });
+    scopePolicyForPrompt = {
+      blockedPaths: effectivePolicy.blockPatterns.map((p) => ({
+        path: p.path,
+        locked: p.locked,
+      })),
+      maxFiles: effectivePolicy.maxFiles,
+      maxLines: effectivePolicy.maxLines,
+      exemptedRootDotfiles: effectivePolicy.exemptedRootDotfiles
+        ? [...effectivePolicy.exemptedRootDotfiles].sort()
+        : [],
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    deps.warning(
+      `[pre-fix] Failed to derive scope policy for the repair prompt; the section will be omitted. Reason: ${reason}`,
+    );
+  }
+
   const repairRequest = buildClaudeCodeRepairRequest({
     prContext,
     headSha,
@@ -659,6 +693,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     maxIterations: config.maxReviewIterations,
     checkCommand: config.checkCommand,
     previousCheckFailure: state.previousCheckFailure ?? null,
+    scopePolicy: scopePolicyForPrompt,
   });
   const prompt = buildClaudeCodeRepairPrompt(repairRequest);
 

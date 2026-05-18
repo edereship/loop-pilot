@@ -428,6 +428,75 @@ describe("runPreFix", () => {
     expect(deps.checkoutBranch).toHaveBeenCalledWith("linear/TY-237");
   });
 
+  it("embeds the effective scope policy section in the prompt (TY-278)", async () => {
+    const findings: RawReviewComment[] = [
+      {
+        id: 310,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P2 Minor nit\n\nA comment is unclear.",
+        path: "src/foo.ts",
+        line: 7,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      findings,
+    );
+
+    await runPreFix(
+      {
+        ...baseConfig,
+        // Custom additions ("secrets/") + custom removal ("!package.json")
+        // exercise the operator-spec → effective-list resolution.
+        autoReviewBlockPaths: "secrets/,!package.json",
+        scopeMaxFiles: 7,
+        scopeMaxLines: 250,
+      },
+      deps,
+    );
+
+    expect(deps.outputs.should_run).toBe("true");
+    expect(deps.outputs.prompt).toContain(
+      "## Scope Policy (your edits must satisfy)",
+    );
+    // Locked default surfaces the structural-lock annotation.
+    expect(deps.outputs.prompt).toContain(
+      "  - .github/ (structurally locked, cannot be overridden)",
+    );
+    // Default unlocked entries still appear.
+    expect(deps.outputs.prompt).toContain("  - dist/");
+    // Operator addition appears.
+    expect(deps.outputs.prompt).toContain("  - secrets/");
+    // Operator removal of `package.json` from the defaults takes effect:
+    // the prompt's blocked-paths block must not list it as a bullet item.
+    expect(deps.outputs.prompt).not.toMatch(/^  - package\.json$/m);
+    // Effective overrides for size budgets are surfaced.
+    expect(deps.outputs.prompt).toContain("- Max files changed: 7");
+    expect(deps.outputs.prompt).toContain(
+      "- Max lines changed (added + deleted): 250",
+    );
+    // Root-dotfile wildcard is always surfaced. "!package.json" is not a dotfile
+    // so it does not appear in the exemption list.
+    expect(deps.outputs.prompt).toContain(
+      "- Root dotfiles (any `.*` file at repo root): blocked",
+    );
+    expect(deps.outputs.prompt).not.toContain("exempted: package.json");
+    // Section ordering: Findings → Scope Policy → Instructions.
+    const findingsAt = deps.outputs.prompt.indexOf("## Codex Findings");
+    const scopeAt = deps.outputs.prompt.indexOf("## Scope Policy");
+    const instructionsAt = deps.outputs.prompt.indexOf("## Instructions");
+    expect(scopeAt).toBeGreaterThan(findingsAt);
+    expect(instructionsAt).toBeGreaterThan(scopeAt);
+    expect(deps.warning).not.toHaveBeenCalled();
+  });
+
   it("appends CHECK_COMMAND to the Bash allowlist when using a non-npm package manager", async () => {
     const findings: RawReviewComment[] = [
       {
