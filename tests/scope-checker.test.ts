@@ -4,6 +4,7 @@ import {
   DEFAULT_SCOPE_POLICY,
   buildScopePolicy,
   checkScope,
+  checkScopeBuildMode,
   parseBlockPathsSpec,
   parseGitNumstat,
   type BlockPattern,
@@ -255,8 +256,8 @@ describe("parseBlockPathsSpec (TY-271)", () => {
   it("parses directory adds (trailing slash)", () => {
     expect(parseBlockPathsSpec("secrets/,infra/")).toEqual({
       additions: [
-        { path: "secrets/", isDirectory: true, locked: false },
-        { path: "infra/", isDirectory: true, locked: false },
+        { path: "secrets/", isDirectory: true, locked: false, userAdded: true },
+        { path: "infra/", isDirectory: true, locked: false, userAdded: true },
       ],
       removals: [],
       ignoredRemovals: [],
@@ -266,8 +267,8 @@ describe("parseBlockPathsSpec (TY-271)", () => {
   it("parses exact-file adds (no trailing slash)", () => {
     expect(parseBlockPathsSpec("Justfile,scripts/install.sh")).toEqual({
       additions: [
-        { path: "Justfile", isDirectory: false, locked: false },
-        { path: "scripts/install.sh", isDirectory: false, locked: false },
+        { path: "Justfile", isDirectory: false, locked: false, userAdded: true },
+        { path: "scripts/install.sh", isDirectory: false, locked: false, userAdded: true },
       ],
       removals: [],
       ignoredRemovals: [],
@@ -298,7 +299,7 @@ describe("parseBlockPathsSpec (TY-271)", () => {
   it("trims whitespace and drops blank entries", () => {
     const spec = parseBlockPathsSpec(" secrets/ , ,  !Makefile ");
     expect(spec.additions).toEqual([
-      { path: "secrets/", isDirectory: true, locked: false },
+      { path: "secrets/", isDirectory: true, locked: false, userAdded: true },
     ]);
     expect(spec.removals).toEqual([
       { path: "Makefile", isDirectory: false, locked: false },
@@ -308,8 +309,8 @@ describe("parseBlockPathsSpec (TY-271)", () => {
   it("strips a leading slash from additions so /secrets/ matches secrets/", () => {
     const spec = parseBlockPathsSpec("/secrets/,/Justfile");
     expect(spec.additions).toEqual([
-      { path: "secrets/", isDirectory: true, locked: false },
-      { path: "Justfile", isDirectory: false, locked: false },
+      { path: "secrets/", isDirectory: true, locked: false, userAdded: true },
+      { path: "Justfile", isDirectory: false, locked: false, userAdded: true },
     ]);
   });
 
@@ -535,6 +536,133 @@ describe("parseGitNumstat", () => {
       { path: "src/keep.ts", added: 2, deleted: 1 },
     ]);
   });
+});
+
+describe("checkScopeBuildMode (TY-281)", () => {
+  it("accepts dist/ output without an !dist/ override", () => {
+    const result = checkScopeBuildMode([file("dist/post-fix/index.cjs", 200, 100)]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts unlocked default-blocked files (package.json) without override", () => {
+    const result = checkScopeBuildMode([
+      file("package.json", 3, 1),
+      file("package-lock.json", 50, 20),
+    ]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("still rejects writes under .github/ (locked block)", () => {
+    const result = checkScopeBuildMode([
+      file("dist/post-fix/index.cjs", 200, 100),
+      file(".github/workflows/leaked.yml", 10, 0),
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toContain(".github/workflows/leaked.yml");
+    }
+  });
+
+  it("still rejects path traversal", () => {
+    const result = checkScopeBuildMode([
+      file("../escape.ts", 1, 0),
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("path_traversal");
+    }
+  });
+
+  it("skips size budgets (file count + line count)", () => {
+    // A bundle artifact typically has thousands of lines; the default
+    // policy caps at 1000 lines / 20 files. Build mode must accept this.
+    const tiny = (i: number) => file(`dist/chunks/${i}.cjs`, 50, 0);
+    const manyFiles: ChangedFile[] = Array.from({ length: 100 }, (_, i) => tiny(i));
+    const result = checkScopeBuildMode(manyFiles);
+    expect(result.ok).toBe(true);
+  });
+
+  it("skips binary check", () => {
+    // numstat `-` / `-` means binary; build outputs may include binaries
+    // (wasm, generated images). Build mode does not refuse them outright —
+    // the user owns the BUILD_COMMAND.
+    const result = checkScopeBuildMode([file("dist/asset.wasm", -1, -1)]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("still rejects writes to operator-added custom block paths (unlocked)", () => {
+    // AUTO_REVIEW_BLOCK_PATHS=secrets/ adds a non-default, non-locked pattern.
+    // Build mode must enforce it even though it is unlocked — only the built-in
+    // defaults (dist/, package.json, …) are relaxed.
+    const policy = buildScopePolicy({ blockPathsSpec: "secrets/" });
+    const result = checkScopeBuildMode(
+      [file("dist/index.cjs", 200, 100), file("secrets/api-key.pem", 1, 0)],
+      policy,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toContain("secrets/api-key.pem");
+      expect(result.offendingPaths).not.toContain("dist/index.cjs");
+    }
+  });
+
+  it("still allows default-unlocked paths when a custom policy also adds other paths", () => {
+    // Verify that adding a custom pattern does not re-block the defaults.
+    const policy = buildScopePolicy({ blockPathsSpec: "infra/" });
+    const result = checkScopeBuildMode(
+      [file("dist/bundle.js", 500, 0), file("package.json", 1, 0)],
+      policy,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("enforces a custom block nested inside a relaxed default prefix", () => {
+    // dist/ is a default-unlocked path in build mode, but if an operator adds
+    // dist/secrets/ to AUTO_REVIEW_BLOCK_PATHS, that sub-path must still be
+    // blocked even though the parent prefix (dist/) is relaxed.
+    const policy = buildScopePolicy({ blockPathsSpec: "dist/secrets/" });
+    const result = checkScopeBuildMode(
+      [
+        file("dist/index.cjs", 200, 100),
+        file("dist/secrets/key.pem", 1, 0),
+      ],
+      policy,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toContain("dist/secrets/key.pem");
+      expect(result.offendingPaths).not.toContain("dist/index.cjs");
+    }
+  });
+
+  it("blocks an explicitly re-added default path in build mode", () => {
+    // AUTO_REVIEW_BLOCK_PATHS=dist/ re-blocks a default-unlocked path. Build
+    // mode must honour the operator's explicit policy and reject writes to dist/,
+    // even though dist/ is normally relaxed by build-mode.
+    const policy = buildScopePolicy({ blockPathsSpec: "dist/" });
+    const result = checkScopeBuildMode([file("dist/index.cjs", 200, 100)], policy);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toContain("dist/index.cjs");
+    }
+  });
+
+  it("blocks an explicitly re-added default file (package.json) in build mode", () => {
+    // AUTO_REVIEW_BLOCK_PATHS=package.json re-blocks a default-unlocked exact
+    // file. Build mode must honour the operator's explicit policy.
+    const policy = buildScopePolicy({ blockPathsSpec: "package.json" });
+    const result = checkScopeBuildMode([file("package.json", 3, 1)], policy);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("hard_block_path");
+      expect(result.offendingPaths).toContain("package.json");
+    }
+  });
+
 });
 
 // Sanity check unused import suppression: keep BlockPattern referenced so the

@@ -11,6 +11,7 @@ const baseConfig: Config = {
   maxReviewIterations: 20,
   debounceSeconds: 0,
   checkCommand: "npm run check",
+  buildCommand: "",
   codexBotLogin: "chatgpt-codex-connector[bot]",
   stabilizeIntervalSeconds: 1,
   stabilizeCount: 1,

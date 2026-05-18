@@ -19232,6 +19232,7 @@ function loadBaseConfig() {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
+    buildCommand: input("build-command", "BUILD_COMMAND", ""),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),

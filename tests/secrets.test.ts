@@ -12,6 +12,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     maxReviewIterations: 20,
     debounceSeconds: 0,
     checkCommand: "npm run check",
+    buildCommand: "",
     codexBotLogin: "codex",
     stabilizeIntervalSeconds: 1,
     stabilizeCount: 1,

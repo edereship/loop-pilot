@@ -18,6 +18,7 @@ const crashConfig: Config = {
   maxReviewIterations: 20,
   debounceSeconds: 90,
   checkCommand: "npm run check",
+  buildCommand: "",
   codexBotLogin: "codex",
   stabilizeIntervalSeconds: 10,
   stabilizeCount: 3,

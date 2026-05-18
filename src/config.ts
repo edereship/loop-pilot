@@ -13,6 +13,17 @@ export interface BaseConfig {
   maxReviewIterations: number;
   debounceSeconds: number;
   checkCommand: string;
+  /**
+   * Optional shell command run by post-fix after CHECK_COMMAND succeeds and
+   * before the auto-fix commit is staged (TY-281). Intended for repos that
+   * commit build artifacts (e.g. `dist/`) so the auto-fix commit cannot drift
+   * out of sync with `src/`. Empty default = skip, preserving prior behavior
+   * for downstream repos without committed build outputs. The configured
+   * command may chain multiple steps via shell `&&` or wrap them in an npm
+   * script — multi-command native support is intentionally not provided
+   * (see TY-281 spec).
+   */
+  buildCommand: string;
   codexBotLogin: string;
   stabilizeIntervalSeconds: number;
   stabilizeCount: number;
@@ -185,6 +196,7 @@ function loadBaseConfig(): BaseConfig {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
+    buildCommand: input("build-command", "BUILD_COMMAND", ""),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
     stabilizeIntervalSeconds: intInput(
       "stabilize-interval-seconds",

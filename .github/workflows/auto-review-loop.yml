@@ -193,6 +193,7 @@ jobs:
           max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           debounce-seconds: ${{ vars.DEBOUNCE_SECONDS || '90' }}
           check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}
+          build-command: ${{ vars.BUILD_COMMAND || '' }}
           codex-bot-login: ${{ vars.CODEX_BOT_LOGIN || 'chatgpt-codex-connector[bot]' }}
           codex-review-marker: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
           stabilize-interval-seconds: ${{ vars.STABILIZE_INTERVAL_SECONDS || '10' }}

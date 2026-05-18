@@ -94,6 +94,36 @@ AUTO_REVIEW_BLOCK_PATHS = secrets/,infra/terraform/,!Makefile
 
 `0` または空文字を渡すとデフォルトが使われる。action input を `"0"` 明示すると `core.getInput` が「設定済み」と解釈して Repository variable のフォールバックを上書きしてしまうため、Repository variable 主導で運用する場合は input を空のまま（`with:` で渡さない / 空文字を渡す）にする。
 
+## `BUILD_COMMAND` と build 後 scope 再 check (TY-281)
+
+`BUILD_COMMAND` Repository variable (または `build-command` input) を設定すると、post-fix は CHECK_COMMAND 通過後・commit 直前にそのコマンドを実行し、生成された差分も auto-fix commit に含めて push する。`dist/` などのビルド成果物を repo にコミットする運用 (この repo を含む GitHub Action 配布レポなど) で、auto-fix commit が `src/` と drift しないようにする経路。
+
+| variable | input | default |
+|----------|-------|---------|
+| `BUILD_COMMAND` | `build-command` | "" (skip) |
+
+build 後は **緩和版 scope check** (`checkScopeBuildMode`) が走る。Build output は user が opt-in したコマンドの出力なので、default block list の **unlocked エントリ** (`dist/`, `package.json` 等) と **サイズ上限** をスキップする。**locked エントリ** (`.github/`) と **path traversal** はセキュリティ境界として維持する。
+
+| チェック | 通常 `checkScope` (pre-build) | `checkScopeBuildMode` (post-build) |
+|---|---|---|
+| `path_traversal` (`..`, 絶対パス) | reject | **reject** |
+| `hard_block_path` (locked: `.github/`) | reject | **reject** |
+| `hard_block_path` (unlocked: `dist/`, `package.json` 等) | reject | skip |
+| `binary_change` (`-`/`-` numstat) | reject | skip |
+| `too_many_files` / `too_many_lines` | reject | skip |
+
+これにより、`BUILD_COMMAND=npm run bundle` を Repository variable に設定するだけで `dist/` 配下が auto-fix commit に同梱される。`AUTO_REVIEW_BLOCK_PATHS=!dist/` を併設する必要はない。ただし build command が `.github/` を書き換えるような事故 (CI-rewrite escape hatch) は依然として `scope_violation` で止まる。
+
+複数ステップ (lint + build + post-process など) のニーズには **シェル連結** (`BUILD_COMMAND="npm run lint && npm run build"`) か **npm script ラップ** で対応する。multi-command native support は意図的に付けていない (既存の `CHECK_COMMAND` と同じ方針)。
+
+エラーハンドリング:
+
+| 状況 | 停止理由 |
+|------|----------|
+| `BUILD_COMMAND` non-zero exit | `action_failure` (working tree を `git reset --hard HEAD && git clean -ffd` で復元) |
+| 生成物が `.github/` 等 locked path に該当 / `..` 含む path | `scope_violation` (同上で復元、停止コメントは `formatScopeViolationDetail` の表現) |
+| 生成物が無い (no-op) | 何もせず claude-code-action の差分のみ commit |
+
 ## scope_violation 時の停止コメント
 
 post-fix は違反種別ごとに actionable な `Detail:` を生成する。

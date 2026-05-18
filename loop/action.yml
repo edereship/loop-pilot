@@ -65,6 +65,10 @@ inputs:
     description: "Shell command to run after applying fixes (test/lint/typecheck)"
     required: false
     default: "npm run check"
+  build-command:
+    description: "Optional shell command run by post-fix after CHECK_COMMAND succeeds, before staging (TY-281). Use this to regenerate build artifacts that are committed to the repo (e.g. `dist/`) so the auto-fix commit cannot drift out of sync with `src/`. Empty default skips the step; chain multiple steps with `&&` or wrap in an npm script."
+    required: false
+    default: ""
   codex-bot-login:
     description: "GitHub login of the Codex bot"
     required: false
@@ -251,6 +255,7 @@ runs:
         iteration: ${{ steps.pre.outputs.iteration }}
         trigger-comment-id: ${{ steps.pre.outputs.trigger_comment_id }}
         check-command: ${{ steps.pre.outputs.check_command }}
+        build-command: ${{ inputs.build-command }}
         action-outcome: ${{ steps.claude.outcome }}
         action-execution-file: ${{ steps.claude.outputs.execution_file }}
         github-repository: ${{ inputs.github-repository }}

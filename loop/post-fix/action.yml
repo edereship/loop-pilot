@@ -37,6 +37,10 @@ inputs:
     description: "CHECK_COMMAND (output of pre-fix; can also fall back to wrapping workflow)"
     required: false
     default: "npm run check"
+  build-command:
+    description: "Optional shell command run after CHECK_COMMAND succeeds, before staging (TY-281). Use this to regenerate build artifacts that are committed to the repo (e.g. `dist/`) so the auto-fix commit cannot drift out of sync with `src/`. Empty default skips the step; chain multiple steps with `&&` or wrap in an npm script. Generated files are re-scope-checked against `auto-review-block-paths` / `scope-max-*` before commit."
+    required: false
+    default: ""
   action-outcome:
     description: "GitHub Actions step.outcome of the preceding claude-code-action step (success | failure | cancelled | skipped)."
     required: false

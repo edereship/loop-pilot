@@ -210,6 +210,27 @@ Actions の required check が発火しない場合がある。TY-145 の dispos
 public repo E2E でこの挙動を確認したため、Repository secret
 `AUTO_REVIEW_PUSH_TOKEN` を任意で設定できる。
 
+**TY-281 検証結果 (2026-05-17)**: PR #88 で `AUTO_REVIEW_PUSH_TOKEN` を
+登録した状態で auto-fix を発生させ、commit `bf7e1066` を観測。git commit
+metadata 上の `committer.login` は `github-actions[bot]` のままだが (action
+が `git config user.email` を `41898282+claude[bot]@...` に固定するため。
+これは git author 情報の見え方の話であり push actor とは別)、CI workflow
+(`check`) は `on: pull_request` (synchronize) でのみ起動する経路にもかか
+わらず auto-fix commit に対して再 trigger された。`GITHUB_TOKEN` の push は
+synchronize を発火させない GitHub 仕様 ([docs](https://docs.github.com/en/actions/security-guides/automatic-token-authentication))
+のため、CI が走った事実が `AUTO_REVIEW_PUSH_TOKEN` 経路で push されている
+ことの決定的証拠となる。
+
+**事実上の必須要件**: README は "optional" と表記するが、以下のいずれかに
+該当する production では未設定時に PR #85 のような事故 (auto-fix commit
+で CI が走らず、`dist/` drift や typecheck 退行が merge 後の main で初め
+て露呈) を残すため、**設定を強く推奨**:
+
+- branch protection で **required CI checks** を強制している repo
+- `auto-merge-on-clean` (TY-277) で auto-fix → 自動 merge を回す repo
+- auto-fix が触る範囲に **CI でしか検知できない** drift (committed build
+  artifacts、generated code、lockfile sync など) が含まれる repo
+
 **用途:**
 - Workflow B post-fix の repair commit `git push`
 

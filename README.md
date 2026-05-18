@@ -85,6 +85,10 @@ jobs:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           # or for subscription users:
           # claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Optional: keep committed build artifacts (e.g. `dist/`) in sync
+          # with `src/` so auto-fix commits never drift (TY-281). Set the
+          # `BUILD_COMMAND` Repository variable to your bundle/build command.
+          build-command: ${{ vars.BUILD_COMMAND || '' }}
           pr-number: ${{ github.event.issue.number || github.event.pull_request.number }}
           pr-head-ref: ${{ steps.pr.outputs.head_ref }}
           pr-title: ${{ steps.pr.outputs.title }}
@@ -103,7 +107,8 @@ jobs:
 | `anthropic-api-key` | "" | Anthropic API 課金。`claude-code-oauth-token` と排他 (TY-260) |
 | `claude-code-oauth-token` | "" | Claude Code サブスク。`claude setup-token` で生成 |
 | `codex-review-request-token` | `github-token` | `@codex review` を Codex 連携ユーザーから依頼するための PAT |
-| `auto-review-push-token` | "" | repair commit push 用の machine-user PAT / GitHub App token (required checks 発火用) |
+| `auto-review-push-token` | "" | repair commit push 用の machine-user PAT / GitHub App token。**required checks や `auto-merge-on-clean` を使う production では実質必須** (`GITHUB_TOKEN` の push は `pull_request: synchronize` を発火させない GitHub 仕様のため、未設定だと auto-fix commit に対して CI が走らず PR #85 のような事故が起きる経路を残す。TY-281 検証済み)。 |
+| `build-command` | "" | `CHECK_COMMAND` 通過後・staging 前に走る任意のビルドコマンド (TY-281)。`dist/` 等のビルド成果物を commit する repo で auto-fix commit が `src/` と drift しないようにする。空 default なら skip。複数ステップは `&&` 連結か npm script ラップで合わせる。生成物は **build-mode の緩和版 scope check** に通る — unlocked default blocks (`dist/`, `package.json` 等) とサイズ上限はスキップされる一方、`.github/` (locked) と path traversal は依然として reject される。詳細は [`docs/operations/scope-policy.md`](docs/operations/scope-policy.md)。 |
 | `auto-review-label` | `auto-review-fix` | このラベルを持つ PR のみが自動修正対象 (default-strict) |
 | `auto-review-full-auto` | `false` | true でラベルゲートを無効化 |
 | `max-review-iterations` | `20` | 1 PR あたりの最大修正回数 |

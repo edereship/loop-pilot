@@ -10838,7 +10838,7 @@ var require_mock_interceptor = __commonJS({
 var require_mock_client = __commonJS({
   "node_modules/undici/lib/mock/mock-client.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify3 } = require("node:util");
+    var { promisify: promisify4 } = require("node:util");
     var Client = require_client();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10878,7 +10878,7 @@ var require_mock_client = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify3(this[kOriginalClose])();
+        await promisify4(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -10891,7 +10891,7 @@ var require_mock_client = __commonJS({
 var require_mock_pool = __commonJS({
   "node_modules/undici/lib/mock/mock-pool.js"(exports2, module2) {
     "use strict";
-    var { promisify: promisify3 } = require("node:util");
+    var { promisify: promisify4 } = require("node:util");
     var Pool = require_pool();
     var { buildMockDispatch } = require_mock_utils();
     var {
@@ -10931,7 +10931,7 @@ var require_mock_pool = __commonJS({
         return new MockInterceptor(opts, this[kDispatches]);
       }
       async [kClose]() {
-        await promisify3(this[kOriginalClose])();
+        await promisify4(this[kOriginalClose])();
         this[kConnected] = 0;
         this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
       }
@@ -19130,6 +19130,7 @@ function loadBaseConfig() {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
     debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
     checkCommand: input("check-command", "CHECK_COMMAND", "npm run check"),
+    buildCommand: input("build-command", "BUILD_COMMAND", ""),
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
@@ -19850,6 +19851,31 @@ async function runCheckCommand(checkCommand, modifiedFiles) {
   }
 }
 
+// dist/build-runner.js
+var import_node_child_process4 = require("node:child_process");
+var import_node_util3 = require("node:util");
+var execAsync2 = (0, import_node_util3.promisify)(import_node_child_process4.exec);
+async function runBuildCommand(buildCommand) {
+  const safeEnv = stripSecretEnv(process.env);
+  try {
+    const { stdout, stderr } = await execAsync2(buildCommand, {
+      timeout: 5 * 60 * 1e3,
+      maxBuffer: 100 * 1024 * 1024,
+      encoding: "utf-8",
+      env: safeEnv
+    });
+    const combined = stdout + (stderr ? "\n" + stderr : "");
+    return { success: true, output: sanitizeOutput(combined) };
+  } catch (error2) {
+    const anyError = error2;
+    const stdout = anyError.stdout ? String(anyError.stdout) : "";
+    const stderr = anyError.stderr ? String(anyError.stderr) : "";
+    const message = anyError.message ? String(anyError.message) : String(error2);
+    const combined = stdout + (stderr ? "\n" + stderr : "") + "\nError: " + message;
+    return { success: false, output: sanitizeOutput(combined) };
+  }
+}
+
 // dist/scope-checker.js
 var DEFAULT_BLOCK_PATTERNS = [
   { path: ".github/", isDirectory: true, locked: true },
@@ -19866,6 +19892,7 @@ var DEFAULT_BLOCK_PATTERNS = [
   { path: "package-lock.json", isDirectory: false, locked: false },
   { path: "tsconfig.json", isDirectory: false, locked: false }
 ];
+var DEFAULT_BLOCK_PATTERN_PATHS = new Set(DEFAULT_BLOCK_PATTERNS.map((p) => p.path));
 var ROOT_DOTFILE_RE = /^\.[^/]+$/;
 var DEFAULT_SCOPE_POLICY = {
   maxFiles: 20,
@@ -19890,19 +19917,14 @@ function parseBlockPathsSpec(raw) {
     const path = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
     if (path.length === 0)
       continue;
-    const pattern = {
-      path,
-      isDirectory: path.endsWith("/"),
-      locked: false
-    };
     if (isRemoval) {
       if (path === ".github/" || path.startsWith(".github/")) {
         spec.ignoredRemovals.push(path);
         continue;
       }
-      spec.removals.push(pattern);
+      spec.removals.push({ path, isDirectory: path.endsWith("/"), locked: false });
     } else {
-      spec.additions.push(pattern);
+      spec.additions.push({ path, isDirectory: path.endsWith("/"), locked: false, userAdded: true });
     }
   }
   return spec;
@@ -19911,7 +19933,8 @@ function legacyAdditionsToPatterns(values) {
   return values.map((v) => v.trim()).map((v) => v.startsWith("/") ? v.slice(1) : v).filter((v) => v.length > 0).map((path) => ({
     path,
     isDirectory: path.endsWith("/"),
-    locked: false
+    locked: false,
+    userAdded: true
   }));
 }
 function legacyRemovalsToPatterns(values) {
@@ -20026,6 +20049,50 @@ function checkScope(files, policy = DEFAULT_SCOPE_POLICY) {
       reason: "too_many_lines",
       message: `Diff changes ${totalLines} lines (limit ${policy.maxLines})`,
       offendingPaths: files.map((f) => f.path)
+    };
+  }
+  return {
+    ok: true,
+    changedFiles: files.length,
+    totalLines
+  };
+}
+function checkScopeBuildMode(files, policy = DEFAULT_SCOPE_POLICY) {
+  const traversal = [];
+  const blocked = [];
+  const blockedMatches = [];
+  let totalLines = 0;
+  const enforcedPatterns = policy.blockPatterns.filter((p) => p.locked || (p.userAdded ?? false) || !DEFAULT_BLOCK_PATTERN_PATHS.has(p.path));
+  for (const file of files) {
+    if (isUnsafePath(file.path)) {
+      traversal.push(file.path);
+      continue;
+    }
+    const match = matchBlockPattern(file.path, enforcedPatterns, policy.exemptedRootDotfiles);
+    if (match !== null) {
+      blocked.push(file.path);
+      blockedMatches.push(match);
+      continue;
+    }
+    if (file.added >= 0 && file.deleted >= 0) {
+      totalLines += file.added + file.deleted;
+    }
+  }
+  if (traversal.length > 0) {
+    return {
+      ok: false,
+      reason: "path_traversal",
+      message: `Refusing to apply diff containing path-traversal or absolute paths: ${traversal.join(", ")}`,
+      offendingPaths: traversal
+    };
+  }
+  if (blocked.length > 0) {
+    return {
+      ok: false,
+      reason: "hard_block_path",
+      message: `BUILD_COMMAND output touches locked paths: ${blocked.join(", ")}`,
+      offendingPaths: blocked,
+      matchedBlockPatterns: blockedMatches
     };
   }
   return {
@@ -20459,6 +20526,7 @@ var defaultDeps3 = {
   readState,
   updateStateComment,
   runCheckCommand,
+  runBuildCommand,
   postClaudeCodeActionFixSummary,
   postCodexReviewRequest,
   postStopComment,
@@ -20753,7 +20821,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   if (config.autoReviewBlockPaths !== "") {
     deps.info(`[scope-check] AUTO_REVIEW_BLOCK_PATHS: "${config.autoReviewBlockPaths}"`);
   }
-  const scopeResult = checkScope(changedFiles, scopePolicy);
+  let scopeResult = checkScope(changedFiles, scopePolicy);
   if (!scopeResult.ok) {
     deps.warning(`[post-fix] Scope violation: ${scopeResult.message}`);
     try {
@@ -20771,7 +20839,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   deps.info(`[post-fix] Scope check passed: ${scopeResult.changedFiles} file(s), ${scopeResult.totalLines} line(s).`);
-  const modifiedFiles = changedFiles.map((f) => f.path);
+  let modifiedFiles = changedFiles.map((f) => f.path);
   const trackedModified = trackedChanges.map((f) => f.path);
   deps.info(`[post-fix] Running CHECK_COMMAND: ${inputs.checkCommand}`);
   const checkResult = await deps.runCheckCommand(inputs.checkCommand, trackedModified);
@@ -20794,6 +20862,209 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   deps.info("[post-fix] CHECK_COMMAND passed. Committing changes...");
+  if (config.buildCommand !== "") {
+    let postCheckNumstat;
+    let postCheckUntrackedRaw;
+    try {
+      postCheckNumstat = deps.gitDiffNumstat();
+      postCheckUntrackedRaw = deps.gitListUntracked();
+    } catch (error2) {
+      deps.error(`[post-fix] Failed to re-enumerate working tree after CHECK_COMMAND: ${error2 instanceof Error ? error2.message : String(error2)}`);
+      try {
+        deps.resetWorkingTree();
+      } catch {
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: "Could not enumerate working-tree changes after CHECK_COMMAND."
+      });
+      return;
+    }
+    const postCheckTracked = parseGitNumstat(postCheckNumstat);
+    const postCheckUntracked = postCheckUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((path) => {
+      const content = deps.readWorkingTreeFile(path);
+      if (content === null) {
+        return { path, added: -1, deleted: -1 };
+      }
+      const added = content.length === 0 ? 0 : content.split("\n").length;
+      return { path, added, deleted: 0 };
+    });
+    const postCheckChangedFiles = [...postCheckTracked, ...postCheckUntracked];
+    deps.info(`[post-fix] Running BUILD_COMMAND: ${config.buildCommand}`);
+    const buildResult = await deps.runBuildCommand(config.buildCommand);
+    if (!buildResult.success) {
+      deps.error("[post-fix] BUILD_COMMAND failed. Reverting working tree (incl. untracked).");
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(`[post-fix] Failed to reset working tree after BUILD_COMMAND failure: ${resetError instanceof Error ? resetError.message : String(resetError)}`);
+      }
+      const truncated = buildResult.output.length > 1500 ? buildResult.output.slice(0, 1500) + "\n... (truncated) ..." : buildResult.output;
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND failed: ${config.buildCommand}`,
+          "",
+          "Output:",
+          truncated,
+          "",
+          "Adjust the BUILD_COMMAND Repository variable or fix the underlying build error and re-run with /restart-review."
+        ].join("\n")
+      });
+      return;
+    }
+    let postBuildNumstat;
+    let postBuildUntrackedRaw;
+    try {
+      postBuildNumstat = deps.gitDiffNumstat();
+      postBuildUntrackedRaw = deps.gitListUntracked();
+    } catch (error2) {
+      deps.error(`[post-fix] Failed to re-enumerate working tree after BUILD_COMMAND: ${error2 instanceof Error ? error2.message : String(error2)}`);
+      try {
+        deps.resetWorkingTree();
+      } catch {
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: "Could not enumerate working-tree changes after BUILD_COMMAND."
+      });
+      return;
+    }
+    const postBuildTracked = parseGitNumstat(postBuildNumstat);
+    const postBuildUntracked = postBuildUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((path) => {
+      const content = deps.readWorkingTreeFile(path);
+      if (content === null) {
+        return { path, added: -1, deleted: -1 };
+      }
+      const added = content.length === 0 ? 0 : content.split("\n").length;
+      return { path, added, deleted: 0 };
+    });
+    const postBuildChangedFiles = [
+      ...postBuildTracked,
+      ...postBuildUntracked
+    ];
+    if (postBuildChangedFiles.length === 0) {
+      deps.warning("[post-fix] BUILD_COMMAND erased all working-tree changes after claude's edits passed CHECK_COMMAND. Stopping.");
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND erased all working-tree changes: ${config.buildCommand}`,
+          "",
+          "claude-code-action's edits passed CHECK_COMMAND but the subsequent BUILD_COMMAND left",
+          "the working tree identical to HEAD. If BUILD_COMMAND normalizes or overwrites the edits,",
+          "the loop cannot make progress. Fix or disable BUILD_COMMAND and re-run with /restart-review."
+        ].join("\n")
+      });
+      return;
+    }
+    const changedFilePathSet = new Set(postCheckChangedFiles.map((f) => f.path));
+    const postBuildPathSet = new Set(postBuildChangedFiles.map((f) => f.path));
+    const preBuildFiles = postBuildChangedFiles.filter((f) => changedFilePathSet.has(f.path));
+    const buildDeltaFiles = postBuildChangedFiles.filter((f) => !changedFilePathSet.has(f.path));
+    if (preBuildFiles.length === 0) {
+      deps.warning("[post-fix] BUILD_COMMAND reverted all repaired paths. No pre-build file differs from HEAD after BUILD_COMMAND.");
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(`[post-fix] Failed to reset working tree after BUILD_COMMAND reverted all repairs: ${resetError instanceof Error ? resetError.message : String(resetError)}`);
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND reverted all repair edits: ${config.buildCommand}`,
+          "",
+          "The build step produced artifacts but overwrote every file that claude-code-action",
+          "and CHECK_COMMAND had changed. The resulting commit would not contain the actual repair,",
+          "causing repeated identical Codex findings and wasted iterations.",
+          "Fix or disable BUILD_COMMAND and re-run with /restart-review."
+        ].join("\n")
+      });
+      return;
+    }
+    const preCheckPathSet = new Set(changedFiles.map((f) => f.path));
+    const revertedPaths = postCheckChangedFiles.map((f) => f.path).filter((p) => preCheckPathSet.has(p) && !postBuildPathSet.has(p));
+    if (revertedPaths.length > 0) {
+      deps.warning(`[post-fix] BUILD_COMMAND reverted ${revertedPaths.length} repaired path(s): ${revertedPaths.join(", ")}`);
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(`[post-fix] Failed to reset working tree after BUILD_COMMAND partially reverted repairs: ${resetError instanceof Error ? resetError.message : String(resetError)}`);
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND reverted some repair edits: ${config.buildCommand}`,
+          "",
+          "The following repaired paths were restored to their HEAD state by the build step:",
+          revertedPaths.map((p) => `  - ${p}`).join("\n"),
+          "",
+          "A commit built from the remaining changes would be an incomplete repair, causing",
+          "repeated Codex findings and wasted iterations.",
+          "Fix or disable BUILD_COMMAND and re-run with /restart-review."
+        ].join("\n")
+      });
+      return;
+    }
+    const preBuildScopeResult = checkScope(preBuildFiles, scopePolicy);
+    if (!preBuildScopeResult.ok) {
+      deps.warning(`[post-fix] Scope violation (non-build files) after BUILD_COMMAND: ${preBuildScopeResult.message}`);
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(`[post-fix] Failed to reset working tree after post-build scope violation: ${resetError instanceof Error ? resetError.message : String(resetError)}`);
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "scope_violation",
+        detail: formatScopeViolationDetail(preBuildScopeResult, scopePolicy.maxFiles, scopePolicy.maxLines)
+      });
+      return;
+    }
+    const buildDeltaScopeResult = checkScopeBuildMode(buildDeltaFiles, scopePolicy);
+    if (!buildDeltaScopeResult.ok) {
+      deps.warning(`[post-fix] Scope violation (build artifacts) after BUILD_COMMAND: ${buildDeltaScopeResult.message}`);
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(`[post-fix] Failed to reset working tree after post-build scope violation: ${resetError instanceof Error ? resetError.message : String(resetError)}`);
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "scope_violation",
+        detail: formatScopeViolationDetail(buildDeltaScopeResult, scopePolicy.maxFiles, scopePolicy.maxLines)
+      });
+      return;
+    }
+    scopeResult = {
+      ok: true,
+      changedFiles: postBuildChangedFiles.length,
+      totalLines: preBuildScopeResult.totalLines + buildDeltaScopeResult.totalLines
+    };
+    modifiedFiles = postBuildChangedFiles.map((f) => f.path);
+    deps.info(`[post-fix] BUILD_COMMAND succeeded: ${postBuildChangedFiles.length} file(s), ${scopeResult.totalLines} line(s) staged.`);
+  }
   try {
     deps.stagePaths(modifiedFiles);
   } catch (error2) {

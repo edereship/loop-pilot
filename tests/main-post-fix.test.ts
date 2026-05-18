@@ -13,6 +13,7 @@ const baseConfig: Config = {
   maxReviewIterations: 20,
   debounceSeconds: 0,
   checkCommand: "npm run check",
+  buildCommand: "",
   codexBotLogin: "chatgpt-codex-connector[bot]",
   stabilizeIntervalSeconds: 1,
   stabilizeCount: 1,
@@ -92,6 +93,7 @@ function makeDeps(
     readState: vi.fn().mockResolvedValue(readResult),
     updateStateComment: vi.fn().mockResolvedValue({ updatedAt: "2026-05-14T12:30:00Z" }),
     runCheckCommand: vi.fn().mockResolvedValue({ success: true, output: "ok" }),
+    runBuildCommand: vi.fn().mockResolvedValue({ success: true, output: "" }),
     postClaudeCodeActionFixSummary: vi.fn().mockResolvedValue(11),
     postCodexReviewRequest: vi.fn().mockResolvedValue(22),
     postStopComment: vi.fn().mockResolvedValue(33),
@@ -777,5 +779,479 @@ describe("runPostFix", () => {
     const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
     const lastState = calls[calls.length - 1][3];
     expect(lastState.fixingStartedAt).toBeNull();
+  });
+
+  // TY-281: BUILD_COMMAND integration. Four cases cover the configurable
+  // post-CHECK_COMMAND build step that keeps committed build artifacts in
+  // sync with src/ for repos that ship `dist/`.
+
+  it("TY-281: skips BUILD_COMMAND entirely when buildCommand is empty", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState(),
+    });
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.runBuildCommand).not.toHaveBeenCalled();
+    // Behavior matches the clean-run case: stage claude's two files, commit, push.
+    expect(deps.stagedPaths).toEqual([["src/foo.ts", "tests/foo.test.ts"]]);
+    expect(deps.commitMessages.length).toBe(1);
+  });
+
+  it("TY-281: runs BUILD_COMMAND after CHECK_COMMAND and includes generated artifacts in the commit", async () => {
+    const numstatMock = vi.fn();
+    numstatMock
+      // Initial enumeration (claude's edits only).
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n")
+      // Post-CHECK enumeration (same — CHECK_COMMAND did not add new files).
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n")
+      // Post-build enumeration (claude's edits + regenerated dist).
+      .mockReturnValueOnce(
+        "5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n200\t150\tdist/post-fix/index.cjs\n",
+      );
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+      },
+    );
+
+    // TY-281: post-build re-check uses `checkScopeBuildMode`, which skips
+    // unlocked default block patterns (including `dist/`). The user no
+    // longer needs `AUTO_REVIEW_BLOCK_PATHS=!dist/` just to commit build
+    // artifacts under `dist/`.
+    const configWithBuild = {
+      ...baseConfig,
+      buildCommand: "npm run bundle",
+    };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    expect(deps.stagedPaths).toEqual([
+      ["src/foo.ts", "tests/foo.test.ts", "dist/post-fix/index.cjs"],
+    ]);
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.commitMessages[0]).toContain("Files: 3, lines:");
+    expect(deps.pushCalls.length).toBe(1);
+  });
+
+  it("TY-281: BUILD_COMMAND that produces no new changes leaves the staging set unchanged", async () => {
+    // Both enumeration calls return the same numstat — `npm run bundle` ran
+    // but produced no diff (dist/ was already in sync with src/).
+    const numstatMock = vi
+      .fn()
+      .mockReturnValue("5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+      },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    expect(deps.stagedPaths).toEqual([["src/foo.ts", "tests/foo.test.ts"]]);
+    expect(deps.commitMessages.length).toBe(1);
+  });
+
+  it("TY-281: BUILD_COMMAND that erases all changes stops with action_failure", async () => {
+    // The first numstat call returns claude's edits; the second (post-CHECK)
+    // returns the same — CHECK_COMMAND made no additional changes; the third
+    // (post-BUILD) returns empty — the build script erased everything back to
+    // HEAD. Re-queuing would allow the loop to spin indefinitely because
+    // loop-detection accounting is never advanced. Instead the run must stop
+    // so the operator is notified.
+    const numstatMock = vi
+      .fn()
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n")
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n")
+      .mockReturnValueOnce("");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+      },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    // No commit or push — nothing to stage.
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    // Stopped with action_failure; failureExit rolls back iteration accounting.
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "action_failure",
+        iterationCount: 1,
+        findingsHashHistory: [{ iteration: 1, hash: "aaaaaaaaaaaaaaaa" }],
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+    // No Codex review re-requested — the loop stops here.
+    expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+    // Stop comment posted.
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "action_failure",
+      1234,
+      0,
+      expect.stringContaining("BUILD_COMMAND erased all working-tree changes"),
+      "github-token",
+    );
+  });
+
+  it("TY-281: BUILD_COMMAND non-zero exit resets the working tree and stops with action_failure", async () => {
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        runBuildCommand: vi.fn().mockResolvedValue({
+          success: false,
+          output: "esbuild error: Cannot resolve './missing'",
+        }),
+      },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    // Build failure ⇒ working tree reset, no commit, no push.
+    expect(deps.resetCalls).toBe(1);
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "action_failure",
+        // Iteration + findings hash were claimed by pre-fix; since no commit
+        // landed, they must roll back so a soft /restart-review with the
+        // same Codex findings doesn't loop-detect immediately.
+        iterationCount: 1,
+        findingsHashHistory: [{ iteration: 1, hash: "aaaaaaaaaaaaaaaa" }],
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "action_failure",
+      1234,
+      0,
+      expect.stringContaining("BUILD_COMMAND failed"),
+      "github-token",
+    );
+  });
+
+  it("TY-281: CHECK_COMMAND-modified files use strict scope, not relaxed build-mode scope (Finding 1)", async () => {
+    // Claude only changes src/foo.ts (passes initial scope check).
+    // CHECK_COMMAND also modifies package.json (a default-blocked path).
+    // Without the post-CHECK re-enumeration fix, package.json would be
+    // classified as a buildDeltaFile and pass the relaxed checkScopeBuildMode.
+    // With the fix, package.json is in postCheckChangedFiles → preBuildFiles →
+    // strict checkScope → scope_violation.
+    const numstatMock = vi
+      .fn()
+      // Initial enumeration: only Claude's edit.
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n")
+      // Post-CHECK enumeration: CHECK_COMMAND also touched package.json.
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t1\tpackage.json\n")
+      // Post-BUILD enumeration: same + dist artifact.
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t1\tpackage.json\n200\t150\tdist/index.cjs\n");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      { gitDiffNumstat: numstatMock },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    // package.json is in preBuildFiles → strict checkScope → scope_violation.
+    expect(deps.resetCalls).toBe(1);
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
+      "github-token",
+      expect.any(Object),
+    );
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "scope_violation",
+      1234,
+      0,
+      expect.stringContaining("package.json"),
+      "github-token",
+    );
+  });
+
+  it("TY-281: BUILD_COMMAND that reverts all repairs but produces an artifact stops with action_failure (Finding 2)", async () => {
+    // Claude changes src/foo.ts; CHECK_COMMAND passes without further changes.
+    // BUILD_COMMAND reverts src/foo.ts (restores it to HEAD) but creates
+    // dist/artifact.js. postBuildChangedFiles.length === 1 > 0, so the
+    // existing all-erased guard does not fire. preBuildFiles is empty because
+    // src/foo.ts no longer differs from HEAD — the new guard must catch this.
+    const numstatMock = vi
+      .fn()
+      // Initial enumeration: Claude's edit.
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n")
+      // Post-CHECK enumeration: same.
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n")
+      // Post-BUILD enumeration: BUILD_COMMAND reverted src/foo.ts and produced dist artifact.
+      .mockReturnValueOnce("200\t150\tdist/artifact.js\n");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      { gitDiffNumstat: numstatMock },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    // No commit or push — the repair was reverted.
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.resetCalls).toBe(1);
+    // Stopped with action_failure; failureExit rolls back iteration accounting.
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "action_failure",
+        iterationCount: 1,
+        findingsHashHistory: [{ iteration: 1, hash: "aaaaaaaaaaaaaaaa" }],
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "action_failure",
+      1234,
+      0,
+      expect.stringContaining("BUILD_COMMAND reverted all repair edits"),
+      "github-token",
+    );
+  });
+
+  it("TY-281: BUILD_COMMAND that reverts a subset of repairs stops with action_failure (Finding 3)", async () => {
+    // Claude changes src/fix1.ts and src/fix2.ts; CHECK_COMMAND passes without
+    // further changes. BUILD_COMMAND keeps src/fix1.ts but reverts src/fix2.ts
+    // (restores it to HEAD) and produces dist/artifact.js.
+    // postBuildChangedFiles = [src/fix1.ts, dist/artifact.js] so:
+    //   - postBuildChangedFiles.length > 0 → all-erased guard does not fire
+    //   - preBuildFiles = [src/fix1.ts] (non-empty) → all-reverted guard does not fire
+    //   - revertedPaths = [src/fix2.ts] → new partial-revert guard must catch this
+    const numstatMock = vi
+      .fn()
+      // Initial enumeration: both of Claude's edits.
+      .mockReturnValueOnce("5\t2\tsrc/fix1.ts\n3\t0\tsrc/fix2.ts\n")
+      // Post-CHECK enumeration: same.
+      .mockReturnValueOnce("5\t2\tsrc/fix1.ts\n3\t0\tsrc/fix2.ts\n")
+      // Post-BUILD enumeration: fix2.ts reverted, dist artifact added.
+      .mockReturnValueOnce("5\t2\tsrc/fix1.ts\n200\t150\tdist/artifact.js\n");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      { gitDiffNumstat: numstatMock },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    // No commit or push — the partial repair must not land.
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.resetCalls).toBe(1);
+    // Stopped with action_failure; failureExit rolls back iteration accounting.
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "action_failure",
+        iterationCount: 1,
+        findingsHashHistory: [{ iteration: 1, hash: "aaaaaaaaaaaaaaaa" }],
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "action_failure",
+      1234,
+      0,
+      expect.stringContaining("BUILD_COMMAND reverted some repair edits"),
+      "github-token",
+    );
+  });
+
+  it("TY-281: CHECK_COMMAND scratch files cleaned up by BUILD_COMMAND do not trigger action_failure", async () => {
+    // Claude changes src/fix.ts. CHECK_COMMAND passes and creates a scratch
+    // file (tmp/check-report.json) as an untracked side-effect. BUILD_COMMAND
+    // removes the scratch file (does not restore it) while producing the real
+    // dist artifact. Without the fix, the scratch file disappearing from
+    // postBuildPathSet would trigger the partial-revert guard even though
+    // src/fix.ts (the real repair) is intact in post-BUILD.
+    const numstatMock = vi
+      .fn()
+      // Initial enumeration: Claude's edit.
+      .mockReturnValueOnce("5\t2\tsrc/fix.ts\n")
+      // Post-CHECK enumeration: same (CHECK_COMMAND did not modify tracked files).
+      .mockReturnValueOnce("5\t2\tsrc/fix.ts\n")
+      // Post-BUILD enumeration: repair intact + dist artifact.
+      .mockReturnValueOnce("5\t2\tsrc/fix.ts\n200\t100\tdist/bundle.cjs\n");
+    const untrackedMock = vi
+      .fn()
+      // Initial enumeration: no untracked files.
+      .mockReturnValueOnce("")
+      // Post-CHECK enumeration: CHECK_COMMAND wrote a scratch report.
+      .mockReturnValueOnce("tmp/check-report.json\n")
+      // Post-BUILD enumeration: BUILD_COMMAND cleaned up the scratch file.
+      .mockReturnValueOnce("");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+        gitListUntracked: untrackedMock,
+      },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    // Scratch-file cleanup by BUILD_COMMAND is not a revert of the repair.
+    // The run must succeed: commit and push happen, no reset.
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    expect(deps.resetCalls).toBe(0);
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.pushCalls.length).toBe(1);
+  });
+
+  it("TY-281: post-build scope check rejects build artifacts that land in blocked paths", async () => {
+    // A misconfigured BUILD_COMMAND that writes into the locked `.github/`
+    // tree must trip the post-build scope re-check rather than slip into
+    // the commit. `.github/` is locked (TY-271) so even `!.github/...` is
+    // ignored — there is no override path.
+    const numstatMock = vi
+      .fn()
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n")
+      // Post-CHECK enumeration (same — CHECK_COMMAND did not add new files).
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n")
+      .mockReturnValueOnce(
+        "5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n10\t0\t.github/workflows/leaked.yml\n",
+      );
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+      },
+    );
+
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle" };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    // Build "succeeded" (non-zero exit was not the trigger) but produced a
+    // scope-violating artifact → reset, no commit, scope_violation stop.
+    expect(deps.resetCalls).toBe(1);
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "scope_violation",
+      }),
+      "github-token",
+      expect.any(Object),
+    );
   });
 });

@@ -13,9 +13,11 @@ import {
 import { createLockedStateUpdater } from "./state-comment-locker.js";
 import * as git from "./git.js";
 import { runCheckCommand as defaultRunCheckCommand } from "./check-runner.js";
+import { runBuildCommand as defaultRunBuildCommand } from "./build-runner.js";
 import {
   parseGitNumstat,
   checkScope,
+  checkScopeBuildMode,
   buildScopePolicy,
   parseBlockPathsSpec,
   type ChangedFile,
@@ -64,6 +66,13 @@ export interface PostFixDeps {
   readState: typeof defaultReadState;
   updateStateComment: typeof defaultUpdateStateComment;
   runCheckCommand: typeof defaultRunCheckCommand;
+  /**
+   * Optional build step (TY-281). Invoked after CHECK_COMMAND succeeds and
+   * before the auto-fix commit is staged. Skipped entirely when
+   * `config.buildCommand` is empty so the post-fix path remains a no-op for
+   * repos that do not commit build artifacts.
+   */
+  runBuildCommand: typeof defaultRunBuildCommand;
   postClaudeCodeActionFixSummary: typeof defaultPostClaudeCodeActionFixSummary;
   postCodexReviewRequest: typeof defaultPostCodexReviewRequest;
   postStopComment: typeof defaultPostStopComment;
@@ -113,6 +122,7 @@ const defaultDeps: PostFixDeps = {
   readState: defaultReadState,
   updateStateComment: defaultUpdateStateComment,
   runCheckCommand: defaultRunCheckCommand,
+  runBuildCommand: defaultRunBuildCommand,
   postClaudeCodeActionFixSummary: defaultPostClaudeCodeActionFixSummary,
   postCodexReviewRequest: defaultPostCodexReviewRequest,
   postStopComment: defaultPostStopComment,
@@ -635,7 +645,7 @@ export async function runPostFix(
     );
   }
 
-  const scopeResult: ScopeCheckResult = checkScope(changedFiles, scopePolicy);
+  let scopeResult: ScopeCheckResult = checkScope(changedFiles, scopePolicy);
   if (!scopeResult.ok) {
     deps.warning(`[post-fix] Scope violation: ${scopeResult.message}`);
     try {
@@ -664,7 +674,9 @@ export async function runPostFix(
   // -- <path>`, which errors out for paths git has never seen (untracked
   // files). Untracked files are reverted below via resetWorkingTree on the
   // failure path.
-  const modifiedFiles = changedFiles.map((f) => f.path);
+  // `modifiedFiles` may be replaced after BUILD_COMMAND when build artifacts
+  // expand the staging set (TY-281), so it is `let` rather than `const`.
+  let modifiedFiles = changedFiles.map((f) => f.path);
   const trackedModified = trackedChanges.map((f) => f.path);
   deps.info(`[post-fix] Running CHECK_COMMAND: ${inputs.checkCommand}`);
   const checkResult = await deps.runCheckCommand(inputs.checkCommand, trackedModified);
@@ -694,6 +706,317 @@ export async function runPostFix(
   }
 
   deps.info("[post-fix] CHECK_COMMAND passed. Committing changes...");
+
+  // ─── BUILD_COMMAND (TY-281) ──────────────────────────────────────────────
+  // For repos that commit build artifacts (e.g. this repo's `dist/`), run
+  // a configurable build step so the auto-fix commit cannot drift out of
+  // sync with `src/`. Empty `buildCommand` skips this block, preserving
+  // prior behavior for repos without committed build outputs.
+  if (config.buildCommand !== "") {
+    // Re-enumerate the working tree after CHECK_COMMAND before running BUILD_COMMAND.
+    // Files written or modified by CHECK_COMMAND (e.g. via --fix or autoformat) are
+    // part of the repair and must be classified as pre-build edits, not as build
+    // artifacts, so they receive strict scope validation rather than the relaxed
+    // checkScopeBuildMode rules that only enforce locked paths.
+    let postCheckNumstat: string;
+    let postCheckUntrackedRaw: string;
+    try {
+      postCheckNumstat = deps.gitDiffNumstat();
+      postCheckUntrackedRaw = deps.gitListUntracked();
+    } catch (error) {
+      deps.error(
+        `[post-fix] Failed to re-enumerate working tree after CHECK_COMMAND: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch {
+        // best-effort; outer failureExit still records the failure
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: "Could not enumerate working-tree changes after CHECK_COMMAND.",
+      });
+      return;
+    }
+    const postCheckTracked: ChangedFile[] = parseGitNumstat(postCheckNumstat);
+    const postCheckUntracked: ChangedFile[] = postCheckUntrackedRaw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((path) => {
+        const content = deps.readWorkingTreeFile(path);
+        if (content === null) {
+          return { path, added: -1, deleted: -1 };
+        }
+        const added = content.length === 0 ? 0 : content.split("\n").length;
+        return { path, added, deleted: 0 };
+      });
+    const postCheckChangedFiles: ChangedFile[] = [...postCheckTracked, ...postCheckUntracked];
+
+    deps.info(`[post-fix] Running BUILD_COMMAND: ${config.buildCommand}`);
+    const buildResult = await deps.runBuildCommand(config.buildCommand);
+    if (!buildResult.success) {
+      deps.error(
+        "[post-fix] BUILD_COMMAND failed. Reverting working tree (incl. untracked).",
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(
+          `[post-fix] Failed to reset working tree after BUILD_COMMAND failure: ${resetError instanceof Error ? resetError.message : String(resetError)}`,
+        );
+      }
+      const truncated = buildResult.output.length > 1500
+        ? buildResult.output.slice(0, 1500) + "\n... (truncated) ..."
+        : buildResult.output;
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND failed: ${config.buildCommand}`,
+          "",
+          "Output:",
+          truncated,
+          "",
+          "Adjust the BUILD_COMMAND Repository variable or fix the underlying build error and re-run with /restart-review.",
+        ].join("\n"),
+      });
+      return;
+    }
+
+    // Re-enumerate working tree changes after BUILD_COMMAND. Build artifacts
+    // (e.g. dist/*.cjs) typically appear in `git diff --numstat HEAD` as
+    // tracked-edits, but a brand-new artifact path would show up as untracked.
+    let postBuildNumstat: string;
+    let postBuildUntrackedRaw: string;
+    try {
+      postBuildNumstat = deps.gitDiffNumstat();
+      postBuildUntrackedRaw = deps.gitListUntracked();
+    } catch (error) {
+      deps.error(
+        `[post-fix] Failed to re-enumerate working tree after BUILD_COMMAND: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch {
+        // best-effort; outer failureExit still records the failure
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: "Could not enumerate working-tree changes after BUILD_COMMAND.",
+      });
+      return;
+    }
+    const postBuildTracked: ChangedFile[] = parseGitNumstat(postBuildNumstat);
+    const postBuildUntracked: ChangedFile[] = postBuildUntrackedRaw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((path) => {
+        const content = deps.readWorkingTreeFile(path);
+        if (content === null) {
+          return { path, added: -1, deleted: -1 };
+        }
+        const added = content.length === 0 ? 0 : content.split("\n").length;
+        return { path, added, deleted: 0 };
+      });
+    const postBuildChangedFiles: ChangedFile[] = [
+      ...postBuildTracked,
+      ...postBuildUntracked,
+    ];
+
+    // BUILD_COMMAND succeeded but left the working tree identical to HEAD.
+    // claude-code-action's edits were accepted by CHECK_COMMAND but erased by
+    // the build step, which means BUILD_COMMAND is destructively overwriting
+    // fixes rather than layering build artifacts on top of them. Re-queuing
+    // Codex review with rolled-back accounting would allow the loop to spin
+    // indefinitely because loop-detection and max-iteration safeguards never
+    // advance. Stop with action_failure so the operator is notified.
+    if (postBuildChangedFiles.length === 0) {
+      deps.warning(
+        "[post-fix] BUILD_COMMAND erased all working-tree changes after claude's edits passed CHECK_COMMAND. Stopping.",
+      );
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND erased all working-tree changes: ${config.buildCommand}`,
+          "",
+          "claude-code-action's edits passed CHECK_COMMAND but the subsequent BUILD_COMMAND left",
+          "the working tree identical to HEAD. If BUILD_COMMAND normalizes or overwrites the edits,",
+          "the loop cannot make progress. Fix or disable BUILD_COMMAND and re-run with /restart-review.",
+        ].join("\n"),
+      });
+      return;
+    }
+
+    // Re-apply scope checks on the post-build working tree. Files that were
+    // already in postCheckChangedFiles (claude's edits plus any files written
+    // or modified by CHECK_COMMAND) receive the full strict checkScope so that
+    // file/line budgets, binary rejection, and unlocked block patterns still
+    // apply to non-artifact changes. Only net-new files produced by
+    // BUILD_COMMAND (the "build delta") use the relaxed checkScopeBuildMode,
+    // which skips size budgets and default-blocked paths such as dist/.
+    // Locked paths (`.github/`) and path traversal are still rejected by
+    // both checks — those are security boundaries the build step must not breach.
+    const changedFilePathSet = new Set(postCheckChangedFiles.map((f) => f.path));
+    const postBuildPathSet = new Set(postBuildChangedFiles.map((f) => f.path));
+    const preBuildFiles = postBuildChangedFiles.filter((f) => changedFilePathSet.has(f.path));
+    const buildDeltaFiles = postBuildChangedFiles.filter((f) => !changedFilePathSet.has(f.path));
+
+    // Guard: BUILD_COMMAND reverted all pre-build repairs but produced some
+    // artifact. Without this check, preBuildFiles would be empty, checkScope([])
+    // would succeed, and the commit would contain only artifacts with none of the
+    // actual repair edits — causing repeated identical Codex findings and wasted
+    // iterations.
+    if (preBuildFiles.length === 0) {
+      deps.warning(
+        "[post-fix] BUILD_COMMAND reverted all repaired paths. No pre-build file differs from HEAD after BUILD_COMMAND.",
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(
+          `[post-fix] Failed to reset working tree after BUILD_COMMAND reverted all repairs: ${resetError instanceof Error ? resetError.message : String(resetError)}`,
+        );
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND reverted all repair edits: ${config.buildCommand}`,
+          "",
+          "The build step produced artifacts but overwrote every file that claude-code-action",
+          "and CHECK_COMMAND had changed. The resulting commit would not contain the actual repair,",
+          "causing repeated identical Codex findings and wasted iterations.",
+          "Fix or disable BUILD_COMMAND and re-run with /restart-review.",
+        ].join("\n"),
+      });
+      return;
+    }
+
+    // Guard: BUILD_COMMAND reverted a subset of pre-build repairs. preBuildFiles
+    // is non-empty (the all-reverted guard above did not fire) but some paths from
+    // postCheckChangedFiles are absent from postBuildChangedFiles — the build step
+    // restored those files to HEAD. Committing only the surviving paths would
+    // produce an incomplete repair that re-triggers the same Codex findings.
+    //
+    // Only paths that were already in the pre-CHECK snapshot (changedFiles) are
+    // considered repair paths. Files that first appeared after CHECK_COMMAND
+    // (e.g. temporary scratch files or reports created as a CHECK_COMMAND
+    // side-effect) are excluded: BUILD_COMMAND cleaning those up is not a revert
+    // of the actual repair.
+    const preCheckPathSet = new Set(changedFiles.map((f) => f.path));
+    const revertedPaths = postCheckChangedFiles
+      .map((f) => f.path)
+      .filter((p) => preCheckPathSet.has(p) && !postBuildPathSet.has(p));
+    if (revertedPaths.length > 0) {
+      deps.warning(
+        `[post-fix] BUILD_COMMAND reverted ${revertedPaths.length} repaired path(s): ${revertedPaths.join(", ")}`,
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(
+          `[post-fix] Failed to reset working tree after BUILD_COMMAND partially reverted repairs: ${resetError instanceof Error ? resetError.message : String(resetError)}`,
+        );
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "action_failure",
+        detail: [
+          `BUILD_COMMAND reverted some repair edits: ${config.buildCommand}`,
+          "",
+          "The following repaired paths were restored to their HEAD state by the build step:",
+          revertedPaths.map((p) => `  - ${p}`).join("\n"),
+          "",
+          "A commit built from the remaining changes would be an incomplete repair, causing",
+          "repeated Codex findings and wasted iterations.",
+          "Fix or disable BUILD_COMMAND and re-run with /restart-review.",
+        ].join("\n"),
+      });
+      return;
+    }
+
+    const preBuildScopeResult: ScopeCheckResult = checkScope(preBuildFiles, scopePolicy);
+    if (!preBuildScopeResult.ok) {
+      deps.warning(
+        `[post-fix] Scope violation (non-build files) after BUILD_COMMAND: ${preBuildScopeResult.message}`,
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(
+          `[post-fix] Failed to reset working tree after post-build scope violation: ${resetError instanceof Error ? resetError.message : String(resetError)}`,
+        );
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "scope_violation",
+        detail: formatScopeViolationDetail(
+          preBuildScopeResult,
+          scopePolicy.maxFiles,
+          scopePolicy.maxLines,
+        ),
+      });
+      return;
+    }
+
+    const buildDeltaScopeResult: ScopeCheckResult = checkScopeBuildMode(
+      buildDeltaFiles,
+      scopePolicy,
+    );
+    if (!buildDeltaScopeResult.ok) {
+      deps.warning(
+        `[post-fix] Scope violation (build artifacts) after BUILD_COMMAND: ${buildDeltaScopeResult.message}`,
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(
+          `[post-fix] Failed to reset working tree after post-build scope violation: ${resetError instanceof Error ? resetError.message : String(resetError)}`,
+        );
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "scope_violation",
+        detail: formatScopeViolationDetail(
+          buildDeltaScopeResult,
+          scopePolicy.maxFiles,
+          scopePolicy.maxLines,
+        ),
+      });
+      return;
+    }
+
+    scopeResult = {
+      ok: true,
+      changedFiles: postBuildChangedFiles.length,
+      totalLines: preBuildScopeResult.totalLines + buildDeltaScopeResult.totalLines,
+    };
+    modifiedFiles = postBuildChangedFiles.map((f) => f.path);
+    deps.info(
+      `[post-fix] BUILD_COMMAND succeeded: ${postBuildChangedFiles.length} file(s), ${scopeResult.totalLines} line(s) staged.`,
+    );
+  }
 
   // Stage every file that the scope check accepted, then commit + push.
   try {

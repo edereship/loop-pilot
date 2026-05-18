@@ -79,6 +79,17 @@ describe("Workflow B trigger guard", () => {
     expect(postFixAction).toContain("auto-review-push-token:");
   });
 
+  it("TY-281: wires build-command from vars.BUILD_COMMAND through loop → post-fix", () => {
+    // Template workflow reads the repo variable (empty default keeps the
+    // step a no-op for downstream repos that do not commit build artifacts).
+    expect(loopWorkflow).toContain("build-command: ${{ vars.BUILD_COMMAND || '' }}");
+    // Composite action declares the input and forwards it to post-fix.
+    expect(loopAction).toContain("build-command:");
+    expect(loopAction).toContain("build-command: ${{ inputs.build-command }}");
+    // Post-fix sub-action declares the input.
+    expect(postFixAction).toContain("build-command:");
+  });
+
   it("does not compare CODEX_BOT_LOGIN unless the variable is non-empty", () => {
     expect(loopWorkflow).toContain("vars.CODEX_BOT_LOGIN != ''");
     expect(loopWorkflow).toContain("github.event.comment.user.login == vars.CODEX_BOT_LOGIN");

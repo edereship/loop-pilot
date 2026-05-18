@@ -47,6 +47,14 @@ export interface BlockPattern {
    * Only `.github/` is locked by default (CI-rewrite escape hatch).
    */
   readonly locked: boolean;
+  /**
+   * When true, the pattern was explicitly added by the operator via
+   * `AUTO_REVIEW_BLOCK_PATHS` (or legacy `additionalHardBlockPrefixes`).
+   * `checkScopeBuildMode` enforces user-added patterns even when their path
+   * matches a default-unlocked entry, so operators can re-block paths like
+   * `dist/` or `package.json` in build mode.
+   */
+  readonly userAdded?: boolean;
 }
 
 export interface ScopeCheckPolicy {
@@ -87,6 +95,10 @@ export const DEFAULT_BLOCK_PATTERNS: readonly BlockPattern[] = [
   { path: "package-lock.json", isDirectory: false, locked: false },
   { path: "tsconfig.json", isDirectory: false, locked: false },
 ];
+
+// Fast lookup set for the built-in defaults — used by checkScopeBuildMode to
+// distinguish default-unlocked patterns (relax) from operator-added entries (enforce).
+const DEFAULT_BLOCK_PATTERN_PATHS = new Set(DEFAULT_BLOCK_PATTERNS.map((p) => p.path));
 
 /**
  * Matches any single-segment root dotfile (`.gitignore`, `.editorconfig`,
@@ -151,12 +163,6 @@ export function parseBlockPathsSpec(raw: string): BlockPathsSpec {
     const path = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
     if (path.length === 0) continue;
 
-    const pattern: BlockPattern = {
-      path,
-      isDirectory: path.endsWith("/"),
-      locked: false,
-    };
-
     if (isRemoval) {
       // `.github/` is the only locked default; refuse to remove it (or any
       // path under it, since `.github/workflows/foo.yml` would otherwise
@@ -165,9 +171,9 @@ export function parseBlockPathsSpec(raw: string): BlockPathsSpec {
         spec.ignoredRemovals.push(path);
         continue;
       }
-      spec.removals.push(pattern);
+      spec.removals.push({ path, isDirectory: path.endsWith("/"), locked: false });
     } else {
-      spec.additions.push(pattern);
+      spec.additions.push({ path, isDirectory: path.endsWith("/"), locked: false, userAdded: true });
     }
   }
 
@@ -201,6 +207,7 @@ function legacyAdditionsToPatterns(values: readonly string[]): BlockPattern[] {
       path,
       isDirectory: path.endsWith("/"),
       locked: false,
+      userAdded: true,
     }));
 }
 
@@ -404,6 +411,105 @@ export function checkScope(
       reason: "too_many_lines",
       message: `Diff changes ${totalLines} lines (limit ${policy.maxLines})`,
       offendingPaths: files.map((f) => f.path),
+    };
+  }
+
+  return {
+    ok: true,
+    changedFiles: files.length,
+    totalLines,
+  };
+}
+
+/**
+ * Build-mode variant of `checkScope` (TY-281). Used by post-fix to validate
+ * the FULL post-build diff (claude-code-action's edits plus `BUILD_COMMAND`
+ * output) with relaxed rules so a repo opting into a build step does not
+ * also have to opt every artifact path out of the default block list.
+ *
+ * Skipped vs `checkScope`:
+ *   - Unlocked block patterns (default-blocked but un-lockable, e.g. `dist/`,
+ *     `package.json`). The user explicitly chose `BUILD_COMMAND` to write to
+ *     such paths; requiring a parallel `AUTO_REVIEW_BLOCK_PATHS=!dist/` is
+ *     friction without benefit.
+ *   - File count / line count budgets. Build artifacts are typically large
+ *     and deterministic, and the pre-build `checkScope` already constrained
+ *     claude-code-action's intent.
+ *   - Binary check. Build output may legitimately be binary (WASM, generated
+ *     assets, sourcemaps near the binary boundary).
+ *
+ * Still rejected:
+ *   - Path traversal / absolute paths. These indicate a malformed numstat,
+ *     never a legitimate build output.
+ *   - **Locked** block patterns (`.github/`). The lock exists so the agent
+ *     cannot disable the scope check itself by rewriting workflow YAML;
+ *     letting `BUILD_COMMAND` write there would defeat that protection.
+ *   - **Operator-added custom patterns** (entries in `AUTO_REVIEW_BLOCK_PATHS`
+ *     that are not part of `DEFAULT_BLOCK_PATTERNS`, e.g. `secrets/`). Build
+ *     mode relaxes only the built-in defaults; explicit policy additions must
+ *     be honoured so the operator's scope policy is not bypassed.
+ */
+export function checkScopeBuildMode(
+  files: readonly ChangedFile[],
+  policy: ScopeCheckPolicy = DEFAULT_SCOPE_POLICY,
+): ScopeCheckResult {
+  const traversal: string[] = [];
+  const blocked: string[] = [];
+  const blockedMatches: BlockPattern[] = [];
+  let totalLines = 0;
+
+  // Only enforce locked patterns, operator-added custom entries, and default
+  // paths that the operator explicitly re-blocked via AUTO_REVIEW_BLOCK_PATHS.
+  // Default-list unlocked patterns (e.g. dist/, package.json) are relaxed so
+  // BUILD_COMMAND output does not need separate exemptions for expected artifacts.
+  // userAdded patterns are enforced even when their path matches a default so
+  // operators can re-block a default (e.g. AUTO_REVIEW_BLOCK_PATHS=dist/) and
+  // have that policy respected in build mode.
+  // Checking against only the enforced set ensures that a more-specific custom
+  // block nested under a relaxed default (e.g. dist/secrets/ inside dist/) is
+  // still matched and enforced instead of being shadowed by the default.
+  const enforcedPatterns = policy.blockPatterns.filter(
+    (p) => p.locked || (p.userAdded ?? false) || !DEFAULT_BLOCK_PATTERN_PATHS.has(p.path),
+  );
+
+  for (const file of files) {
+    if (isUnsafePath(file.path)) {
+      traversal.push(file.path);
+      continue;
+    }
+
+    const match = matchBlockPattern(
+      file.path,
+      enforcedPatterns,
+      policy.exemptedRootDotfiles,
+    );
+    if (match !== null) {
+      blocked.push(file.path);
+      blockedMatches.push(match);
+      continue;
+    }
+
+    if (file.added >= 0 && file.deleted >= 0) {
+      totalLines += file.added + file.deleted;
+    }
+  }
+
+  if (traversal.length > 0) {
+    return {
+      ok: false,
+      reason: "path_traversal",
+      message: `Refusing to apply diff containing path-traversal or absolute paths: ${traversal.join(", ")}`,
+      offendingPaths: traversal,
+    };
+  }
+
+  if (blocked.length > 0) {
+    return {
+      ok: false,
+      reason: "hard_block_path",
+      message: `BUILD_COMMAND output touches locked paths: ${blocked.join(", ")}`,
+      offendingPaths: blocked,
+      matchedBlockPatterns: blockedMatches,
     };
   }
 
