@@ -311,6 +311,34 @@ describe("applyRestartToState", () => {
     });
   });
 
+  it("soft-restarts from `action_no_op` preserving the rolled-back history (TY-284)", () => {
+    // `failureExit` in post-fix already rolled iterationCount /
+    // findingsHashHistory back to the pre-Phase-3 baseline when stopping with
+    // action_no_op, so soft restart just flips status back to waiting_codex
+    // and replays the same Codex findings with the same iteration budget.
+    const state = makeState({
+      status: "stopped",
+      stopReason: "action_no_op",
+      iterationCount: 1,
+      findingsHashHistory: [{ iteration: 1, hash: "hash-a" }],
+      lastFindingsHash: "hash-a",
+    });
+    const result = applyRestartToState(state, "soft", 12345);
+    if (!result.ok) throw new Error("expected soft restart to succeed");
+    expect(result.nextState).toMatchObject({
+      status: "waiting_codex",
+      // TY-258: stopReason is preserved across restart; post-fix clears it
+      // on the next clean commit.
+      stopReason: "action_no_op",
+      iterationCount: 1,
+      lastFindingsHash: "hash-a",
+      lastCodexRequestCommentId: 12345,
+    });
+    expect(result.nextState.findingsHashHistory).toEqual([
+      { iteration: 1, hash: "hash-a" },
+    ]);
+  });
+
   it("rejects soft restart from `secret_leak_suspected` (TY-274 #1 — requires --hard)", () => {
     const state = makeState({
       status: "stopped",

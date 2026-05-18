@@ -20209,7 +20209,8 @@ var STOP_REASON_LABELS = {
   max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
   codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
   codex_request_failed: "Re-posting @codex review failed; auto-review stopped to avoid silent deadlock",
-  secret_leak_suspected: "Auto-fix produced output matching a high-confidence secret pattern (TY-274)"
+  secret_leak_suspected: "Auto-fix produced output matching a high-confidence secret pattern (TY-274)",
+  action_no_op: "claude-code-action produced no file changes for the given findings"
 };
 
 // dist/comment-poster.js

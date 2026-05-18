@@ -574,96 +574,29 @@ export async function runPostFix(
   );
 
   if (changedFiles.length === 0) {
-    deps.warning(
-      "[post-fix] claude-code-action made no file changes. Treating as no-op success and re-requesting Codex review.",
+    // TY-284: claude-code-action returning success without any file edits is
+    // treated as a stop condition (`action_no_op`) rather than a soft retry.
+    // The earlier behavior (TY-273 #B3) rolled back Phase 3 bookkeeping and
+    // re-posted `@codex review` to give the action a second chance, but the
+    // resulting loop was indistinguishable from a normal iteration in PR
+    // history and silently consumed model budget. The user spec is "any
+    // error stops the loop; `/restart-review` is the only resumption" — the
+    // Phase 3 rollback is folded into `failureExit` so soft restart picks up
+    // where pre-fix left off, and probabilistic empty runs that previously
+    // benefited from the auto-retry are now an explicit operator decision.
+    deps.error(
+      "[post-fix] claude-code-action produced no file changes. Stopping (action_no_op).",
     );
-    // TY-273 #B3: roll back the optimistic Phase 3 bookkeeping. Pre-fix
-    // appended the current findings hash to `findingsHashHistory` and bumped
-    // `iterationCount` before claude-code-action ran. When no file edits
-    // result, leaving those updates in place poisons two downstream paths:
-    //   1. The tier-aware loop detector (TY-243) sees the just-written hash
-    //      as a "previous" entry and short-circuits the next iteration into
-    //      `loop_detected` even though no fix was actually attempted.
-    //   2. iterationCount silently advances toward MAX_REVIEW_ITERATIONS
-    //      for runs that produced nothing.
-    // Mirror the rollback in `failureExit` so the no-op path leaves state
-    // identical to "pre-fix never ran Phase 3" for retry purposes.
-    const rolledBackHistory = state.findingsHashHistory.slice(0, -1);
-    const rolledBackLastHash =
-      rolledBackHistory.length > 0
-        ? rolledBackHistory[rolledBackHistory.length - 1].hash
-        : null;
-    const waitingState: ReviewState = {
-      ...state,
-      iterationCount: Math.max(0, state.iterationCount - 1),
-      findingsHashHistory: rolledBackHistory,
-      lastFindingsHash: rolledBackLastHash,
-      status: "waiting_codex",
-      // TY-258: clear any `max_turns_exceeded` (or other) stop reason carried
-      // over from a previous stop + `/restart-review`, so escalation stays
-      // one-shot once the action finishes without an error outcome.
-      stopReason: null,
-      previousCheckFailure: null,
-      // TY-273 #B4: fixingStartedAt only describes the *current* fixing
-      // attempt; clearing it on every terminal transition keeps the next
-      // `fixing` claim's stale window honest.
-      fixingStartedAt: null,
-    };
-    if (
-      !(await updateStateCommentLocked(
-        waitingState,
-        "Could not return state to waiting_codex after no-op claude-code-action run.",
-      ))
-    ) {
-      return;
-    }
-    try {
-      const reviewRequestId = await deps.postCodexReviewRequest(
-        config.repoOwner,
-        config.repoName,
-        config.prNumber,
-        config.codexReviewRequestToken,
-      );
-      const updated: ReviewState = {
-        ...waitingState,
-        lastCodexRequestCommentId: reviewRequestId,
-      };
-      await updateStateCommentLocked(
-        updated,
-        "Could not persist Codex review request comment id after no-op run.",
-      );
-    } catch (error) {
-      // TY-273 #B5: same deadlock as the committed-fix Phase 4 path —
-      // leaving status at waiting_codex with a stale request id silently
-      // strands the loop. Downgrade so the operator gets a notification.
-      const message = error instanceof Error ? error.message : String(error);
-      deps.error(
-        `[post-fix] Failed to re-request Codex review (no-op path): ${message}. Downgrading to stopped/codex_request_failed.`,
-      );
-      const stoppedState: ReviewState = {
-        ...waitingState,
-        status: "stopped",
-        stopReason: "codex_request_failed",
-      };
-      if (
-        !(await updateStateCommentLocked(
-          stoppedState,
-          "Could not record codex_request_failed stop after no-op run.",
-        ))
-      ) {
-        return;
-      }
-      await deps.postStopComment(
-        config.repoOwner,
-        config.repoName,
-        config.prNumber,
-        "codex_request_failed",
-        inputs.triggerCommentId,
-        0,
-        `Failed to post @codex review after a no-op claude-code-action run: ${message}`,
-        config.githubToken,
-      );
-    }
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_no_op",
+      detail:
+        "claude-code-action returned success but made no file changes for the given findings. " +
+        "This typically means the findings are already resolved, false positives, or beyond claude-code-action's one-shot capability. " +
+        "Use /restart-review to retry, or investigate the Codex findings manually.",
+    });
     return;
   }
 

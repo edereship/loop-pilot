@@ -753,7 +753,10 @@ describe("runPostFix", () => {
     );
   });
 
-  it("re-requests Codex review when claude-code-action made no changes", async () => {
+  it("stops with action_no_op when claude-code-action made no changes (TY-284)", async () => {
+    // TY-284 replaced the TY-273 #B3 auto-retry path: a no-op success outcome
+    // is now treated as a stop condition. CHECK_COMMAND is skipped, no Codex
+    // re-request is posted, and the operator resumes via `/restart-review`.
     const deps = makeDeps(
       {
         found: true,
@@ -771,12 +774,12 @@ describe("runPostFix", () => {
 
     expect(deps.runCheckCommand).not.toHaveBeenCalled();
     expect(deps.commitMessages).toEqual([]);
-    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+    expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
       "test-auto-ai-review",
       100,
-      expect.objectContaining({ status: "waiting_codex" }),
+      expect.objectContaining({ status: "stopped", stopReason: "action_no_op" }),
       "github-token",
       expect.any(Object),
     );
@@ -934,9 +937,11 @@ describe("runPostFix", () => {
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
   });
 
-  // TY-273 #B3: rolls back the Phase 3 bookkeeping when no edits are produced.
+  // TY-284: claude-code-action returning zero edits is treated as a stop
+  // condition (`action_no_op`). The Phase 3 bookkeeping rolls back through
+  // `failureExit` so soft `/restart-review` can replay the same findings.
 
-  it("TY-273 #B3: no-op claude-code-action rolls back iterationCount and findingsHashHistory", async () => {
+  it("TY-284: no-op claude-code-action stops with action_no_op and rolls back Phase 3 bookkeeping", async () => {
     const stateAfterPhase3 = makeState({
       iterationCount: 2,
       findingsHashHistory: [
@@ -944,6 +949,7 @@ describe("runPostFix", () => {
         { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
       ],
       lastFindingsHash: "bbbbbbbbbbbbbbbb",
+      fixingStartedAt: "2026-05-17T00:00:00Z",
     });
     const deps = makeDeps(
       {
@@ -958,20 +964,35 @@ describe("runPostFix", () => {
 
     await runPostFix(baseConfig, deps, baseInputs);
 
-    // First state write returns the loop to `waiting_codex` with the Phase 3
-    // bookkeeping reverted so the next iteration sees the same hash again
-    // (and `isLoop` can route it to the escalated tier per TY-243).
-    const firstWrite = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock
-      .calls[0][3];
-    expect(firstWrite).toMatchObject({
-      status: "waiting_codex",
+    // failureExit writes `stopped/action_no_op` with iteration / history
+    // rolled back to the pre-Phase-3 baseline so a soft restart resumes the
+    // same Codex findings without consuming an iteration or poisoning loop
+    // detection.
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3];
+    expect(lastState).toMatchObject({
+      status: "stopped",
+      stopReason: "action_no_op",
       iterationCount: 1,
       lastFindingsHash: "aaaaaaaaaaaaaaaa",
+      fixingStartedAt: null,
     });
-    expect(firstWrite.findingsHashHistory).toEqual([
+    expect(lastState.findingsHashHistory).toEqual([
       { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
     ]);
-    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+    // Stop notification is posted; the no-op path no longer re-requests
+    // Codex review (the auto-retry behavior from TY-273 #B3 was removed).
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "action_no_op",
+      1234,
+      0,
+      expect.stringContaining("no file changes"),
+      "github-token",
+    );
+    expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
   });
 
   // TY-273 #B5: codex_request_failed downgrade.
@@ -1008,41 +1029,6 @@ describe("runPostFix", () => {
       expect.any(Number),
       0,
       expect.stringContaining("HTTP 403: forbidden"),
-      "github-token",
-    );
-  });
-
-  it("TY-273 #B5: same downgrade fires from the no-op path when @codex review fails", async () => {
-    const deps = makeDeps(
-      {
-        found: true,
-        corrupted: false,
-        commentId: 100,
-        commentUpdatedAt: "2026-05-14T12:00:00Z",
-        state: makeState(),
-      },
-      { gitDiffNumstat: () => "" },
-    );
-    (deps.postCodexReviewRequest as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("network failure"),
-    );
-
-    await runPostFix(baseConfig, deps, baseInputs);
-
-    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
-    const lastState = calls[calls.length - 1][3];
-    expect(lastState).toMatchObject({
-      status: "stopped",
-      stopReason: "codex_request_failed",
-    });
-    expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
-      "test-auto-ai-review",
-      99,
-      "codex_request_failed",
-      expect.any(Number),
-      0,
-      expect.stringContaining("network failure"),
       "github-token",
     );
   });

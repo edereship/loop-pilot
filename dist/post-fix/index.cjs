@@ -19865,7 +19865,8 @@ var STOP_REASON_LABELS = {
   max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
   codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
   codex_request_failed: "Re-posting @codex review failed; auto-review stopped to avoid silent deadlock",
-  secret_leak_suspected: "Auto-fix produced output matching a high-confidence secret pattern (TY-274)"
+  secret_leak_suspected: "Auto-fix produced output matching a high-confidence secret pattern (TY-274)",
+  action_no_op: "claude-code-action produced no file changes for the given findings"
 };
 
 // dist/comment-poster.js
@@ -21114,48 +21115,14 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   const changedFiles = [...trackedChanges, ...untrackedChanges];
   deps.info(`[post-fix] Detected ${changedFiles.length} changed file(s) in working tree (${trackedChanges.length} tracked, ${untrackedChanges.length} new).`);
   if (changedFiles.length === 0) {
-    deps.warning("[post-fix] claude-code-action made no file changes. Treating as no-op success and re-requesting Codex review.");
-    const rolledBackHistory = state.findingsHashHistory.slice(0, -1);
-    const rolledBackLastHash = rolledBackHistory.length > 0 ? rolledBackHistory[rolledBackHistory.length - 1].hash : null;
-    const waitingState2 = {
-      ...state,
-      iterationCount: Math.max(0, state.iterationCount - 1),
-      findingsHashHistory: rolledBackHistory,
-      lastFindingsHash: rolledBackLastHash,
-      status: "waiting_codex",
-      // TY-258: clear any `max_turns_exceeded` (or other) stop reason carried
-      // over from a previous stop + `/restart-review`, so escalation stays
-      // one-shot once the action finishes without an error outcome.
-      stopReason: null,
-      previousCheckFailure: null,
-      // TY-273 #B4: fixingStartedAt only describes the *current* fixing
-      // attempt; clearing it on every terminal transition keeps the next
-      // `fixing` claim's stale window honest.
-      fixingStartedAt: null
-    };
-    if (!await updateStateCommentLocked(waitingState2, "Could not return state to waiting_codex after no-op claude-code-action run.")) {
-      return;
-    }
-    try {
-      const reviewRequestId = await deps.postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
-      const updated = {
-        ...waitingState2,
-        lastCodexRequestCommentId: reviewRequestId
-      };
-      await updateStateCommentLocked(updated, "Could not persist Codex review request comment id after no-op run.");
-    } catch (error2) {
-      const message = error2 instanceof Error ? error2.message : String(error2);
-      deps.error(`[post-fix] Failed to re-request Codex review (no-op path): ${message}. Downgrading to stopped/codex_request_failed.`);
-      const stoppedState = {
-        ...waitingState2,
-        status: "stopped",
-        stopReason: "codex_request_failed"
-      };
-      if (!await updateStateCommentLocked(stoppedState, "Could not record codex_request_failed stop after no-op run.")) {
-        return;
-      }
-      await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Failed to post @codex review after a no-op claude-code-action run: ${message}`, config.githubToken);
-    }
+    deps.error("[post-fix] claude-code-action produced no file changes. Stopping (action_no_op).");
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_no_op",
+      detail: "claude-code-action returned success but made no file changes for the given findings. This typically means the findings are already resolved, false positives, or beyond claude-code-action's one-shot capability. Use /restart-review to retry, or investigate the Codex findings manually."
+    });
     return;
   }
   if (config.scopeAllowedPathPrefixes.length > 0) {

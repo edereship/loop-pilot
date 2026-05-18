@@ -62,7 +62,42 @@ post-fix が repair commit を push した後に `@codex review` を投稿する
 
 TY-273 以降は同じ失敗で `stopped/codex_request_failed` へ降格し、`postTerminalNotification` 経由で top-level コメントとして「Codex 再依頼に失敗したため停止」通知が PR に投稿される。repair commit 自体は branch に残るので、Codex の認証・接続を直してから `/restart-review` (soft) で再開すれば良い。`iterationCount` / `findingsHashHistory` は次 iteration が同じ findings を再評価できるよう保持される。
 
-検知ロジック: `src/main-post-fix.ts` の Phase 4 と no-op 経路にある `postCodexReviewRequest` catch ブロック。
+検知ロジック: `src/main-post-fix.ts` の Phase 4 にある `postCodexReviewRequest` catch ブロック。TY-284 で no-op 経路の auto-retry 自体を廃止したため、`codex_request_failed` の発生源は committed-fix 後の Phase 4 のみに集約された。
+
+---
+
+### claude-code-action が 0 件修正で終わった (`action_no_op`, TY-284)
+
+post-fix が claude-code-action の `outcome=success` を受け取り、`git diff --numstat HEAD` でも untracked enumeration でも変更が 1 件も検出されなかった場合の停止。`stopped/action_no_op` で `postStopComment` 経由の top-level 通知が PR に投稿される。
+
+TY-273 #B3 で導入していた「Phase 3 bookkeeping を rollback して `@codex review` を再依頼する」自動リトライ経路は TY-284 で廃止した。理由:
+
+- 確率的空振り (Claude の判定揺らぎ等) は `max_turns_exceeded` / `loop_detected` 経由の escalated tier (TY-243 / TY-258) で既にカバー済みで、no-op auto-retry 経路の救済範囲と重複していた
+- stale findings (state 同期ロス由来) で auto-retry しても次 iteration で `lastCodexReviewReceivedAt` が更新されて `done` に落ちるだけで、1 iteration 分の Opus コスト ($1.5〜$3) が無駄になる
+- 操作者からは「沈黙の後に何故か Codex が再 review される」という観測しづらいループに見えて、`AUTO_REVIEW_FULL_AUTO=true` でも介入判断のシグナルが消える
+- ユーザー仕様「エラー時は一律ループ停止 / 再開は `/restart-review` のみ」と整合しない
+
+#### 典型的な発生ケース
+
+| パターン | 復旧方針 |
+|----------|----------|
+| stale findings (state 同期ロス、例: setup-node 失敗の後遺症) | `/restart-review` (soft) — 次 iteration で最新 Codex review を再評価 |
+| Claude が false positive と判断して何もしなかった | Codex finding を人間が確認 → 必要なら `/restart-review` (soft) |
+| 広範囲リファクタ要求で one-shot 修正不能 | チケットを切り直し、scope を分割 |
+| `AUTO_REVIEW_BLOCK_PATHS` / scope policy で抑制された | 設定を見直して `/restart-review` (soft) |
+| CHECK_COMMAND 失敗を予期して claude 自身が変更を undo した | `/restart-review` (soft) で再評価、または手動修正 |
+| 対象コードが既に rename / 削除されている | stale 扱い、`/restart-review` (soft) |
+
+#### 復旧手順
+
+1. PR の status comment History の最新 stopped エントリで停止経緯を確認
+2. 必要なら Codex の inline comment を直接確認して finding が今も有効か判断
+3. `/restart-review` (soft) で再開。`failureExit` が `iterationCount` / `findingsHashHistory` / `lastFindingsHash` / `fixingStartedAt` を pre-Phase 3 状態に rollback 済みなので、soft restart は同じ findings を新規 iteration として再評価する (= 余分な iteration 消費なし、`previous_max_turns_exceeded` 等のシグナルも保持)
+4. 同じ no-op が連続する場合は finding 自体に問題がある (false positive / 自動修正不可) と判断し、人手対応か Codex 側へのフィードバックに切り替える
+
+iteration history を完全にクリアしたい場合のみ `/restart-review --hard` を使う。`secret_leak_suspected` のような hard 必須 gating は無い (=人間が状況を確認すれば soft で十分)。
+
+検知ロジック: `src/main-post-fix.ts` の `changedFiles.length === 0` 分岐 → `failureExit({ stopReason: "action_no_op" })`。
 
 ---
 
@@ -205,6 +240,7 @@ soft restart。state を `waiting_codex` に戻し、同じ run で `@codex revi
 - `max_turns_exceeded`（soft 推奨。次 iteration が自動で escalated tier になる、TY-258）
 - `codex_usage_limit`（quota リセット後に soft、TY-229）
 - `codex_request_failed`（Codex 認証 / 接続を直してから soft、TY-273 #B5）
+- `action_no_op`（claude-code-action が 0 件修正で終わった場合の停止。typically soft、TY-284）
 - `workflow_crashed`（soft で復旧可能、TY-282 #2A — pre-fix / post-fix が `failureExit` を呼ぶ前に死んだケース）
 - `no_findings`（`done` 状態）
 - `waiting_codex`

@@ -103,6 +103,8 @@ export const STOP_REASON_LABELS = {
     "Re-posting @codex review failed; auto-review stopped to avoid silent deadlock",
   secret_leak_suspected:
     "Auto-fix produced output matching a high-confidence secret pattern (TY-274)",
+  action_no_op:
+    "claude-code-action produced no file changes for the given findings",
 } as const satisfies Record<string, string>;
 
 export type StopReason = keyof typeof STOP_REASON_LABELS;
