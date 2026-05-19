@@ -380,7 +380,121 @@ describe("runPreFix", () => {
     // Pre-fix should never advance to emitting the run signal once the
     // working tree cannot be repositioned to the PR head.
     expect(deps.outputs.should_run).toBe("false");
+    // TY-285 #4: checkout runs BEFORE the fixing state write, so a failed
+    // checkout must not consume an iteration slot or append a hash entry.
+    expect(deps.updateStateComment).not.toHaveBeenCalled();
   });
+
+  it("TY-285 #3/#4: rejects argv-flag injection prHeadRef without mutating state", async () => {
+    const findings: RawReviewComment[] = [
+      {
+        id: 410,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P1 Bad ref\n\nSomething.",
+        path: "src/foo.ts",
+        line: 10,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      findings,
+    );
+
+    await expect(
+      runPreFix({ ...baseConfig, prHeadRef: "-rf" }, deps),
+    ).rejects.toThrow(/Invalid branch name/);
+
+    expect(deps.outputs.should_run).toBe("false");
+    expect(deps.checkoutBranch).not.toHaveBeenCalled();
+    // Validation runs before the fixing state write — the throw must not
+    // consume an iteration or append a hash entry.
+    expect(deps.updateStateComment).not.toHaveBeenCalled();
+  });
+
+  it.each(["feature/..", ".."])(
+    "TY-285 #3: rejects path-traversal prHeadRef %j",
+    async (badRef) => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 411,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 Bad ref\n\nSomething.",
+          path: "src/foo.ts",
+          line: 10,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({ status: "waiting_codex" }),
+        },
+        findings,
+      );
+
+      await expect(
+        runPreFix({ ...baseConfig, prHeadRef: badRef }, deps),
+      ).rejects.toThrow(/Invalid branch name/);
+
+      expect(deps.checkoutBranch).not.toHaveBeenCalled();
+      expect(deps.updateStateComment).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "機能/タスク-123",
+    "feature/한국어",
+    "feat/中文",
+    "feat/絵文字-🚀",
+  ])(
+    "TY-285 #3: accepts non-ASCII prHeadRef %j and proceeds to fixing",
+    async (goodRef) => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 412,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 Some finding\n\nDetails.",
+          path: "src/foo.ts",
+          line: 10,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({ status: "waiting_codex" }),
+        },
+        findings,
+      );
+
+      await runPreFix({ ...baseConfig, prHeadRef: goodRef }, deps);
+
+      expect(deps.checkoutBranch).toHaveBeenCalledWith(goodRef);
+      expect(deps.outputs.should_run).toBe("true");
+      expect(deps.outputs.pr_head_ref).toBe(goodRef);
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({ status: "fixing" }),
+        "github-token",
+        expect.any(Object),
+      );
+    },
+  );
 
   it("transitions to fixing and emits the prompt + outputs on a clean run", async () => {
     const findings: RawReviewComment[] = [

@@ -20074,12 +20074,24 @@ function readHeadSha(label) {
   }
 }
 function gitDiffNumstat() {
-  return (0, import_node_child_process2.execFileSync)("git", ["diff", "--numstat", "--no-renames", "HEAD"], {
-    encoding: "utf-8"
-  });
+  return (0, import_node_child_process2.execFileSync)("git", [
+    "-c",
+    "core.quotepath=false",
+    "diff",
+    "--numstat",
+    "--no-renames",
+    "HEAD"
+  ], { encoding: "utf-8" });
 }
 function gitDiffHead() {
   return (0, import_node_child_process2.execFileSync)("git", [
+    // TY-285 #1: keep raw UTF-8 path output for diff headers. Without
+    // `core.quotepath=false`, secret-scanner's `parseDiffHeaderPath`
+    // sees `"src/\343..."` which `unquoteGitPath` does decode, but
+    // staying in sync with `gitDiffNumstat` keeps the two flows
+    // operating on identical strings.
+    "-c",
+    "core.quotepath=false",
     "diff",
     "--unified=0",
     "--no-color",
@@ -20089,9 +20101,13 @@ function gitDiffHead() {
   ], { encoding: "utf-8" });
 }
 function gitListUntracked() {
-  return (0, import_node_child_process2.execFileSync)("git", ["ls-files", "--others", "--exclude-standard"], {
-    encoding: "utf-8"
-  });
+  return (0, import_node_child_process2.execFileSync)("git", [
+    "-c",
+    "core.quotepath=false",
+    "ls-files",
+    "--others",
+    "--exclude-standard"
+  ], { encoding: "utf-8" });
 }
 function readWorkingTreeFile(path) {
   try {
@@ -20831,6 +20847,7 @@ function checkScopeBuildMode(files, policy = DEFAULT_SCOPE_POLICY) {
     totalLines
   };
 }
+var RENAME_NOTATION_RE = /\{[^{}]+ => [^{}]+\}/;
 function parseGitNumstat(output) {
   const lines = output.split("\n");
   const files = [];
@@ -20844,7 +20861,7 @@ function parseGitNumstat(output) {
     const path = rest.join("	");
     if (path.length === 0)
       continue;
-    if (path.includes(" => "))
+    if (RENAME_NOTATION_RE.test(path))
       continue;
     const added = a === "-" ? -1 : Number.parseInt(a, 10);
     const deleted = d === "-" ? -1 : Number.parseInt(d, 10);

@@ -21461,6 +21461,11 @@ async function runPreFix(config, deps = defaultDeps3) {
     ...state.findingsHashHistory,
     { iteration: newIteration, hash: currentHash, modelTier: selection.tier }
   ];
+  if (prHeadRef.length === 0 || prHeadRef.startsWith("-") || prHeadRef.includes("..")) {
+    throw new Error(`[pre-fix] Invalid branch name: ${prHeadRef}`);
+  }
+  deps.checkoutBranch(prHeadRef);
+  const headSha = deps.readHeadSha();
   const fixingState = {
     ...updatedStateBase,
     iterationCount: newIteration,
@@ -21474,11 +21479,6 @@ async function runPreFix(config, deps = defaultDeps3) {
   };
   if (!await updateStateCommentLocked(fixingState, "Could not claim the hidden comment state for fixing."))
     return;
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$/.test(prHeadRef) || prHeadRef.includes("..")) {
-    throw new Error(`[pre-fix] Invalid branch name: ${prHeadRef}`);
-  }
-  deps.checkoutBranch(prHeadRef);
-  const headSha = deps.readHeadSha();
   const prContext = {
     number: config.prNumber,
     title: config.prTitle,

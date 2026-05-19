@@ -625,6 +625,33 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     { iteration: newIteration, hash: currentHash, modelTier: selection.tier },
   ];
 
+  // The workflow already checked out the PR ref before this step runs, but
+  // a recovery / retry may have left the working tree on a different ref.
+  //
+  // TY-285 #4: validate + checkout + readHeadSha BEFORE the `fixing` state is
+  // written. If any of these throw, `demoteFixingOnCrash` only rewrites
+  // `status` / `stopReason` / `fixingStartedAt` and leaves `iterationCount`
+  // and `findingsHashHistory` unchanged — running the validation after the
+  // write therefore burns one iteration slot and appends a hash entry on
+  // every replay of the same PR, eventually hitting `max_iterations`.
+  //
+  // TY-285 #3: the previous ASCII-only regex (`^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$`)
+  // rejected legitimate non-ASCII branch names (`機能/タスク-123`,
+  // `feature/한국어`). `execFileSync("git", ["checkout", ref])` does not invoke
+  // a shell, so the only argv-level injection risks are a leading `-` (which
+  // would be parsed as a git flag like `-rf`) and `..` path traversal in the
+  // ref. An empty ref would also confuse git. Reject exactly those, accept
+  // everything else.
+  if (
+    prHeadRef.length === 0 ||
+    prHeadRef.startsWith("-") ||
+    prHeadRef.includes("..")
+  ) {
+    throw new Error(`[pre-fix] Invalid branch name: ${prHeadRef}`);
+  }
+  deps.checkoutBranch(prHeadRef);
+  const headSha = deps.readHeadSha();
+
   const fixingState: ReviewState = {
     ...updatedStateBase,
     iterationCount: newIteration,
@@ -643,14 +670,6 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     ))
   )
     return;
-
-  // The workflow already checked out the PR ref before this step runs, but
-  // a recovery / retry may have left the working tree on a different ref.
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$/.test(prHeadRef) || prHeadRef.includes("..")) {
-    throw new Error(`[pre-fix] Invalid branch name: ${prHeadRef}`);
-  }
-  deps.checkoutBranch(prHeadRef);
-  const headSha = deps.readHeadSha();
 
   // ─── Build claude-code-action prompt ─────────────────────────────────────
   const prContext: PrContext = {

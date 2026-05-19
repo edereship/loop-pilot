@@ -90,12 +90,19 @@ describe("subprocess wrappers", () => {
     setSecret.mockReset();
   });
 
-  it("gitDiffNumstat invokes the expected git args", () => {
+  it("gitDiffNumstat invokes the expected git args (TY-285 #1: -c core.quotepath=false)", () => {
     execFileSync.mockReturnValue("1\t2\tfoo\n");
     expect(git.gitDiffNumstat()).toBe("1\t2\tfoo\n");
     expect(execFileSync).toHaveBeenCalledWith(
       "git",
-      ["diff", "--numstat", "--no-renames", "HEAD"],
+      [
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--numstat",
+        "--no-renames",
+        "HEAD",
+      ],
       { encoding: "utf-8" },
     );
   });
@@ -112,6 +119,8 @@ describe("subprocess wrappers", () => {
     expect(execFileSync).toHaveBeenCalledWith(
       "git",
       [
+        "-c",
+        "core.quotepath=false",
         "diff",
         "--unified=0",
         "--no-color",
@@ -123,12 +132,18 @@ describe("subprocess wrappers", () => {
     );
   });
 
-  it("gitListUntracked invokes the expected git args", () => {
+  it("gitListUntracked invokes the expected git args (TY-285 #1: -c core.quotepath=false)", () => {
     execFileSync.mockReturnValue("foo.txt\n");
     expect(git.gitListUntracked()).toBe("foo.txt\n");
     expect(execFileSync).toHaveBeenCalledWith(
       "git",
-      ["ls-files", "--others", "--exclude-standard"],
+      [
+        "-c",
+        "core.quotepath=false",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+      ],
       { encoding: "utf-8" },
     );
   });

@@ -36,11 +36,32 @@ export function checkoutBranch(ref: string): void {
   execFileSync("git", ["checkout", ref], { stdio: "inherit" });
 }
 
-/** `git diff --numstat --no-renames HEAD` (raw stdout). */
+/**
+ * `git diff --numstat --no-renames HEAD` (raw stdout).
+ *
+ * TY-285 #1: `-c core.quotepath=false` forces git to emit paths as raw
+ * UTF-8 instead of the default C-quote form (`"src/\343\203\206...ts"`).
+ * Without it, `parseGitNumstat` (`src/scope-checker.ts`) and the untracked
+ * builder in `main-post-fix.ts` produce paths that do not match any real
+ * filesystem entry, so `stagePaths` / `readWorkingTreeFile` fail and any
+ * PR touching a non-ASCII tracked file is rejected with `action_failure`
+ * or `scope_violation`. The secret-scanner (TY-274) already unquotes
+ * paths via `unquoteGitPath`; passing the flag here makes the two paths
+ * symmetric so the scanner does not see a different filename than scope-check.
+ */
 export function gitDiffNumstat(): string {
-  return execFileSync("git", ["diff", "--numstat", "--no-renames", "HEAD"], {
-    encoding: "utf-8",
-  });
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      "core.quotepath=false",
+      "diff",
+      "--numstat",
+      "--no-renames",
+      "HEAD",
+    ],
+    { encoding: "utf-8" },
+  );
 }
 
 /**
@@ -76,6 +97,13 @@ export function gitDiffHead(): string {
   return execFileSync(
     "git",
     [
+      // TY-285 #1: keep raw UTF-8 path output for diff headers. Without
+      // `core.quotepath=false`, secret-scanner's `parseDiffHeaderPath`
+      // sees `"src/\343..."` which `unquoteGitPath` does decode, but
+      // staying in sync with `gitDiffNumstat` keeps the two flows
+      // operating on identical strings.
+      "-c",
+      "core.quotepath=false",
       "diff",
       "--unified=0",
       "--no-color",
@@ -87,11 +115,27 @@ export function gitDiffHead(): string {
   );
 }
 
-/** `git ls-files --others --exclude-standard` (raw stdout). */
+/**
+ * `git ls-files --others --exclude-standard` (raw stdout).
+ *
+ * TY-285 #1: `-c core.quotepath=false` so non-ASCII untracked filenames
+ * are emitted as raw UTF-8. Otherwise `readWorkingTreeFile` is handed
+ * `"src/\343..."` (literal quote + escape bytes), receives ENOENT, and
+ * the untracked entry is marked `added=-1, deleted=-1` → scope-check
+ * rejects it as a binary change and the loop stops on `scope_violation`.
+ */
 export function gitListUntracked(): string {
-  return execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
-    encoding: "utf-8",
-  });
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      "core.quotepath=false",
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+    ],
+    { encoding: "utf-8" },
+  );
 }
 
 /**

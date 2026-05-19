@@ -521,6 +521,14 @@ export function checkScopeBuildMode(
 }
 
 /**
+ * Compact rename notation that `git diff --numstat` emits when `--no-renames`
+ * is omitted: `src/{old.ts => new.ts}` or `{src/old.ts => dst/new.ts}`. The
+ * `{...}` wrapping is what distinguishes synthetic rename paths from a real
+ * filename that happens to contain ` => ` (rare, but valid on the filesystem).
+ */
+const RENAME_NOTATION_RE = /\{[^{}]+ => [^{}]+\}/;
+
+/**
  * Parse `git diff --numstat <base>` output into ChangedFile entries.
  *
  * Format per line: `<added>\t<deleted>\t<path>`. For binary files,
@@ -533,8 +541,11 @@ export function checkScopeBuildMode(
  * Passing such a string straight into `git add -- <path>` or
  * `readFileSync(path)` fails. Callers should prefer `--no-renames`,
  * but as a defense-in-depth measure this parser silently drops any
- * line whose path contains the ` => ` token so the downstream pipeline
- * cannot accidentally stage or read the synthetic rename name.
+ * line whose path matches the `{... => ...}` rename form so the
+ * downstream pipeline cannot accidentally stage or read the synthetic
+ * rename name. TY-285 #2: the filter is restricted to the wrapped form
+ * — an earlier `path.includes(" => ")` substring check silently dropped
+ * legitimate filenames that contained ` => ` (e.g. `src/arrow => fn.ts`).
  */
 export function parseGitNumstat(output: string): ChangedFile[] {
   const lines = output.split("\n");
@@ -546,7 +557,7 @@ export function parseGitNumstat(output: string): ChangedFile[] {
     const [a, d, ...rest] = parts;
     const path = rest.join("\t");
     if (path.length === 0) continue;
-    if (path.includes(" => ")) continue;
+    if (RENAME_NOTATION_RE.test(path)) continue;
     const added = a === "-" ? -1 : Number.parseInt(a, 10);
     const deleted = d === "-" ? -1 : Number.parseInt(d, 10);
     if (

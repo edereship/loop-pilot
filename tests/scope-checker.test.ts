@@ -536,6 +536,34 @@ describe("parseGitNumstat", () => {
       { path: "src/keep.ts", added: 2, deleted: 1 },
     ]);
   });
+
+  it("TY-285 #2: keeps legitimate filenames that contain ' => ' but no `{...}` wrapping", () => {
+    // The substring ` => ` is a valid filesystem character. Previously the
+    // parser dropped any such path defensively, silently losing real edits.
+    // Restrict the rename guard to git's actual `{... => ...}` compact form.
+    const output = [
+      "3\t1\tsrc/arrow => function.ts",
+      "5\t3\tsrc/{renamed => moved}.ts",
+      "1\t0\tdocs/keep.md",
+    ].join("\n");
+    expect(parseGitNumstat(output)).toEqual([
+      { path: "src/arrow => function.ts", added: 3, deleted: 1 },
+      { path: "docs/keep.md", added: 1, deleted: 0 },
+    ]);
+  });
+
+  it("TY-285 #1: handles non-ASCII paths emitted as raw UTF-8 (with `-c core.quotepath=false`)", () => {
+    const output = [
+      "4\t0\tsrc/テスト.ts",
+      "2\t1\tdocs/한국어.md",
+      "1\t0\tsrc/中文/index.ts",
+    ].join("\n");
+    expect(parseGitNumstat(output)).toEqual([
+      { path: "src/テスト.ts", added: 4, deleted: 0 },
+      { path: "docs/한국어.md", added: 2, deleted: 1 },
+      { path: "src/中文/index.ts", added: 1, deleted: 0 },
+    ]);
+  });
 });
 
 describe("checkScopeBuildMode (TY-281)", () => {
