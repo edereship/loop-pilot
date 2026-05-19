@@ -20043,7 +20043,7 @@ async function demoteFixingOnCrash(label, deps = defaultDeps2) {
 // dist/state-comment-locker.js
 function createLockedStateUpdater(args) {
   let expectedUpdatedAt = args.initialExpectedUpdatedAt;
-  return async function tryUpdate(nextState, detail) {
+  return async function tryUpdate(nextState, detail, options) {
     try {
       const result = await args.updateStateComment(args.owner, args.repo, args.commentId, nextState, args.token, expectedUpdatedAt ? { expectedUpdatedAt } : void 0);
       expectedUpdatedAt = result.updatedAt;
@@ -20054,7 +20054,8 @@ function createLockedStateUpdater(args) {
       }
       const message = error2 instanceof Error ? error2.message : String(error2);
       args.warning(`[${args.label}] Hidden comment state conflict. ${message}`);
-      await args.onConflict(detail);
+      const handler = options?.onConflict ?? args.onConflict;
+      await handler(detail);
       return false;
     }
   };
@@ -21533,7 +21534,11 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
       ...waitingState,
       lastCodexRequestCommentId: reviewRequestId
     };
-    if (!await updateStateCommentLocked(updatedWaitingState, "Could not persist the Codex review request comment id.")) {
+    if (!await updateStateCommentLocked(updatedWaitingState, "Could not persist the Codex review request comment id.", {
+      onConflict: async (detail) => {
+        deps.warning(`[post-fix] ${detail} Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
+      }
+    })) {
       return;
     }
     deps.info(`[post-fix] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`);

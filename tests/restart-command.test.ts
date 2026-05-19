@@ -311,6 +311,43 @@ describe("applyRestartToState", () => {
     });
   });
 
+  it("TY-286 #C: clears fixingStartedAt when hard-restarting from `fixing` so the invariant holds", () => {
+    // Invariant: `fixingStartedAt === null` whenever `status !== 'fixing'`.
+    // Every other transition out of `fixing` (post-fix Phase 4, failureExit,
+    // stale recovery) already clears the timestamp; `applyRestartToState`
+    // used to leak the old value via `...state`, breaking the invariant on
+    // hard restart and risking stale-time-based logic in future code.
+    const state = makeState({
+      status: "fixing",
+      fixingStartedAt: "2026-05-14T10:00:00.000Z",
+      iterationCount: 3,
+      findingsHashHistory: [{ iteration: 3, hash: "hash-a" }],
+      lastFindingsHash: "hash-a",
+    });
+
+    const result = applyRestartToState(state, "hard", 45678);
+
+    if (!result.ok) throw new Error("expected hard restart to succeed");
+    expect(result.nextState.fixingStartedAt).toBeNull();
+    expect(result.nextState.status).toBe("waiting_codex");
+  });
+
+  it("TY-286 #C: keeps fixingStartedAt null on soft restart from non-fixing status (no regression)", () => {
+    // Soft restart from a terminal status: the source state already has
+    // fixingStartedAt === null (post-fix / failureExit cleared it), so the
+    // result should still be null after the new explicit assignment.
+    const state = makeState({
+      status: "stopped",
+      stopReason: "no_findings",
+      fixingStartedAt: null,
+    });
+
+    const result = applyRestartToState(state, "soft", 1);
+
+    if (!result.ok) throw new Error("expected soft restart to succeed");
+    expect(result.nextState.fixingStartedAt).toBeNull();
+  });
+
   it("soft-restarts from `action_no_op` preserving the rolled-back history (TY-284)", () => {
     // `failureExit` in post-fix already rolled iterationCount /
     // findingsHashHistory back to the pre-Phase-3 baseline when stopping with
@@ -677,7 +714,13 @@ describe("handleRestartCommand", () => {
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
   });
 
-  it("posts a state_conflict stop comment when the second locked write conflicts after posting @codex review (TY-265)", async () => {
+  it("TY-286 #B: does NOT post state_conflict when the 2nd locked write conflicts; warns instead so operators do not duplicate @codex review", async () => {
+    // The hidden state was already advanced to waiting_codex by the 1st
+    // write and `@codex review` was already posted, so a 412 on the 2nd
+    // write (which only records lastCodexRequestCommentId) leaves the loop
+    // healthy — the next Codex review trigger reconciles automatically.
+    // Surfacing a 🛑 state_conflict stop here would mislead operators into
+    // re-issuing `/restart-review` and posting a second `@codex review`.
     const deps = makeDeps();
     deps.updateStateComment
       .mockResolvedValueOnce({ updatedAt: "2026-05-09T00:00:01Z" })
@@ -700,9 +743,12 @@ describe("handleRestartCommand", () => {
     );
 
     expect(deps.postCodexReviewRequest).toHaveBeenCalledTimes(1);
-    expect(deps.postStopComment).toHaveBeenCalledTimes(1);
-    expect(deps.postStopComment.mock.calls[0][3]).toBe("state_conflict");
-    expect(deps.postStopComment.mock.calls[0][6]).toContain("review-request comment id");
+    expect(deps.postStopComment).not.toHaveBeenCalled();
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.",
+      ),
+    );
   });
 
   it("rejects restart from a malformed triggerUserLogin without hitting the collaborator API (TY-265)", async () => {

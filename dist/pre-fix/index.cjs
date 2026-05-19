@@ -20376,7 +20376,7 @@ async function demoteFixingOnCrash(label, deps = defaultDeps2) {
 // dist/state-comment-locker.js
 function createLockedStateUpdater(args) {
   let expectedUpdatedAt = args.initialExpectedUpdatedAt;
-  return async function tryUpdate(nextState, detail) {
+  return async function tryUpdate(nextState, detail, options) {
     try {
       const result = await args.updateStateComment(args.owner, args.repo, args.commentId, nextState, args.token, expectedUpdatedAt ? { expectedUpdatedAt } : void 0);
       expectedUpdatedAt = result.updatedAt;
@@ -20387,7 +20387,8 @@ function createLockedStateUpdater(args) {
       }
       const message = error2 instanceof Error ? error2.message : String(error2);
       args.warning(`[${args.label}] Hidden comment state conflict. ${message}`);
-      await args.onConflict(detail);
+      const handler = options?.onConflict ?? args.onConflict;
+      await handler(detail);
       return false;
     }
   };
@@ -20884,7 +20885,13 @@ function applyRestartToState(state, mode, reviewRequestCommentId) {
     ...state,
     status: "waiting_codex",
     lastProcessedReviewId: null,
-    lastCodexRequestCommentId: reviewRequestCommentId
+    lastCodexRequestCommentId: reviewRequestCommentId,
+    // TY-286 #C: `applyRestartToState` allows hard-restart from `fixing`. The
+    // outgoing status is no longer `fixing`, so the invariant
+    // "`fixingStartedAt === null` whenever `status !== 'fixing'`" requires
+    // clearing the timestamp here — every other transition out of `fixing`
+    // (post-fix Phase 4, `failureExit`, stale recovery) already does this.
+    fixingStartedAt: null
   };
   if (mode === "hard") {
     nextState.iterationCount = 0;
@@ -20950,7 +20957,11 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
     await deps.postComment(context.owner, context.repo, context.prNumber, restartRejectionMessage(restartResult.reason), context.githubToken);
     return { handled: true };
   }
-  const secondWriteOk = await updateStateCommentLocked(restartResult.nextState, "[restart] failed to record review-request comment id after posting @codex review");
+  const secondWriteOk = await updateStateCommentLocked(restartResult.nextState, "[restart] failed to record review-request comment id after posting @codex review", {
+    onConflict: async (detail) => {
+      deps.warning(`[restart] ${detail} Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
+    }
+  });
   if (!secondWriteOk) {
     return { handled: true };
   }

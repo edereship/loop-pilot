@@ -31,13 +31,35 @@ export interface LockedStateUpdaterArgs {
 export type LockedStateUpdater = (
   nextState: ReviewState,
   detail: string,
+  options?: LockedStateUpdaterCallOptions,
 ) => Promise<boolean>;
+
+/**
+ * Per-call overrides for `LockedStateUpdater`. The default `onConflict`
+ * supplied to `createLockedStateUpdater` is used for terminal state writes
+ * that must surface a top-level `state_conflict` stop comment. For TY-286 #A
+ * / #B the 2nd write in a "write A → external side-effect → write B"
+ * sequence is informational only: the hidden state machine has already been
+ * advanced to a healthy `waiting_codex` and a Codex review has already been
+ * posted, so a 412 here should warn (so operators can see it in logs) rather
+ * than emit a misleading `🛑 Auto-review stopped` comment that contradicts
+ * the live state.
+ */
+export interface LockedStateUpdaterCallOptions {
+  /**
+   * Override the constructor-supplied `onConflict` for this single call.
+   * Useful when only some writes are terminal — e.g., a follow-up write that
+   * merely records a side-effect id should not produce a stop notification.
+   */
+  onConflict?: (detail: string) => Promise<void>;
+}
 
 /**
  * Build a state-update function that retains the latest `updated_at` so each
  * subsequent write keeps the optimistic-lock chain unbroken. On 412 conflict
  * the supplied `onConflict` callback runs and the function resolves to
- * `false`; other errors propagate.
+ * `false`; other errors propagate. Individual calls may override the
+ * conflict handler via `options.onConflict` (TY-286).
  */
 export function createLockedStateUpdater(
   args: LockedStateUpdaterArgs,
@@ -46,6 +68,7 @@ export function createLockedStateUpdater(
   return async function tryUpdate(
     nextState: ReviewState,
     detail: string,
+    options?: LockedStateUpdaterCallOptions,
   ): Promise<boolean> {
     try {
       const result = await args.updateStateComment(
@@ -64,7 +87,8 @@ export function createLockedStateUpdater(
       }
       const message = error instanceof Error ? error.message : String(error);
       args.warning(`[${args.label}] Hidden comment state conflict. ${message}`);
-      await args.onConflict(detail);
+      const handler = options?.onConflict ?? args.onConflict;
+      await handler(detail);
       return false;
     }
   };

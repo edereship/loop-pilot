@@ -1226,10 +1226,25 @@ export async function runPostFix(
       ...waitingState,
       lastCodexRequestCommentId: reviewRequestId,
     };
+    // TY-286 #A: the 2nd write only records `lastCodexRequestCommentId` for
+    // idempotency. The hidden state was already advanced to `waiting_codex`
+    // by the 1st write and the `@codex review` comment has been posted, so
+    // the loop is healthy regardless of this write's outcome. Surfacing a
+    // `state_conflict` 🛑 stop here would falsely tell operators the
+    // auto-review halted while it is actually still waiting for the next
+    // Codex review trigger.
     if (
       !(await updateStateCommentLocked(
         updatedWaitingState,
         "Could not persist the Codex review request comment id.",
+        {
+          onConflict: async (detail) => {
+            deps.warning(
+              `[post-fix] ${detail} Auto-review state remains waiting_codex; ` +
+                "the next Codex review trigger will reconcile.",
+            );
+          },
+        },
       ))
     ) {
       return;

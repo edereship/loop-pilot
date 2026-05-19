@@ -156,6 +156,12 @@ export function applyRestartToState(
     status: "waiting_codex",
     lastProcessedReviewId: null,
     lastCodexRequestCommentId: reviewRequestCommentId,
+    // TY-286 #C: `applyRestartToState` allows hard-restart from `fixing`. The
+    // outgoing status is no longer `fixing`, so the invariant
+    // "`fixingStartedAt === null` whenever `status !== 'fixing'`" requires
+    // clearing the timestamp here — every other transition out of `fixing`
+    // (post-fix Phase 4, `failureExit`, stale recovery) already does this.
+    fixingStartedAt: null,
   };
   if (mode === "hard") {
     nextState.iterationCount = 0;
@@ -362,9 +368,24 @@ export async function handleRestartCommand(
     return { handled: true };
   }
 
+  // TY-286 #B: the 2nd write only records `lastCodexRequestCommentId` for
+  // idempotency. The state machine was already transitioned to
+  // `waiting_codex` and `@codex review` has already been posted, so a 412
+  // here is informational — the next Codex review trigger reconciles the
+  // missing comment id. Surfacing `state_conflict` would (mis)tell operators
+  // that the restart aborted and tempt them to re-issue `/restart-review`,
+  // duplicating `@codex review` comments on the PR.
   const secondWriteOk = await updateStateCommentLocked(
     restartResult.nextState,
     "[restart] failed to record review-request comment id after posting @codex review",
+    {
+      onConflict: async (detail) => {
+        deps.warning(
+          `[restart] ${detail} Auto-review state remains waiting_codex; ` +
+            "the next Codex review trigger will reconcile.",
+        );
+      },
+    },
   );
   if (!secondWriteOk) {
     return { handled: true };

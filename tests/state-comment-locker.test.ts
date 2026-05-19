@@ -122,6 +122,45 @@ describe("createLockedStateUpdater", () => {
     expect(args.warning).not.toHaveBeenCalled();
   });
 
+  it("TY-286: per-call onConflict override takes precedence over the default handler", async () => {
+    const defaultOnConflict = vi.fn().mockResolvedValue(undefined);
+    const overrideOnConflict = vi.fn().mockResolvedValue(undefined);
+    const conflict = new StateUpdateConflictError("412 Precondition Failed");
+    const args = makeArgs({
+      updateStateComment: vi.fn().mockRejectedValue(conflict),
+      onConflict: defaultOnConflict,
+    });
+    const tryUpdate = createLockedStateUpdater(args);
+
+    const ok = await tryUpdate(makeFixingState(), "follow-up write detail", {
+      onConflict: overrideOnConflict,
+    });
+
+    expect(ok).toBe(false);
+    // The override fires instead of the default — callers can opt out of the
+    // terminal "post a 🛑 stop comment" behaviour for non-terminal 2nd writes.
+    expect(overrideOnConflict).toHaveBeenCalledWith("follow-up write detail");
+    expect(defaultOnConflict).not.toHaveBeenCalled();
+    // Warning is still emitted so the conflict is observable in operator logs.
+    expect(args.warning).toHaveBeenCalledWith(
+      `[pre-fix] Hidden comment state conflict. ${conflict.message}`,
+    );
+  });
+
+  it("TY-286: falls back to the default onConflict when the call omits options.onConflict", async () => {
+    const defaultOnConflict = vi.fn().mockResolvedValue(undefined);
+    const conflict = new StateUpdateConflictError("412 Precondition Failed");
+    const args = makeArgs({
+      updateStateComment: vi.fn().mockRejectedValue(conflict),
+      onConflict: defaultOnConflict,
+    });
+    const tryUpdate = createLockedStateUpdater(args);
+
+    await tryUpdate(makeFixingState(), "terminal write detail");
+
+    expect(defaultOnConflict).toHaveBeenCalledWith("terminal write detail");
+  });
+
   it("does not advance expectedUpdatedAt after a conflict so the next attempt re-uses the previous value", async () => {
     const update = vi
       .fn()

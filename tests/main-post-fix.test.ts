@@ -5,7 +5,10 @@ import {
   type PostFixDeps,
   type PostFixInputs,
 } from "../src/main-post-fix.js";
-import { createInitialState } from "../src/state-manager.js";
+import {
+  StateUpdateConflictError,
+  createInitialState,
+} from "../src/state-manager.js";
 import type { ReadStateResult } from "../src/state-manager.js";
 import type { ReviewState } from "../src/types.js";
 
@@ -174,6 +177,37 @@ describe("runPostFix", () => {
       }),
       "github-token",
       expect.any(Object),
+    );
+  });
+
+  it("TY-286 #A: does NOT emit state_conflict 🛑 when the Phase 4 2nd write conflicts; warns instead", async () => {
+    // The 1st write (waiting_codex) succeeded and `@codex review` was
+    // posted, so the loop is already healthy. A 412 on the 2nd write (which
+    // only records `lastCodexRequestCommentId`) must not surface a top-level
+    // stop comment that contradicts the live state — operators would
+    // otherwise see "🛑 Auto-review stopped" while the next Codex review
+    // trigger silently reconciles.
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState(),
+    });
+    (deps.updateStateComment as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ updatedAt: "2026-05-14T12:30:00Z" })
+      .mockRejectedValueOnce(
+        new StateUpdateConflictError("412 Precondition Failed"),
+      );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.postCodexReviewRequest).toHaveBeenCalledTimes(1);
+    expect(deps.postStopComment).not.toHaveBeenCalled();
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.",
+      ),
     );
   });
 
