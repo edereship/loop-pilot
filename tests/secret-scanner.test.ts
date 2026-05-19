@@ -348,6 +348,46 @@ describe("extractAddedContentFromUnifiedDiff (TY-274 follow-up — diff-based sc
     expect(targets).toEqual([{ path: "new.ts", content: "new line" }]);
   });
 
+  it("TY-287 #2: low-similarity rename-with-edits (caught by --find-renames=20%) emits only changed lines, not pre-existing secret-shaped fixture content", () => {
+    // Scenario: claude-code-action renames a JSON fixture and rewrites
+    // ~70% of it. With git's default 50% threshold the change would have
+    // been split into delete (`old.json`) + add (`new.json`), and the
+    // add side would replay every pre-existing secret-shaped sample line
+    // — hard-failing the scanner. With `--find-renames=20%` (TY-287 #2),
+    // git keeps the same `rename from`/`rename to` shape it uses for
+    // higher-similarity renames, so only the genuinely changed +lines
+    // surface as additions and the fixture's pre-existing
+    // `ghp_…`-style line stays out of the scan input.
+    const fakeGhp = "g" + "hp_abcdefghijklmnopqrstuv0123456789";
+    const diff = [
+      "diff --git a/tests/fixtures/old-config.json b/tests/fixtures/refactored-config.json",
+      "similarity index 28%",
+      "rename from tests/fixtures/old-config.json",
+      "rename to tests/fixtures/refactored-config.json",
+      "--- a/tests/fixtures/old-config.json",
+      "+++ b/tests/fixtures/refactored-config.json",
+      "@@ -3,1 +3,1 @@",
+      // The pre-existing fake-PAT line stays in the file but is unchanged,
+      // so it appears as context (not present in --unified=0 output) — the
+      // important thing is that it does NOT appear as a `+` line. The only
+      // emitted hunk is the rewritten section.
+      `-  "label": "${fakeGhp}-old-value"`,
+      `+  "label": "${fakeGhp}-new-value"`,
+    ].join("\n");
+
+    const targets = extractAddedContentFromUnifiedDiff(diff);
+    expect(targets).toHaveLength(1);
+    expect(targets[0]!.path).toBe(
+      "tests/fixtures/refactored-config.json",
+    );
+    // Only the single `+` line surfaces. The pre-existing `-`-side line is
+    // dropped; without the rename header (i.e., if git had emitted
+    // delete+add instead), the entire file body would have shown up here.
+    expect(targets[0]!.content).toBe(
+      `  "label": "${fakeGhp}-new-value"`,
+    );
+  });
+
   it("strips trailing tab / whitespace from unquoted header paths (Codex P3 r3256517019)", () => {
     // Git emits `+++ b/<path>\t<timestamp>` when the path has spaces or when
     // certain diff drivers add a timestamp. The trailing tab and anything

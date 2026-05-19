@@ -19376,6 +19376,29 @@ async function ghApi(args, token, opts = {}) {
 
 // dist/claude-code-repair-request.js
 var PREVIOUS_CHECK_FAILURE_MAX_CHARS = 2e4;
+var HEAD_RATIO = 0.25;
+function buildMiddleMarker(omitted, head, tail) {
+  return `[... truncated ${omitted} characters from the middle of CHECK_COMMAND output; kept ${head} head + ${tail} tail ...]
+`;
+}
+function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_MAX_CHARS) {
+  if (output.length <= maxChars)
+    return output;
+  const worstMarker = buildMiddleMarker(output.length, maxChars, maxChars);
+  const reservedMarkerBudget = worstMarker.length + 1;
+  if (reservedMarkerBudget >= maxChars) {
+    return output.slice(output.length - maxChars);
+  }
+  const remainingBudget = maxChars - reservedMarkerBudget;
+  const headRoom = Math.floor(remainingBudget * HEAD_RATIO);
+  const tailRoom = remainingBudget - headRoom;
+  const head = output.slice(0, headRoom);
+  const tail = output.slice(output.length - tailRoom);
+  const omitted = output.length - head.length - tail.length;
+  const marker = buildMiddleMarker(omitted, head.length, tail.length);
+  const leadingNewline = head.endsWith("\n") ? "" : "\n";
+  return head + leadingNewline + marker + tail;
+}
 
 // dist/state-manager.js
 var PREVIOUS_CHECK_FAILURE_READ_LIMIT = PREVIOUS_CHECK_FAILURE_MAX_CHARS * 2;
@@ -19458,22 +19481,33 @@ function createInitialState() {
     fixingStartedAt: null
   };
 }
+var PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS = 4e3;
 function serializeState(state) {
-  const trimmed = {
+  const wrap = (s) => {
+    const json = JSON.stringify(s, null, 2);
+    return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
+  };
+  const step1 = {
     ...state,
     findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
-  const json = JSON.stringify(trimmed, null, 2);
-  const candidate = STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
-  if (candidate.length <= MAX_SERIALIZED_BYTES) {
-    return candidate;
-  }
-  const minimal = {
+  const body1 = wrap(step1);
+  if (body1.length <= MAX_SERIALIZED_BYTES)
+    return body1;
+  const step2 = {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1)
+    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
-  const minimalJson = JSON.stringify(minimal, null, 2);
-  return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
+  const body2 = wrap(step2);
+  if (body2.length <= MAX_SERIALIZED_BYTES)
+    return body2;
+  const step3 = {
+    ...state,
+    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: null
+  };
+  return wrap(step3);
 }
 function deserializeState(commentBody) {
   const escapedOpen = STATE_COMMENT_OPEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

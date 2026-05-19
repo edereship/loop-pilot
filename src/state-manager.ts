@@ -1,6 +1,9 @@
 import * as core from "@actions/core";
 import { ghApi } from "./gh.js";
-import { PREVIOUS_CHECK_FAILURE_MAX_CHARS } from "./claude-code-repair-request.js";
+import {
+  PREVIOUS_CHECK_FAILURE_MAX_CHARS,
+  truncatePreviousCheckFailure,
+} from "./claude-code-repair-request.js";
 import type { ReviewState } from "./types.js";
 
 /**
@@ -158,31 +161,84 @@ export function createInitialState(): ReviewState {
 }
 
 /**
+ * `previousCheckFailure` is the largest variable-size field — write-time
+ * `truncatePreviousCheckFailure` caps it at `PREVIOUS_CHECK_FAILURE_MAX_CHARS`
+ * but legacy / hand-edited state can carry up to `PREVIOUS_CHECK_FAILURE_READ_LIMIT`
+ * (2× that cap). When the body is still over `MAX_SERIALIZED_BYTES` after
+ * trimming `findingsHashHistory` to one entry, re-truncate
+ * `previousCheckFailure` to this smaller budget before giving up on it.
+ */
+const PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS = 4000;
+
+/**
  * Wraps ReviewState JSON in a hidden HTML comment for storage in GitHub PR comments.
- * Trims findingsHashHistory to at most 3 entries (most recent). If the result
- * still exceeds 65000 chars, trims further to 1 entry to stay within GitHub limits.
+ *
+ * The serialized body is bounded by `MAX_SERIALIZED_BYTES` so the eventual
+ * `updateStateComment` PATCH never trips GitHub's 65,536-char comment-body
+ * limit. The pre-TY-287 fallback only trimmed `findingsHashHistory` to 1
+ * entry, leaving a 35,000-char legacy `previousCheckFailure` capable of
+ * pushing the minimal body past the limit and crashing pre-fix with a
+ * non-actionable `state_corrupted` (the PATCH returns 422, which is not a
+ * `StateUpdateConflictError`, so it propagates past `updateStateCommentLocked`).
+ *
+ * The TY-287 fallback chain (each step only runs when the previous one is
+ * still over budget):
+ *
+ *   1. Trim `findingsHashHistory` to `MAX_HISTORY_ENTRIES` (normal path).
+ *   2. Trim history to 1 entry and re-truncate `previousCheckFailure` to
+ *      `PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS` using the existing head/tail
+ *      `truncatePreviousCheckFailure` helper, which preserves the most
+ *      actionable lines (first errors + last assertion).
+ *   3. Drop `previousCheckFailure` to `null` so the body shape is bounded
+ *      by the remaining fixed-size fields. This is the floor — every other
+ *      field is fixed-size or already bounded by `validateState`.
  */
 export function serializeState(state: ReviewState): string {
-  const trimmed: ReviewState = {
+  const wrap = (s: ReviewState): string => {
+    const json = JSON.stringify(s, null, 2);
+    return (
+      STATE_COMMENT_VISIBLE_TEXT +
+      "\n\n" +
+      STATE_COMMENT_OPEN +
+      "\n" +
+      json +
+      "\n" +
+      STATE_COMMENT_CLOSE
+    );
+  };
+
+  // Step 1: normal path — keep up to MAX_HISTORY_ENTRIES of history.
+  const step1: ReviewState = {
     ...state,
     findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES),
   };
+  const body1 = wrap(step1);
+  if (body1.length <= MAX_SERIALIZED_BYTES) return body1;
 
-  const json = JSON.stringify(trimmed, null, 2);
-  const candidate =
-    STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
-
-  if (candidate.length <= MAX_SERIALIZED_BYTES) {
-    return candidate;
-  }
-
-  // Fall back to 1 history entry if the payload is still too large
-  const minimal: ReviewState = {
+  // Step 2: shrink history to 1 entry AND aggressively trim a legacy
+  // oversized previousCheckFailure to the fallback budget.
+  const step2: ReviewState = {
     ...state,
     findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: state.previousCheckFailure
+      ? truncatePreviousCheckFailure(
+          state.previousCheckFailure,
+          PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS,
+        )
+      : null,
   };
-  const minimalJson = JSON.stringify(minimal, null, 2);
-  return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
+  const body2 = wrap(step2);
+  if (body2.length <= MAX_SERIALIZED_BYTES) return body2;
+
+  // Step 3: pathological floor — drop previousCheckFailure entirely. Every
+  // other field is fixed-size (or bounded by validateState upstream), so
+  // this guarantees the body fits.
+  const step3: ReviewState = {
+    ...state,
+    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: null,
+  };
+  return wrap(step3);
 }
 
 /**

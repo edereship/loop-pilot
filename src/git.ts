@@ -3,6 +3,23 @@ import { readFileSync } from "node:fs";
 import * as core from "@actions/core";
 
 /**
+ * Stdout cap for git subprocesses that we capture (not `stdio: "inherit"`).
+ *
+ * Node's default `execFileSync` `maxBuffer` is 1 MB. `gitDiffHead` feeds the
+ * secret-scanner the full `git diff --unified=0 HEAD` output; for a PR that
+ * touches bundled artifacts (e.g., `dist/*.cjs` / `dist/*.cjs.map` after a
+ * `BUILD_COMMAND=npm run bundle` rebuild) the diff can easily reach several
+ * MB and trip ENOBUFS — causing post-fix to crash with `workflow_crashed`
+ * before it can demote state cleanly. `src/gh.ts` already raises the limit
+ * to 10 MB for the same reason on its `gh` shell; we mirror that here.
+ *
+ * The 10 MB ceiling is per-call: a runaway secret-shaped diff cannot grow
+ * arbitrarily, and any single git operation that exceeds 10 MB indicates a
+ * genuine pathology we want to surface rather than silently consume.
+ */
+export const GIT_MAX_BUFFER = 10 * 1024 * 1024;
+
+/**
  * `git rev-parse HEAD`. On failure, logs a `core.warning(...)` prefixed with
  * `[label]` and returns `""` so callers can decide whether to bail out.
  *
@@ -13,6 +30,7 @@ export function readHeadSha(label: string): string {
   try {
     return execFileSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf-8",
+      maxBuffer: GIT_MAX_BUFFER,
     }).trim();
   } catch (error) {
     core.warning(
@@ -60,13 +78,13 @@ export function gitDiffNumstat(): string {
       "--no-renames",
       "HEAD",
     ],
-    { encoding: "utf-8" },
+    { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER },
   );
 }
 
 /**
- * `git diff --unified=0 --no-color --no-ext-diff --no-textconv HEAD`
- * (raw unified diff stdout).
+ * `git diff --unified=0 --no-color --no-ext-diff --no-textconv
+ * --find-renames=20% HEAD` (raw unified diff stdout).
  *
  * Used by the secret-scanner (TY-274 #1) to scan only **added** lines rather
  * than the full working-tree contents — without this, the scanner would
@@ -82,6 +100,17 @@ export function gitDiffNumstat(): string {
  *     content as freshly introduced and stop the loop on a false positive.
  *     With git's default rename detection, pure renames emit
  *     `rename from`/`rename to` headers and no `+`/`-` lines.
+ *   - `--find-renames=20%` lowers git's default rename-detection threshold
+ *     (50%) so a rename combined with substantial rewriting (e.g.,
+ *     claude-code-action moves `tests/fixtures/old.json` to
+ *     `tests/fixtures/new.json` and rewrites ~70% of the body) is still
+ *     classified as `rename from` / `rename to` rather than emitted as a
+ *     delete + add pair. Under the old default the move-side `+`-lines
+ *     re-introduced pre-existing secret-shaped fixtures and the scanner
+ *     hard-failed on `secret_leak_suspected` (TY-287 #2). 20% trades off
+ *     against the rare false rename where two unrelated files happen to be
+ *     20% similar inside the same commit, which is far less harmful than
+ *     the silent stop the previous behaviour produced.
  *   - `--no-ext-diff` forces git's internal diff engine. Without it,
  *     `diff.external` (config) or `GIT_EXTERNAL_DIFF` (env) would invoke an
  *     external helper whose output is not guaranteed to be unified-diff
@@ -109,9 +138,11 @@ export function gitDiffHead(): string {
       "--no-color",
       "--no-ext-diff",
       "--no-textconv",
+      // TY-287 #2: see docstring above.
+      "--find-renames=20%",
       "HEAD",
     ],
-    { encoding: "utf-8" },
+    { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER },
   );
 }
 
@@ -134,7 +165,7 @@ export function gitListUntracked(): string {
       "--others",
       "--exclude-standard",
     ],
-    { encoding: "utf-8" },
+    { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER },
   );
 }
 
@@ -168,6 +199,43 @@ export function resetWorkingTree(): void {
 export function stagePaths(paths: string[]): void {
   if (paths.length === 0) return;
   execFileSync("git", ["add", "--", ...paths], { stdio: "inherit" });
+}
+
+/**
+ * `git add --intent-to-add -- <paths>` (TY-287 #2 follow-up).
+ *
+ * Adds zero-content entries to the index so `git diff HEAD` (with rename
+ * detection) sees these previously-untracked files as add-side endpoints.
+ * Without this, a low-similarity rename done by claude-code-action looks
+ * to git as a tracked-side deletion + an untracked-side new file: rename
+ * detection cannot pair them, and the destination is scanned in full by
+ * the secret-scanner — re-emitting any pre-existing secret-shape fixture
+ * content as a fresh leak.
+ *
+ * Pair every call with `resetIntentToAdd` once the scan-time diff has been
+ * captured; the index would otherwise carry stale entries into the subsequent
+ * `stagePaths` / `commit` flow. No-op when `paths` is empty so callers can
+ * pass an unguarded untracked list.
+ */
+export function intentToAdd(paths: string[]): void {
+  if (paths.length === 0) return;
+  execFileSync("git", ["add", "--intent-to-add", "--", ...paths], {
+    stdio: "inherit",
+  });
+}
+
+/**
+ * `git reset HEAD -- <paths>` (TY-287 #2 follow-up).
+ *
+ * Removes the index entries created by `intentToAdd`. For paths that were
+ * intent-to-add'd (i.e., absent from HEAD), this drops them from the index
+ * entirely and restores the "untracked" state the working tree had before
+ * the scan-time diff was prepared. Safe to run on paths that are already
+ * untracked — git just leaves them alone. No-op when `paths` is empty.
+ */
+export function resetIntentToAdd(paths: string[]): void {
+  if (paths.length === 0) return;
+  execFileSync("git", ["reset", "HEAD", "--", ...paths], { stdio: "inherit" });
 }
 
 /**
@@ -255,7 +323,7 @@ function clearUrlRewriteRules(): void {
         "--get-regexp",
         "^url\\..*\\.(insteadOf|pushInsteadOf)$",
       ],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER },
     );
   } catch (err) {
     const status = (err as { status?: unknown }).status;
@@ -367,7 +435,7 @@ function assertNoGlobalUrlRewriteRules(destinationUrl: string): void {
         "--get-regexp",
         "^url\\..*\\.(insteadOf|pushInsteadOf)$",
       ],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER },
     );
   } catch (err) {
     const status = (err as { status?: unknown }).status;

@@ -19432,22 +19432,33 @@ function validateState(obj) {
   }
   return true;
 }
+var PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS = 4e3;
 function serializeState(state) {
-  const trimmed = {
+  const wrap = (s) => {
+    const json = JSON.stringify(s, null, 2);
+    return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
+  };
+  const step1 = {
     ...state,
     findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
-  const json = JSON.stringify(trimmed, null, 2);
-  const candidate = STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
-  if (candidate.length <= MAX_SERIALIZED_BYTES) {
-    return candidate;
-  }
-  const minimal = {
+  const body1 = wrap(step1);
+  if (body1.length <= MAX_SERIALIZED_BYTES)
+    return body1;
+  const step2 = {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1)
+    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
-  const minimalJson = JSON.stringify(minimal, null, 2);
-  return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
+  const body2 = wrap(step2);
+  if (body2.length <= MAX_SERIALIZED_BYTES)
+    return body2;
+  const step3 = {
+    ...state,
+    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: null
+  };
+  return wrap(step3);
 }
 function deserializeState(commentBody) {
   const escapedOpen = STATE_COMMENT_OPEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -20064,10 +20075,12 @@ function createLockedStateUpdater(args) {
 // dist/git.js
 var import_node_child_process2 = require("node:child_process");
 var import_node_fs = require("node:fs");
+var GIT_MAX_BUFFER = 10 * 1024 * 1024;
 function readHeadSha(label) {
   try {
     return (0, import_node_child_process2.execFileSync)("git", ["rev-parse", "HEAD"], {
-      encoding: "utf-8"
+      encoding: "utf-8",
+      maxBuffer: GIT_MAX_BUFFER
     }).trim();
   } catch (error2) {
     warning(`[${label}] Could not read HEAD sha: ${error2 instanceof Error ? error2.message : String(error2)}`);
@@ -20082,7 +20095,7 @@ function gitDiffNumstat() {
     "--numstat",
     "--no-renames",
     "HEAD"
-  ], { encoding: "utf-8" });
+  ], { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER });
 }
 function gitDiffHead() {
   return (0, import_node_child_process2.execFileSync)("git", [
@@ -20098,8 +20111,10 @@ function gitDiffHead() {
     "--no-color",
     "--no-ext-diff",
     "--no-textconv",
+    // TY-287 #2: see docstring above.
+    "--find-renames=20%",
     "HEAD"
-  ], { encoding: "utf-8" });
+  ], { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER });
 }
 function gitListUntracked() {
   return (0, import_node_child_process2.execFileSync)("git", [
@@ -20108,7 +20123,7 @@ function gitListUntracked() {
     "ls-files",
     "--others",
     "--exclude-standard"
-  ], { encoding: "utf-8" });
+  ], { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER });
 }
 function readWorkingTreeFile(path) {
   try {
@@ -20128,6 +20143,18 @@ function stagePaths(paths) {
   if (paths.length === 0)
     return;
   (0, import_node_child_process2.execFileSync)("git", ["add", "--", ...paths], { stdio: "inherit" });
+}
+function intentToAdd(paths) {
+  if (paths.length === 0)
+    return;
+  (0, import_node_child_process2.execFileSync)("git", ["add", "--intent-to-add", "--", ...paths], {
+    stdio: "inherit"
+  });
+}
+function resetIntentToAdd(paths) {
+  if (paths.length === 0)
+    return;
+  (0, import_node_child_process2.execFileSync)("git", ["reset", "HEAD", "--", ...paths], { stdio: "inherit" });
 }
 function hasStagedChanges() {
   try {
@@ -20167,7 +20194,7 @@ function clearUrlRewriteRules() {
       "--local",
       "--get-regexp",
       "^url\\..*\\.(insteadOf|pushInsteadOf)$"
-    ], { encoding: "utf-8" });
+    ], { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER });
   } catch (err) {
     const status = err.status;
     if (status === 1) {
@@ -20216,7 +20243,7 @@ function assertNoGlobalUrlRewriteRules(destinationUrl) {
       "--global",
       "--get-regexp",
       "^url\\..*\\.(insteadOf|pushInsteadOf)$"
-    ], { encoding: "utf-8" });
+    ], { encoding: "utf-8", maxBuffer: GIT_MAX_BUFFER });
   } catch (err) {
     const status = err.status;
     if (status === 1) {
@@ -20895,6 +20922,8 @@ var defaultDeps3 = {
   readHeadSha: () => readHeadSha("post-fix"),
   resetWorkingTree,
   stagePaths,
+  intentToAdd,
+  resetIntentToAdd,
   hasStagedChanges,
   commit,
   push: pushWithToken,
@@ -20944,6 +20973,28 @@ function buildSecretScanTargets(args) {
     targets.push({ path, content });
   }
   return targets;
+}
+function scanWithIntentToAdd(args) {
+  const paths = [...args.untrackedPaths];
+  args.deps.intentToAdd(paths);
+  try {
+    const targets = buildSecretScanTargets({
+      diff: args.deps.gitDiffHead(),
+      // Intent-to-add promotes the untracked list into the diff, so we
+      // intentionally pass [] here — feeding the same paths back through
+      // the readFile path would double-count and (worse) re-introduce the
+      // full-content scan that this whole helper exists to avoid.
+      untrackedFiles: [],
+      readFile: (p) => args.deps.readWorkingTreeFile(p)
+    });
+    return scanForSecrets(targets);
+  } finally {
+    try {
+      args.deps.resetIntentToAdd(paths);
+    } catch (resetError) {
+      args.deps.warning(`[post-fix] Could not reset intent-to-add after secret scan: ${resetError instanceof Error ? resetError.message : String(resetError)}`);
+    }
+  }
 }
 function logSecretScanWarnings(result, stage, deps) {
   for (const w of result.warnings) {
@@ -21174,12 +21225,10 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   deps.info(`[post-fix] Scope check passed: ${scopeResult.changedFiles} file(s), ${scopeResult.totalLines} line(s).`);
-  const preCheckScanTargets = buildSecretScanTargets({
-    diff: deps.gitDiffHead(),
-    untrackedFiles: untrackedChanges.map((f) => f.path),
-    readFile: (p) => deps.readWorkingTreeFile(p)
+  const preCheckScanResult = scanWithIntentToAdd({
+    untrackedPaths: untrackedChanges.map((f) => f.path),
+    deps
   });
-  const preCheckScanResult = scanForSecrets(preCheckScanTargets);
   logSecretScanWarnings(preCheckScanResult, "pre-check", deps);
   if (preCheckScanResult.hardFailures.length > 0) {
     deps.error(`[secret-scan] Hard-fail secret patterns detected pre-check (${preCheckScanResult.hardFailures.length} finding(s)). Reverting working tree.`);
@@ -21444,12 +21493,10 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   const preCommitUntracked = preCommitUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-  const preCommitScanTargets = buildSecretScanTargets({
-    diff: deps.gitDiffHead(),
-    untrackedFiles: preCommitUntracked,
-    readFile: (p) => deps.readWorkingTreeFile(p)
+  const preCommitScanResult = scanWithIntentToAdd({
+    untrackedPaths: preCommitUntracked,
+    deps
   });
-  const preCommitScanResult = scanForSecrets(preCommitScanTargets);
   logSecretScanWarnings(preCommitScanResult, "pre-commit", deps);
   if (preCommitScanResult.hardFailures.length > 0) {
     deps.error(`[secret-scan] Hard-fail secret patterns detected pre-commit (${preCommitScanResult.hardFailures.length} finding(s)). Reverting working tree.`);

@@ -58,7 +58,7 @@ describe("readHeadSha", () => {
     expect(execFileSync).toHaveBeenCalledWith(
       "git",
       ["rev-parse", "HEAD"],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", maxBuffer: git.GIT_MAX_BUFFER },
     );
     expect(warning).not.toHaveBeenCalled();
   });
@@ -90,6 +90,16 @@ describe("subprocess wrappers", () => {
     setSecret.mockReset();
   });
 
+  it("TY-287 ENOBUFS guard: GIT_MAX_BUFFER is at least 10 MB so gitDiffHead can handle bundled-artifact diffs without ENOBUFS", () => {
+    // The default Node.js execFileSync maxBuffer is 1 MB. The auto-fix
+    // workflow ran post-fix's secret-scanner over a diff that included
+    // dist/*.cjs / dist/*.cjs.map bundles, crashed with `spawnSync git
+    // ENOBUFS`, and demoted state to `workflow_crashed`. Mirroring
+    // src/gh.ts's GH_MAX_BUFFER (10 MB) prevents the regression — any
+    // larger output indicates a real pathology worth surfacing.
+    expect(git.GIT_MAX_BUFFER).toBeGreaterThanOrEqual(10 * 1024 * 1024);
+  });
+
   it("gitDiffNumstat invokes the expected git args (TY-285 #1: -c core.quotepath=false)", () => {
     execFileSync.mockReturnValue("1\t2\tfoo\n");
     expect(git.gitDiffNumstat()).toBe("1\t2\tfoo\n");
@@ -103,17 +113,21 @@ describe("subprocess wrappers", () => {
         "--no-renames",
         "HEAD",
       ],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", maxBuffer: git.GIT_MAX_BUFFER },
     );
   });
 
-  it("gitDiffHead forces internal diff + no-textconv (Codex P1 r3256517004 / r3256517012)", () => {
+  it("gitDiffHead forces internal diff + no-textconv + low-similarity rename detection (Codex P1 r3256517004 / r3256517012, TY-287 #2)", () => {
     // The secret scanner reads from gitDiffHead. If --no-ext-diff is
     // missing, a repo with `diff.external` / GIT_EXTERNAL_DIFF configured
     // would invoke an external helper that doesn't emit unified diff
     // format → scanner sees no `+` hunks → silent bypass. Likewise,
     // --no-textconv keeps `.gitattributes` textconv drivers from rewriting
-    // content before the scanner sees it.
+    // content before the scanner sees it. TY-287 #2: --find-renames=20%
+    // lowers git's default 50% rename-detection threshold so a rename plus
+    // substantial rewriting is still emitted as a rename header instead of
+    // a delete + add pair (which would let pre-existing secret-shaped
+    // fixture content reappear in the additions and hard-fail the scanner).
     execFileSync.mockReturnValue("");
     git.gitDiffHead();
     expect(execFileSync).toHaveBeenCalledWith(
@@ -126,9 +140,10 @@ describe("subprocess wrappers", () => {
         "--no-color",
         "--no-ext-diff",
         "--no-textconv",
+        "--find-renames=20%",
         "HEAD",
       ],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", maxBuffer: git.GIT_MAX_BUFFER },
     );
   });
 
@@ -144,7 +159,7 @@ describe("subprocess wrappers", () => {
         "--others",
         "--exclude-standard",
       ],
-      { encoding: "utf-8" },
+      { encoding: "utf-8", maxBuffer: git.GIT_MAX_BUFFER },
     );
   });
 
@@ -183,6 +198,34 @@ describe("subprocess wrappers", () => {
     expect(execFileSync).toHaveBeenCalledWith(
       "git",
       ["add", "--", "a.ts", "b.ts"],
+      { stdio: "inherit" },
+    );
+  });
+
+  it("TY-287 #2 follow-up: intentToAdd is a no-op for empty paths", () => {
+    git.intentToAdd([]);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it("TY-287 #2 follow-up: intentToAdd runs `git add --intent-to-add -- <paths>`", () => {
+    git.intentToAdd(["src/new.ts", "data/a => b.json"]);
+    expect(execFileSync).toHaveBeenCalledWith(
+      "git",
+      ["add", "--intent-to-add", "--", "src/new.ts", "data/a => b.json"],
+      { stdio: "inherit" },
+    );
+  });
+
+  it("TY-287 #2 follow-up: resetIntentToAdd is a no-op for empty paths", () => {
+    git.resetIntentToAdd([]);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it("TY-287 #2 follow-up: resetIntentToAdd runs `git reset HEAD -- <paths>` to drop intent-to-add markers", () => {
+    git.resetIntentToAdd(["src/new.ts"]);
+    expect(execFileSync).toHaveBeenCalledWith(
+      "git",
+      ["reset", "HEAD", "--", "src/new.ts"],
       { stdio: "inherit" },
     );
   });

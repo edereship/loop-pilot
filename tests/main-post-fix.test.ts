@@ -80,6 +80,8 @@ interface DepRecord {
   readonly stagedPaths: string[][];
   readonly commitMessages: string[];
   readonly pushCalls: Array<{ owner: string; repo: string; ref: string; token: string }>;
+  readonly intentToAddCalls: string[][];
+  readonly resetIntentToAddCalls: string[][];
 }
 
 function makeDeps(
@@ -91,6 +93,8 @@ function makeDeps(
     stagedPaths: [] as string[][],
     commitMessages: [] as string[],
     pushCalls: [] as Array<{ owner: string; repo: string; ref: string; token: string }>,
+    intentToAddCalls: [] as string[][],
+    resetIntentToAddCalls: [] as string[][],
   };
   const deps: PostFixDeps = {
     readState: vi.fn().mockResolvedValue(readResult),
@@ -116,6 +120,12 @@ function makeDeps(
     stagePaths: (paths) => {
       counters.stagedPaths.push([...paths]);
     },
+    intentToAdd: (paths) => {
+      counters.intentToAddCalls.push([...paths]);
+    },
+    resetIntentToAdd: (paths) => {
+      counters.resetIntentToAddCalls.push([...paths]);
+    },
     hasStagedChanges: () => true,
     commit: (msg) => {
       counters.commitMessages.push(msg);
@@ -133,6 +143,8 @@ function makeDeps(
     stagedPaths: { get: () => counters.stagedPaths },
     commitMessages: { get: () => counters.commitMessages },
     pushCalls: { get: () => counters.pushCalls },
+    intentToAddCalls: { get: () => counters.intentToAddCalls },
+    resetIntentToAddCalls: { get: () => counters.resetIntentToAddCalls },
   }) as PostFixDeps & DepRecord;
 }
 
@@ -417,13 +429,26 @@ describe("runPostFix", () => {
     expect(deps.runCheckCommand).toHaveBeenCalled();
   });
 
-  it("treats entire content of untracked files as added and scans them (TY-274 #1)", async () => {
+  it("treats entire content of untracked files as added and scans them via intent-to-add diff (TY-274 #1 / TY-287 #2 follow-up)", async () => {
     // claude-code-action added a brand-new file containing a hard-fail
-    // pattern. Diff doesn't include the file body, so untracked files must
-    // be read in full.
+    // pattern. Under the TY-287 #2 follow-up, post-fix promotes untracked
+    // paths to intent-to-add before running gitDiffHead so git's rename
+    // detection can pair low-similarity renames with their tracked-side
+    // deletions. As a side-effect, the untracked file's full contents
+    // appear in the diff as `+` lines, and the secret-scanner consumes
+    // them through the unified-diff path rather than the readFile path.
+    //
     // Token literal split with `+` to avoid self-matching the scanner regex in
     // this source file (see the diff-based scan rationale above).
     const fakeGhp = "g" + "hp_abcdefghijklmnopqrstuv0123456789";
+    const intentToAddDiff = [
+      "diff --git a/src/new-leak.ts b/src/new-leak.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/src/new-leak.ts",
+      "@@ -0,0 +1 @@",
+      `+export const t = '${fakeGhp}';`,
+    ].join("\n");
     const deps = makeDeps(
       {
         found: true,
@@ -434,8 +459,14 @@ describe("runPostFix", () => {
       },
       {
         gitDiffNumstat: () => "",
-        gitDiffHead: () => "",
+        // Real git: empty before intent-to-add, populated after. The mock
+        // returns the post-intent-to-add diff straight from the first call
+        // because the pre-check scan happens after `intentToAdd` is invoked.
+        gitDiffHead: () => intentToAddDiff,
         gitListUntracked: () => "src/new-leak.ts\n",
+        // The untracked-changes enumeration (used for scope check + line
+        // counting) still reads the file directly; the scanner itself now
+        // consumes the file via the post-intent-to-add diff above.
         readWorkingTreeFile: (path) =>
           path === "src/new-leak.ts"
             ? `export const t = '${fakeGhp}';`
@@ -444,6 +475,13 @@ describe("runPostFix", () => {
     );
 
     await runPostFix(baseConfig, deps, baseInputs);
+
+    // TY-287 #2 follow-up: untracked paths must be intent-to-add'd before
+    // the scan so low-similarity renames are paired with their deletions,
+    // and the markers must be reset afterwards so the subsequent
+    // `stagePaths` flow does not surface stale index entries.
+    expect(deps.intentToAddCalls).toContainEqual(["src/new-leak.ts"]);
+    expect(deps.resetIntentToAddCalls).toContainEqual(["src/new-leak.ts"]);
 
     expect(deps.resetCalls).toBe(1);
     expect(deps.runCheckCommand).not.toHaveBeenCalled();
@@ -518,12 +556,96 @@ describe("runPostFix", () => {
     );
   });
 
-  it("scans untracked files whose names contain ' => ' (Codex P2 r3256517009)", async () => {
+  it("TY-287 #2 follow-up (Codex P2 r3263061946): low-similarity rename emits only the changed lines via intent-to-add + rename detection", async () => {
+    // Scenario: claude-code-action moves `tests/fixtures/old.json` to
+    // `tests/fixtures/new.json` and rewrites ~70% of the body. The source
+    // file already contained a secret-shaped sample (the unchanged half).
+    //
+    // Before the TY-287 #2 follow-up: `git diff HEAD` saw only the
+    // deletion (the destination was untracked, not in the index), so
+    // `--find-renames=20%` could not pair them and the destination was
+    // read in full via `readWorkingTreeFile` — re-emitting the
+    // pre-existing secret-shaped line and hard-failing the scanner.
+    //
+    // After the follow-up: post-fix calls `intentToAdd` on the untracked
+    // destination before the scan, the rename pair is detected, and only
+    // the genuinely changed `+` lines surface as additions. The
+    // pre-existing fixture content stays out of the scan input.
+    const fakeGhp = "g" + "hp_abcdefghijklmnopqrstuv0123456789";
+    const renameDiff = [
+      // Rename header pair emitted by `--find-renames=20%` (with intent-to-add).
+      "diff --git a/tests/fixtures/old-config.json b/tests/fixtures/new-config.json",
+      "similarity index 28%",
+      "rename from tests/fixtures/old-config.json",
+      "rename to tests/fixtures/new-config.json",
+      "--- a/tests/fixtures/old-config.json",
+      "+++ b/tests/fixtures/new-config.json",
+      "@@ -2 +2 @@",
+      // Only the genuinely rewritten line — the pre-existing secret-shape
+      // line in the file body is NOT here. It would have been re-emitted
+      // had git treated this as delete + add.
+      `-  "label": "old-${fakeGhp.slice(0, 12)}"`,
+      `+  "label": "new-value"`,
+    ].join("\n");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        // numstat sees the rename source as a deletion (numstat is invoked
+        // before intent-to-add). The exact shape is not the focus of this
+        // test; what matters is the scan path's behaviour.
+        gitDiffNumstat: () => "5\t10\ttests/fixtures/old-config.json\n",
+        // Mock the post-intent-to-add diff so the scanner consumes the
+        // rename-headered hunks rather than reading the destination in full.
+        gitDiffHead: () => renameDiff,
+        gitListUntracked: () => "tests/fixtures/new-config.json\n",
+        // Provide content so the untracked-changes enumeration treats this
+        // as a non-binary text file; the scanner itself never sees this
+        // value because it runs off the rename-headered diff above.
+        readWorkingTreeFile: (path) =>
+          path === "tests/fixtures/new-config.json"
+            ? `{\n  "label": "new-value",\n  "other": "stays"\n}\n`
+            : null,
+      },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.intentToAddCalls).toContainEqual([
+      "tests/fixtures/new-config.json",
+    ]);
+    expect(deps.resetIntentToAddCalls).toContainEqual([
+      "tests/fixtures/new-config.json",
+    ]);
+    // The pre-existing secret-shape line is in the `-` half of the rename
+    // diff, so the scanner never sees it as an addition. No hard failure,
+    // no working-tree reset.
+    expect(deps.resetCalls).toBe(0);
+    expect(deps.postStopComment).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      "secret_leak_suspected",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(deps.runCheckCommand).toHaveBeenCalled();
+  });
+
+  it("scans untracked files whose names contain ' => ' via intent-to-add diff (Codex P2 r3256517009 / TY-287 #2 follow-up)", async () => {
     // `git ls-files --others` returns real filesystem paths verbatim, never
-    // rename notation (that's a `git diff --numstat` artefact). A pre-commit
-    // filter that drops `" => "` lines would silently skip legitimate
-    // untracked files with that substring in their name, letting any secret
-    // in their body slip past the final scan.
+    // rename notation (that's a `git diff --numstat` artefact). The TY-287
+    // #2 follow-up routes the untracked-file scan through `gitDiffHead`
+    // (via intent-to-add) so rename detection can pair low-similarity
+    // renames with their deletions. Pre-existing fixtures whose names
+    // contain ` => ` must still be scanned end-to-end through that path.
     const fakeGhp = "g" + "hp_abcdefghijklmnopqrstuv0123456789";
     const untrackedListings = vi
       .fn()
@@ -531,6 +653,21 @@ describe("runPostFix", () => {
       .mockReturnValueOnce("")
       // Pre-commit enumeration: untracked file with ` => ` in its name.
       .mockReturnValueOnce("data/a => b.json\n");
+    const preCommitDiff = [
+      `diff --git a/data/a => b.json b/data/a => b.json`,
+      "new file mode 100644",
+      `--- /dev/null`,
+      `+++ b/data/a => b.json`,
+      "@@ -0,0 +1 @@",
+      `+{ "token": "${fakeGhp}" }`,
+    ].join("\n");
+    const diffHead = vi
+      .fn()
+      // Pre-check scan: nothing changed yet aside from the tracked file.
+      .mockReturnValueOnce("")
+      // Pre-commit scan: intent-to-add has promoted the untracked file
+      // into the diff.
+      .mockReturnValueOnce(preCommitDiff);
     const deps = makeDeps(
       {
         found: true,
@@ -541,17 +678,16 @@ describe("runPostFix", () => {
       },
       {
         gitDiffNumstat: () => "1\t0\tsrc/foo.ts\n",
-        gitDiffHead: () => "",
+        gitDiffHead: diffHead,
         gitListUntracked: untrackedListings,
-        readWorkingTreeFile: (path) =>
-          path === "data/a => b.json"
-            ? `{ "token": "${fakeGhp}" }`
-            : null,
+        readWorkingTreeFile: () => null,
       },
     );
 
     await runPostFix(baseConfig, deps, baseInputs);
 
+    expect(deps.intentToAddCalls).toContainEqual(["data/a => b.json"]);
+    expect(deps.resetIntentToAddCalls).toContainEqual(["data/a => b.json"]);
     expect(deps.resetCalls).toBe(1);
     expect(deps.commitMessages).toEqual([]);
     expect(deps.postStopComment).toHaveBeenCalledWith(

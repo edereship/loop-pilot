@@ -134,6 +134,59 @@ describe("serializeState", () => {
     expect(restored!.findingsHashHistory[1].hash).toBe("ddd");
     expect(restored!.findingsHashHistory[2].hash).toBe("eee");
   });
+
+  it("TY-287 #1: re-truncates previousCheckFailure in the fallback path so an oversized blob cannot push the body over 65,000 chars", () => {
+    // serializeState does not run validateState on its input, so a legacy
+    // / hand-edited state may carry a previousCheckFailure that, when
+    // wrapped + serialized, exceeds GitHub's 65,536-char comment-body
+    // limit even with findingsHashHistory trimmed to 1 entry. The Step 1
+    // fallback (history-only) was insufficient; Step 2 must re-truncate
+    // previousCheckFailure with the head/tail helper.
+    const oversizedFailure = "X".repeat(70_000);
+    const state = makeState({
+      previousCheckFailure: oversizedFailure,
+      findingsHashHistory: [
+        { iteration: 1, hash: "h1" },
+        { iteration: 2, hash: "h2" },
+        { iteration: 3, hash: "h3" },
+      ],
+    });
+
+    const serialized = serializeState(state);
+
+    expect(serialized.length).toBeLessThanOrEqual(65_000);
+    const restored = deserializeState(serialized);
+    expect(restored).not.toBeNull();
+    // History was shrunk and previousCheckFailure was re-truncated with
+    // truncatePreviousCheckFailure(_, 4000). The result must still be a
+    // string (preserving actionable head/tail context) and dramatically
+    // shorter than the 70,000-char input.
+    expect(typeof restored!.previousCheckFailure).toBe("string");
+    expect(restored!.previousCheckFailure!.length).toBeLessThan(5_000);
+  });
+
+  it("TY-287 #1: guarantees body ≤ 65,000 chars even for a pathologically oversized previousCheckFailure (Step 2 / Step 3 floor)", () => {
+    // The 3-step fallback's invariant: regardless of how oversized
+    // previousCheckFailure is, the wrapped body is bounded so the eventual
+    // updateStateComment PATCH cannot exceed GitHub's 65,536-char limit.
+    // Step 2 re-truncates to ~4,000 chars and Step 3 (the floor) nulls the
+    // field outright — pre-fix would otherwise crash on the 422 returned by
+    // an oversized PATCH because it is not a StateUpdateConflictError.
+    const veryLargeFailure = "Y".repeat(200_000);
+    const state = makeState({
+      previousCheckFailure: veryLargeFailure,
+    });
+
+    const serialized = serializeState(state);
+
+    expect(serialized.length).toBeLessThanOrEqual(65_000);
+    const restored = deserializeState(serialized);
+    expect(restored).not.toBeNull();
+    // Either Step 2 (truncated string) or Step 3 (null) is acceptable; the
+    // invariant the caller depends on is "the body fits", not which step
+    // happened to fit it.
+    expect(restored!.previousCheckFailure?.length ?? 0).toBeLessThan(35_000);
+  });
 });
 
 describe("deserializeState", () => {

@@ -121,6 +121,19 @@ export interface PostFixDeps {
   resetWorkingTree: () => void;
   /** Stages the given paths. */
   stagePaths: (paths: string[]) => void;
+  /**
+   * Adds the given paths to the index as intent-to-add (zero-content entries)
+   * so subsequent `gitDiffHead` calls treat previously-untracked files as
+   * add-side endpoints and git's rename detection can pair low-similarity
+   * renames with their tracked-side deletions (TY-287 #2 follow-up).
+   */
+  intentToAdd: (paths: string[]) => void;
+  /**
+   * Inverse of `intentToAdd`: drops intent-to-add entries from the index so
+   * the post-scan flow's `stagePaths` does not surface stale index state.
+   * No-op for already-clean paths.
+   */
+  resetIntentToAdd: (paths: string[]) => void;
   /** Returns true if the index has staged changes. */
   hasStagedChanges: () => boolean;
   /** Creates a commit with the supplied message. */
@@ -151,6 +164,8 @@ const defaultDeps: PostFixDeps = {
   readHeadSha: () => git.readHeadSha("post-fix"),
   resetWorkingTree: git.resetWorkingTree,
   stagePaths: git.stagePaths,
+  intentToAdd: git.intentToAdd,
+  resetIntentToAdd: git.resetIntentToAdd,
   hasStagedChanges: git.hasStagedChanges,
   commit: git.commit,
   push: git.pushWithToken,
@@ -234,6 +249,58 @@ function buildSecretScanTargets(args: {
     targets.push({ path, content });
   }
   return targets;
+}
+
+/**
+ * Run a single secret-scan pass with the untracked working-tree files
+ * temporarily promoted to intent-to-add so `git diff HEAD` (with rename
+ * detection enabled by `--find-renames=20%` in `gitDiffHead`) can pair
+ * low-similarity renames with their tracked-side deletions (TY-287 #2
+ * follow-up to Codex P2 r3263061946).
+ *
+ * Without intent-to-add, the post-fix flow scans untracked files in full
+ * via `readWorkingTreeFile`, so any pre-existing secret-shape fixture
+ * content in a moved file re-appears as a fresh leak and hard-fails the
+ * scanner. With intent-to-add, the destination is visible to `git diff
+ * HEAD` and git pairs it with the deleted source — only the actually
+ * changed lines are surfaced as additions. The `finally` block restores
+ * the empty index even when `gitDiffHead` / `scanForSecrets` throws, so
+ * the subsequent `stagePaths` flow does not see stale entries.
+ */
+function scanWithIntentToAdd(args: {
+  untrackedPaths: readonly string[];
+  deps: {
+    intentToAdd: (paths: string[]) => void;
+    resetIntentToAdd: (paths: string[]) => void;
+    gitDiffHead: () => string;
+    readWorkingTreeFile: (path: string) => string | null;
+    warning: (message: string) => void;
+  };
+}): SecretScanResult {
+  const paths = [...args.untrackedPaths];
+  args.deps.intentToAdd(paths);
+  try {
+    const targets = buildSecretScanTargets({
+      diff: args.deps.gitDiffHead(),
+      // Intent-to-add promotes the untracked list into the diff, so we
+      // intentionally pass [] here — feeding the same paths back through
+      // the readFile path would double-count and (worse) re-introduce the
+      // full-content scan that this whole helper exists to avoid.
+      untrackedFiles: [],
+      readFile: (p) => args.deps.readWorkingTreeFile(p),
+    });
+    return scanForSecrets(targets);
+  } finally {
+    try {
+      args.deps.resetIntentToAdd(paths);
+    } catch (resetError) {
+      args.deps.warning(
+        `[post-fix] Could not reset intent-to-add after secret scan: ${
+          resetError instanceof Error ? resetError.message : String(resetError)
+        }`,
+      );
+    }
+  }
 }
 
 /**
@@ -676,12 +743,10 @@ export async function runPostFix(
   // would falsely flag the scanner's own regex literals and test fixtures
   // (which encode the patterns) as leaks the first time they entered the
   // tree; that content is in HEAD now and therefore absent from `git diff`.
-  const preCheckScanTargets = buildSecretScanTargets({
-    diff: deps.gitDiffHead(),
-    untrackedFiles: untrackedChanges.map((f) => f.path),
-    readFile: (p) => deps.readWorkingTreeFile(p),
+  const preCheckScanResult = scanWithIntentToAdd({
+    untrackedPaths: untrackedChanges.map((f) => f.path),
+    deps,
   });
-  const preCheckScanResult = scanForSecrets(preCheckScanTargets);
   logSecretScanWarnings(preCheckScanResult, "pre-check", deps);
   if (preCheckScanResult.hardFailures.length > 0) {
     deps.error(
@@ -1096,12 +1161,10 @@ export async function runPostFix(
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const preCommitScanTargets = buildSecretScanTargets({
-    diff: deps.gitDiffHead(),
-    untrackedFiles: preCommitUntracked,
-    readFile: (p) => deps.readWorkingTreeFile(p),
+  const preCommitScanResult = scanWithIntentToAdd({
+    untrackedPaths: preCommitUntracked,
+    deps,
   });
-  const preCommitScanResult = scanForSecrets(preCommitScanTargets);
   logSecretScanWarnings(preCommitScanResult, "pre-commit", deps);
   if (preCommitScanResult.hardFailures.length > 0) {
     deps.error(

@@ -19776,22 +19776,33 @@ function createInitialState() {
     fixingStartedAt: null
   };
 }
+var PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS = 4e3;
 function serializeState(state) {
-  const trimmed = {
+  const wrap = (s) => {
+    const json = JSON.stringify(s, null, 2);
+    return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
+  };
+  const step1 = {
     ...state,
     findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
-  const json = JSON.stringify(trimmed, null, 2);
-  const candidate = STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
-  if (candidate.length <= MAX_SERIALIZED_BYTES) {
-    return candidate;
-  }
-  const minimal = {
+  const body1 = wrap(step1);
+  if (body1.length <= MAX_SERIALIZED_BYTES)
+    return body1;
+  const step2 = {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1)
+    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
-  const minimalJson = JSON.stringify(minimal, null, 2);
-  return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + minimalJson + "\n" + STATE_COMMENT_CLOSE;
+  const body2 = wrap(step2);
+  if (body2.length <= MAX_SERIALIZED_BYTES)
+    return body2;
+  const step3 = {
+    ...state,
+    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    previousCheckFailure: null
+  };
+  return wrap(step3);
 }
 function deserializeState(commentBody) {
   const escapedOpen = STATE_COMMENT_OPEN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -20396,10 +20407,12 @@ function createLockedStateUpdater(args) {
 
 // dist/git.js
 var import_node_child_process2 = require("node:child_process");
+var GIT_MAX_BUFFER = 10 * 1024 * 1024;
 function readHeadSha(label) {
   try {
     return (0, import_node_child_process2.execFileSync)("git", ["rev-parse", "HEAD"], {
-      encoding: "utf-8"
+      encoding: "utf-8",
+      maxBuffer: GIT_MAX_BUFFER
     }).trim();
   } catch (error2) {
     warning(`[${label}] Could not read HEAD sha: ${error2 instanceof Error ? error2.message : String(error2)}`);

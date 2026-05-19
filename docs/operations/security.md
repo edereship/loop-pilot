@@ -504,7 +504,7 @@ post-fix は scope check 通過後 / CHECK_COMMAND 実行前に、`git diff HEAD
 
 | 対象 | 取得方法 |
 | -- | -- |
-| Tracked file の変更分 | `git diff --unified=0 --no-renames --no-color HEAD` の `+` 行のみを抽出。pre-existing な内容 (HEAD 既存) は対象外なので、scanner の正規表現リテラルや test fixture が自己 false-positive を起こすことはない |
+| Tracked file の変更分 | `git diff --unified=0 --no-color --no-ext-diff --no-textconv --find-renames=20% HEAD` の `+` 行のみを抽出。pre-existing な内容 (HEAD 既存) は対象外なので、scanner の正規表現リテラルや test fixture が自己 false-positive を起こすことはない。TY-287 #2 以降は git の rename 検出閾値を 20% (デフォルト 50%) に下げ、ファイル移動 + 大幅書き換えが `rename from` / `rename to` のヘッダで emit され続けるようにしている (旧設定では低類似度 rename が delete + add に分解され、移動先全行が `+` 行として scanner 入力に乗って既存の secret-shape フィクスチャを誤検出するパスがあった) |
 | Untracked file | ファイル本体を `readWorkingTreeFile` で読む。新規ファイルは全行が事実上「追加行」 |
 
 post-fix は scan を **2 段階**で実行する:
@@ -516,7 +516,7 @@ diff parsing は state machine で hunk 内外を区別し、以下の edge case
 
 - `+++` で始まる **本物の追加行** (例: ソースコード上で `++ foo` で始まる行) を file header と誤判定せずに scan 対象に含める
 - git が path を quote する形 (`+++ "b/<path>"`、tab / non-ASCII を含む場合) を unquote して scan を継続する
-- **rename を delete/add に展開しない** (default の rename 検出に任せる)。これにより rename 元に既存の secret-shape 文字列があっても false-positive にならない
+- **rename を delete/add に展開しない** (`--find-renames=20%` で git の rename 検出閾値を下げ、20% 以上の類似度を持つ rename をすべて rename ヘッダで emit させる)。さらに scan 直前に `git add --intent-to-add` で untracked file を index に乗せ、`git diff HEAD` の add 側に出現させる (`gitListUntracked` がまだ index に上がっていない宛先を返す典型ケースで、rename 検出が deletion とペアにできるようにする目的)。scan 完了後は `git reset HEAD -- <paths>` で intent-to-add を解除し、subsequent `stagePaths` フローに干渉しないようにする。これにより、claude-code-action が tracked file を rename + 大幅書き換えしても rename 元の既存 secret-shape 文字列が false-positive にならない。20% 未満の rewriting は依然 delete + add に分かれる可能性があるが、運用上は稀。万一 false-positive を踏んだ場合は `/restart-review --hard` で復旧する
 
 ### 2 段階運用
 
