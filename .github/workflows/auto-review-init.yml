@@ -95,7 +95,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          BODY=$'⚠️ **Auto-review init failed.**\n\nThe init workflow that prepares auto-review state and posts the initial `@codex review` failed before completing. Auto-review may not be active on this PR until init runs successfully. Re-run this workflow from the Actions tab, or re-trigger init by removing and re-adding the gate label (or closing/reopening the PR in full-auto mode) (TY-283).\n\nWorkflow run: '"$RUN_URL"
+          BODY=$'⚠️ **Auto-review init failed.**\n\nThe init workflow that prepares auto-review state and posts the initial `@codex review` failed before completing. Auto-review may not be active on this PR until init runs successfully. Re-run this workflow from the Actions tab, or re-trigger init by removing and re-adding the gate label (or closing/reopening the PR in full-auto mode).\n\nWorkflow run: '"$RUN_URL"
           gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --method POST \
             --raw-field body="$BODY" \

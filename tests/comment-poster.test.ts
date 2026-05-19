@@ -25,6 +25,7 @@ const {
   postTerminalNotification,
   postTestFailureComment,
 } = await import("../src/comment-poster.js");
+const { STOP_REASON_LABELS } = await import("../src/types.js");
 
 const mockedGhApi = vi.mocked(ghApi);
 const mockedUpsertStatusComment = vi.mocked(upsertStatusComment);
@@ -99,9 +100,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
     );
     expect(body).toContain("🛑");
     expect(body).toContain("Auto-review stopped");
-    expect(body).toContain(
-      "Claude Code Action exhausted the configured --max-turns budget",
-    );
+    expect(body).toContain(STOP_REASON_LABELS.max_turns_exceeded);
     expect(body).toContain("Open in-scope findings remaining: 2");
     expect(body).toContain("Manual intervention required");
     expect(body).toContain(`[status comment](${permalink})`);
@@ -209,9 +208,7 @@ describe("terminal poster wiring (TY-259)", () => {
     expect(mockedGhApi).toHaveBeenCalledTimes(1);
     const { body } = expectPostCommentInvocation(mockedGhApi.mock.calls[0]);
     expect(body).toContain("Auto-review stopped");
-    expect(body).toContain(
-      "Auto-fix blocked — the repair diff touched protected paths.",
-    );
+    expect(body).toContain(STOP_REASON_LABELS.scope_violation);
     expect(body).toContain("Open in-scope findings remaining: 3");
   });
 

@@ -443,7 +443,7 @@ permissions:
 | `scope_violation` | 上記スコープ検査でいずれかの規則に違反した |
 | `max_turns_exceeded` | `--max-turns` を使い切って repair が完了しなかった |
 
-`rate_limit` / `overloaded` 等の Anthropic API レベルの一時失敗は既存 `claude_api_error` を流用する（claude-code-action 内部でリトライ済みのため、ここに到達した時点で API 障害扱い）。
+`rate_limit` / `overloaded` 等の Anthropic API レベルの一時失敗は `action_failure` 経路で観測される（claude-code-action 内部でリトライ済みのため、ここに到達した時点で API 障害扱い。最終的に non-zero exit したものを post-fix が `action_failure` として処理する）。
 
 ### コスト見積もり（参考）
 

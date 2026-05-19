@@ -284,7 +284,7 @@ jobs:
             echo "::notice::TY-282 2A already posted a top-level stop notification within 90s (${RECENT_STOP} found); skipping 2B fail-safe to avoid duplicate."
             exit 0
           fi
-          BODY=$'🛑 **Auto-review crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post (TY-282 #2B).\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
+          BODY=$'🛑 **Auto-review crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post.\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
           gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --method POST \
             --raw-field body="$BODY" \

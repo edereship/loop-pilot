@@ -84,27 +84,32 @@ export type ReviewStatus =
  * `comment-poster.ts`, and tests.
  */
 export const STOP_REASON_LABELS = {
-  no_findings: "no findings at or above the configured severity threshold",
-  max_iterations: "reached max iterations (MAX_REVIEW_ITERATIONS)",
-  loop_detected: "same findings detected in loop",
-  claude_api_error: "Claude API error",
-  test_failure: "CHECK_COMMAND failed after fix",
-  manual_stop: "manual stop requested",
-  state_corrupted: "hidden comment state corrupted",
-  state_conflict: "hidden comment state changed concurrently",
-  workflow_crashed:
-    "Auto-fix workflow crashed before it could post a clean stop comment (TY-282)",
-  action_timeout: "Claude Code Action workflow timeout",
-  action_failure: "Claude Code Action exited with a non-zero status",
-  scope_violation: "Auto-fix blocked — the repair diff touched protected paths.",
-  max_turns_exceeded: "Claude Code Action exhausted the configured --max-turns budget",
-  codex_usage_limit: "Codex reported usage / quota limits; no review was performed",
+  no_findings: "no findings at or above the severity threshold — done",
+  max_iterations: "max iterations reached — `/restart-review --hard` to retry",
+  loop_detected:
+    "same findings repeated at escalated tier — review the finding manually",
+  test_failure:
+    "CHECK_COMMAND failed after the repair — fix the failure and `/restart-review`",
+  state_corrupted:
+    "hidden state JSON corrupted — see docs/operations/stop-and-recovery.md",
+  state_conflict:
+    "hidden state changed concurrently — wait, then `/restart-review`",
+  workflow_crashed: "auto-fix workflow crashed — `/restart-review` to resume",
+  action_timeout: "Claude Code Action timed out — `/restart-review` to retry",
+  action_failure:
+    "Claude Code Action exited non-zero — check the workflow run",
+  scope_violation:
+    "repair touched blocked paths — adjust `AUTO_REVIEW_BLOCK_PATHS` or revert",
+  max_turns_exceeded:
+    "Claude Code Action hit `--max-turns` — `/restart-review` escalates tier",
+  codex_usage_limit:
+    "Codex quota exhausted — wait for reset, then `/restart-review`",
   codex_request_failed:
-    "Re-posting @codex review failed; auto-review stopped to avoid silent deadlock",
+    "could not re-post `@codex review` — fix Codex auth, then `/restart-review`",
   secret_leak_suspected:
-    "Auto-fix produced output matching a high-confidence secret pattern (TY-274)",
+    "auto-fix output looks like a secret — review, then `/restart-review --hard`",
   action_no_op:
-    "claude-code-action produced no file changes for the given findings",
+    "Claude Code Action made no file changes — review the findings manually",
 } as const satisfies Record<string, string>;
 
 export type StopReason = keyof typeof STOP_REASON_LABELS;

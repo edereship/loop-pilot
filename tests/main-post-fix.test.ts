@@ -1113,7 +1113,7 @@ describe("runPostFix", () => {
       corrupted: false,
       commentId: 100,
       commentUpdatedAt: "2026-05-14T12:00:00Z",
-      state: makeState({ status: "stopped", stopReason: "manual_stop" }),
+      state: makeState({ status: "stopped", stopReason: "max_iterations" }),
     });
 
     await runPostFix(baseConfig, deps, baseInputs);
