@@ -21276,7 +21276,23 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   if (!firstWriteOk) {
     return { handled: true };
   }
-  const reviewRequestCommentId = await deps.postCodexReviewRequest(context.owner, context.repo, context.prNumber, context.codexReviewRequestToken);
+  let reviewRequestCommentId;
+  try {
+    reviewRequestCommentId = await deps.postCodexReviewRequest(context.owner, context.repo, context.prNumber, context.codexReviewRequestToken);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    deps.warning(`[restart] Failed to post @codex review after first state write: ${message}. Downgrading to stopped/codex_request_failed so operators see the actionable stop reason.`);
+    const stoppedState = {
+      ...preflight.nextState,
+      status: "stopped",
+      stopReason: "codex_request_failed"
+    };
+    if (!await updateStateCommentLocked(stoppedState, "[restart] Could not record codex_request_failed stop after @codex review post failure.")) {
+      return { handled: true };
+    }
+    await deps.postStopComment(context.owner, context.repo, context.prNumber, "codex_request_failed", context.triggerCommentId, 0, `Failed to post @codex review after /restart-review: ${message}`, context.githubToken);
+    return { handled: true };
+  }
   const restartResult = applyRestartToState(context.stateResult.state, command.mode, reviewRequestCommentId);
   if (!restartResult.ok) {
     await deps.postComment(context.owner, context.repo, context.prNumber, restartRejectionMessage(restartResult.reason), context.githubToken);

@@ -85,6 +85,8 @@ TY-273 以降は同じ失敗で `stopped/codex_request_failed` へ降格し、`p
 
 検知ロジック: `src/main-post-fix.ts` の Phase 4 にある `postCodexReviewRequest` catch ブロック。TY-284 で no-op 経路の auto-retry 自体を廃止したため、`codex_request_failed` の発生源は committed-fix 後の Phase 4 のみに集約された。
 
+TY-300 以降は `/restart-review` 経由でも発火しうる: `handleRestartCommand` の第 1 書き込み (`status: waiting_codex` 確定) 直後に `@codex review` の再投稿が失敗した場合、同じ `codex_request_failed` stop reason で降格し top-level 停止コメントが投稿される。`addRestartReaction` / 「🟢 Auto-review restarted」audit comment は付かない (restart 自体が成立していないため)。復旧手順は post-fix 経由の場合と同じ — Codex 認証 / 接続を直してから `/restart-review` (soft / hard どちらでも) で再開する。
+
 ---
 
 ### claude-code-action が 0 件修正で終わった (`action_no_op`, TY-284)

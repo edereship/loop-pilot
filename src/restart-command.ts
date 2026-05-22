@@ -368,12 +368,62 @@ export async function handleRestartCommand(
     return { handled: true };
   }
 
-  const reviewRequestCommentId = await deps.postCodexReviewRequest(
-    context.owner,
-    context.repo,
-    context.prNumber,
-    context.codexReviewRequestToken,
-  );
+  // TY-300: catch a throwing `postCodexReviewRequest` so the restart cannot
+  // silently deadlock. The first write above has already flipped the hidden
+  // state to `waiting_codex`; if Codex post then fails (5xx / 429 / token
+  // expired / app revoked), the second write never runs and the workflow
+  // exits via `runIfNotVitest`'s `onError` → `demoteFixingOnCrash`. The
+  // demoter is a no-op for non-`fixing` statuses, so the state stays at
+  // `waiting_codex` with `lastCodexRequestCommentId: null` and the workflow
+  // YAML #2B fail-safe posts only a generic "🛑 Auto-review crashed" without
+  // a `codex_request_failed` stop reason. Re-issuing `/restart-review` walks
+  // the same path. Mirror post-fix Phase 4 (`src/main-post-fix.ts:1486-1509`)
+  // by downgrading the state to `stopped / codex_request_failed` here and
+  // surfacing a stop comment carrying that reason. The spread from
+  // `preflight.nextState` preserves the hard-mode invariants
+  // (`iterationCount: 0`, `findingsHashHistory: []`) and the `fixingStartedAt:
+  // null` baseline that `applyRestartToState` always enforces (TY-273 #B4 /
+  // TY-286 #C). The audit comment + reaction below are intentionally skipped
+  // — they advertise a successful restart, which this branch is not.
+  let reviewRequestCommentId: number;
+  try {
+    reviewRequestCommentId = await deps.postCodexReviewRequest(
+      context.owner,
+      context.repo,
+      context.prNumber,
+      context.codexReviewRequestToken,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    deps.warning(
+      `[restart] Failed to post @codex review after first state write: ${message}. ` +
+        "Downgrading to stopped/codex_request_failed so operators see the actionable stop reason.",
+    );
+    const stoppedState: ReviewState = {
+      ...preflight.nextState,
+      status: "stopped",
+      stopReason: "codex_request_failed",
+    };
+    if (
+      !(await updateStateCommentLocked(
+        stoppedState,
+        "[restart] Could not record codex_request_failed stop after @codex review post failure.",
+      ))
+    ) {
+      return { handled: true };
+    }
+    await deps.postStopComment(
+      context.owner,
+      context.repo,
+      context.prNumber,
+      "codex_request_failed",
+      context.triggerCommentId,
+      0,
+      `Failed to post @codex review after /restart-review: ${message}`,
+      context.githubToken,
+    );
+    return { handled: true };
+  }
   const restartResult = applyRestartToState(
     context.stateResult.state,
     command.mode,

@@ -751,6 +751,151 @@ describe("handleRestartCommand", () => {
     );
   });
 
+  it("TY-300: downgrades to stopped/codex_request_failed when postCodexReviewRequest throws after the first state write", async () => {
+    // Reproduces the silent deadlock: pre-TY-300, a throwing
+    // postCodexReviewRequest left the state at `waiting_codex` with
+    // `lastCodexRequestCommentId: null` and the workflow died via the
+    // generic crash fail-safe — operators had no `codex_request_failed`
+    // signal and re-running `/restart-review` looped on the same failure.
+    const deps = makeDeps();
+    deps.postCodexReviewRequest.mockRejectedValueOnce(new Error("403 Forbidden"));
+
+    const result = await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    expect(result).toEqual({ handled: true });
+    expect(deps.updateStateComment).toHaveBeenCalledTimes(2);
+    // 1st write: pre-codex waiting_codex (unchanged from the happy path).
+    expect(deps.updateStateComment.mock.calls[0][3]).toMatchObject({
+      status: "waiting_codex",
+      lastCodexRequestCommentId: null,
+    });
+    // 2nd write: codex_request_failed downgrade. The state must NOT regress
+    // back to `waiting_codex` once we know Codex was never reached.
+    expect(deps.updateStateComment.mock.calls[1][3]).toMatchObject({
+      status: "stopped",
+      stopReason: "codex_request_failed",
+      lastCodexRequestCommentId: null,
+    });
+    // Stop comment must surface the actionable reason + the underlying error.
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      18,
+      "codex_request_failed",
+      777,
+      0,
+      expect.stringContaining("403 Forbidden"),
+      "token",
+    );
+    // The audit comment ("🟢 Auto-review restarted ...") and the eyes
+    // reaction advertise a successful restart — neither should fire when
+    // the restart failed to actually re-trigger Codex.
+    const auditPosted = deps.postComment.mock.calls.some((c) =>
+      typeof c[3] === "string" && c[3].startsWith("🟢 Auto-review restarted"),
+    );
+    expect(auditPosted).toBe(false);
+    expect(deps.addRestartReaction).not.toHaveBeenCalled();
+  });
+
+  it("TY-300: preserves hard-restart invariants (iterationCount=0, findingsHashHistory=[]) when codex_request_failed downgrade fires", async () => {
+    // The hard branch of `applyRestartToState` clears iterationCount and the
+    // findings history. The TY-300 catch path must propagate those resets
+    // into the stoppedState so a subsequent `/restart-review --hard` does
+    // not see stale state.
+    const deps = makeDeps();
+    deps.postCodexReviewRequest.mockRejectedValueOnce(new Error("503 Service Unavailable"));
+
+    await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review --hard",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        stateResult: foundState(
+          makeState({
+            status: "waiting_codex",
+            stopReason: null,
+            iterationCount: 7,
+            findingsHashHistory: [
+              { iteration: 6, hash: "hash-x" },
+              { iteration: 7, hash: "hash-y" },
+            ],
+          }),
+        ),
+      },
+      deps,
+    );
+
+    const downgradedState = deps.updateStateComment.mock.calls[1][3];
+    expect(downgradedState).toMatchObject({
+      status: "stopped",
+      stopReason: "codex_request_failed",
+      iterationCount: 0,
+      findingsHashHistory: [],
+      fixingStartedAt: null,
+    });
+  });
+
+  it("TY-300: stops cleanly without postStopComment / audit when the codex_request_failed write itself conflicts", async () => {
+    // If both the first waiting_codex write and the @codex review post
+    // succeed but the second (downgrade) write loses an updated_at race,
+    // the locker's onConflict already surfaces `state_conflict` to the
+    // operator. Skipping the extra `postStopComment` keeps the contract
+    // identical to the existing locker conflict path (no duplicate stop
+    // notifications).
+    const deps = makeDeps();
+    deps.postCodexReviewRequest.mockRejectedValueOnce(new Error("500"));
+    // First write OK, second (downgrade) write conflicts via 412.
+    deps.updateStateComment
+      .mockResolvedValueOnce({ updatedAt: "2026-05-09T00:00:01Z" })
+      .mockRejectedValueOnce(
+        new StateUpdateConflictError("hidden comment updated_at changed"),
+      );
+
+    await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    // The locker's default onConflict posts a `state_conflict` stop comment
+    // — we MUST NOT also post a second `codex_request_failed` stop comment
+    // for the same incident.
+    const codexFailedCalls = deps.postStopComment.mock.calls.filter(
+      (c) => c[3] === "codex_request_failed",
+    );
+    expect(codexFailedCalls).toHaveLength(0);
+  });
+
   it("rejects restart from a malformed triggerUserLogin without hitting the collaborator API (TY-265)", async () => {
     const deps = makeDeps();
 
