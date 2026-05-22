@@ -21014,6 +21014,7 @@ var defaultDeps3 = {
   info: (message) => info(message),
   warning: (message) => warning(message),
   error: (message) => error(message),
+  setFailed: (message) => setFailed(message),
   gitDiffNumstat,
   gitDiffHead,
   gitListUntracked,
@@ -21167,7 +21168,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   deps.info(`[post-fix] Starting post-fix for PR #${config.prNumber}, iteration ${inputs.iteration}, action outcome: ${inputs.actionOutcome}`);
   const stateResult = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   if (!stateResult.found) {
-    deps.error("[post-fix] Hidden state comment is missing or corrupted at post-fix entry. Cannot proceed.");
+    deps.setFailed("[post-fix] Hidden state comment is missing or corrupted at post-fix entry. Cannot proceed; the workflow YAML fail-safe will post a top-level notification.");
     return;
   }
   if (stateResult.commentId !== inputs.commentId) {
@@ -21376,37 +21377,58 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   deps.info("[post-fix] CHECK_COMMAND passed. Committing changes...");
-  if (config.buildCommand !== "") {
-    let postCheckNumstat;
-    let postCheckUntrackedRaw;
+  let postCheckNumstat;
+  let postCheckUntrackedRaw;
+  try {
+    postCheckNumstat = deps.gitDiffNumstat();
+    postCheckUntrackedRaw = deps.gitListUntracked();
+  } catch (error2) {
+    deps.error(`[post-fix] Failed to re-enumerate working tree after CHECK_COMMAND: ${error2 instanceof Error ? error2.message : String(error2)}`);
     try {
-      postCheckNumstat = deps.gitDiffNumstat();
-      postCheckUntrackedRaw = deps.gitListUntracked();
-    } catch (error2) {
-      deps.error(`[post-fix] Failed to re-enumerate working tree after CHECK_COMMAND: ${error2 instanceof Error ? error2.message : String(error2)}`);
+      deps.resetWorkingTree();
+    } catch {
+    }
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_failure",
+      detail: "Could not enumerate working-tree changes after CHECK_COMMAND."
+    });
+    return;
+  }
+  const postCheckTracked = parseGitNumstat(postCheckNumstat);
+  const postCheckUntracked = postCheckUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((path) => {
+    const content = deps.readWorkingTreeFile(path);
+    if (content === null) {
+      return { path, added: -1, deleted: -1 };
+    }
+    const added = content.length === 0 ? 0 : content.split("\n").length;
+    return { path, added, deleted: 0 };
+  });
+  const postCheckChangedFiles = [...postCheckTracked, ...postCheckUntracked];
+  if (config.buildCommand === "") {
+    const postCheckScopeResult = checkScope(postCheckChangedFiles, scopePolicy);
+    if (!postCheckScopeResult.ok) {
+      deps.warning(`[post-fix] Scope violation after CHECK_COMMAND: ${postCheckScopeResult.message}`);
       try {
         deps.resetWorkingTree();
-      } catch {
+      } catch (resetError) {
+        deps.error(`[post-fix] Failed to reset working tree after post-CHECK scope violation: ${resetError instanceof Error ? resetError.message : String(resetError)}`);
       }
       await failureExit({
         config,
         inputs,
         state,
-        stopReason: "action_failure",
-        detail: "Could not enumerate working-tree changes after CHECK_COMMAND."
+        stopReason: "scope_violation",
+        detail: formatScopeViolationDetail(postCheckScopeResult, scopePolicy.maxFiles, scopePolicy.maxLines)
       });
       return;
     }
-    const postCheckTracked = parseGitNumstat(postCheckNumstat);
-    const postCheckUntracked = postCheckUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((path) => {
-      const content = deps.readWorkingTreeFile(path);
-      if (content === null) {
-        return { path, added: -1, deleted: -1 };
-      }
-      const added = content.length === 0 ? 0 : content.split("\n").length;
-      return { path, added, deleted: 0 };
-    });
-    const postCheckChangedFiles = [...postCheckTracked, ...postCheckUntracked];
+    scopeResult = postCheckScopeResult;
+  }
+  modifiedFiles = postCheckChangedFiles.map((f) => f.path);
+  if (config.buildCommand !== "") {
     deps.info(`[post-fix] Running BUILD_COMMAND: ${config.buildCommand}`);
     const buildResult = await deps.runBuildCommand(config.buildCommand);
     if (!buildResult.success) {

@@ -99,6 +99,16 @@ export interface PostFixDeps {
   warning: (message: string) => void;
   error: (message: string) => void;
   /**
+   * Marks the workflow step as `failure` (TY-297 #2). `core.error` alone only
+   * adds an annotation; the step still ends in `success` so the
+   * `auto-review-loop.yml` #2B fail-safe (which keys on
+   * `steps.loop.conclusion == 'failure' || 'cancelled'`) does not fire and the
+   * PR receives no top-level notification. Use this instead of a silent
+   * `return` whenever post-fix cannot proceed and the operator must intervene,
+   * so the workflow YAML fail-safe posts the 🛑 comment.
+   */
+  setFailed: (message: string) => void;
+  /**
    * Returns numstat output (stdout) for `git diff --numstat --no-renames HEAD`.
    *
    * `--no-renames` is mandatory: without it git emits compact rename notation
@@ -168,6 +178,7 @@ const defaultDeps: PostFixDeps = {
   info: (message) => core.info(message),
   warning: (message) => core.warning(message),
   error: (message) => core.error(message),
+  setFailed: (message) => core.setFailed(message),
   gitDiffNumstat: git.gitDiffNumstat,
   gitDiffHead: git.gitDiffHead,
   gitListUntracked: git.gitListUntracked,
@@ -451,8 +462,15 @@ export async function runPostFix(
     config.githubToken,
   );
   if (!stateResult.found) {
-    deps.error(
-      "[post-fix] Hidden state comment is missing or corrupted at post-fix entry. Cannot proceed.",
+    // TY-297 #2: end the step in `failure` so the auto-review-loop.yml #2B
+    // fail-safe posts the top-level 🛑 notification. A silent `return` would
+    // leave the workflow step in `success`, the fail-safe would not fire,
+    // and `status: fixing` would sit untouched in the hidden state until
+    // pre-fix's stale-fixing detector (30 min) eventually demoted it — the
+    // operator gets no signal in the meantime.
+    deps.setFailed(
+      "[post-fix] Hidden state comment is missing or corrupted at post-fix entry. " +
+        "Cannot proceed; the workflow YAML fail-safe will post a top-level notification.",
     );
     return;
   }
@@ -808,9 +826,11 @@ export async function runPostFix(
   }
 
   // ─── CHECK_COMMAND ───────────────────────────────────────────────────────
-  // `modifiedFiles` may be replaced after BUILD_COMMAND when build artifacts
-  // expand the staging set (TY-281), so it is `let` rather than `const`.
-  let modifiedFiles = changedFiles.map((f) => f.path);
+  // `modifiedFiles` is reassigned post-CHECK (TY-297 #1) so CHECK_COMMAND's
+  // own writes are staged, and again post-BUILD when artifacts expand the
+  // staging set (TY-281). The initial pre-CHECK value is never read on the
+  // success path; it survives only as a typed initializer for the `let`.
+  let modifiedFiles: string[] = changedFiles.map((f) => f.path);
   deps.info(`[post-fix] Running CHECK_COMMAND: ${inputs.checkCommand}`);
   const checkResult = await deps.runCheckCommand(inputs.checkCommand);
 
@@ -842,55 +862,110 @@ export async function runPostFix(
 
   deps.info("[post-fix] CHECK_COMMAND passed. Committing changes...");
 
+  // ─── Post-CHECK enumeration (TY-297 #1) ─────────────────────────────────
+  // Re-enumerate the working tree regardless of BUILD_COMMAND configuration.
+  // CHECK_COMMAND can mutate files via `prettier --write` / `eslint --fix` /
+  // snapshot regeneration; with the pre-fix `modifiedFiles` list only those
+  // post-CHECK mutations would never be staged on the no-build path and would
+  // silently disappear at the next iteration's `actions/checkout`, fueling
+  // exactly the cycle-≥-4 oscillation TY-296 raised. Hoisting the enumeration
+  // also lets us run a second scope check against CHECK_COMMAND's output, so a
+  // formatter that touches `.github/` (or any other locked path) is now caught
+  // instead of slipping through the pre-CHECK gate.
+  let postCheckNumstat: string;
+  let postCheckUntrackedRaw: string;
+  try {
+    postCheckNumstat = deps.gitDiffNumstat();
+    postCheckUntrackedRaw = deps.gitListUntracked();
+  } catch (error) {
+    deps.error(
+      `[post-fix] Failed to re-enumerate working tree after CHECK_COMMAND: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    try {
+      deps.resetWorkingTree();
+    } catch {
+      // best-effort; outer failureExit still records the failure
+    }
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_failure",
+      detail: "Could not enumerate working-tree changes after CHECK_COMMAND.",
+    });
+    return;
+  }
+  const postCheckTracked: ChangedFile[] = parseGitNumstat(postCheckNumstat);
+  const postCheckUntracked: ChangedFile[] = postCheckUntrackedRaw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((path) => {
+      const content = deps.readWorkingTreeFile(path);
+      if (content === null) {
+        return { path, added: -1, deleted: -1 };
+      }
+      const added = content.length === 0 ? 0 : content.split("\n").length;
+      return { path, added, deleted: 0 };
+    });
+  const postCheckChangedFiles: ChangedFile[] = [...postCheckTracked, ...postCheckUntracked];
+
+  // Catch CHECK_COMMAND writing to locked / blocked paths. The pre-CHECK scope
+  // check at :745 only saw claude-code-action's intentional edits; a hook /
+  // formatter / snapshot updater could still touch `.github/` etc. between
+  // CHECK_COMMAND and the commit.
+  //
+  // On the no-build path (buildCommand === "") this gate is the only
+  // post-CHECK enforcement, so it runs unconditionally with strict checkScope.
+  //
+  // When buildCommand is configured we defer until after BUILD_COMMAND: the
+  // build step can legitimately clean up temporary files that CHECK_COMMAND
+  // wrote as side-effects (cache reports, scratch artefacts). Running the gate
+  // here would trigger false scope_violation stops on file-count / line-count /
+  // blocked-path rules for files BUILD_COMMAND is about to remove. The
+  // post-build checkScope at :1153 re-checks only the files that actually
+  // survive to the staging set, so the security guarantee is preserved.
+  if (config.buildCommand === "") {
+    const postCheckScopeResult: ScopeCheckResult = checkScope(postCheckChangedFiles, scopePolicy);
+    if (!postCheckScopeResult.ok) {
+      deps.warning(
+        `[post-fix] Scope violation after CHECK_COMMAND: ${postCheckScopeResult.message}`,
+      );
+      try {
+        deps.resetWorkingTree();
+      } catch (resetError) {
+        deps.error(
+          `[post-fix] Failed to reset working tree after post-CHECK scope violation: ${resetError instanceof Error ? resetError.message : String(resetError)}`,
+        );
+      }
+      await failureExit({
+        config,
+        inputs,
+        state,
+        stopReason: "scope_violation",
+        detail: formatScopeViolationDetail(
+          postCheckScopeResult,
+          scopePolicy.maxFiles,
+          scopePolicy.maxLines,
+        ),
+      });
+      return;
+    }
+    scopeResult = postCheckScopeResult;
+  }
+
+  // Replace the pre-CHECK `modifiedFiles` snapshot with the post-CHECK truth.
+  // Stage / pre-commit-secret-scan / commit downstream all rely on this list,
+  // and the no-build path previously used the stale pre-CHECK list — see the
+  // TY-297 #1 description for the silent-discard failure mode this closes.
+  modifiedFiles = postCheckChangedFiles.map((f) => f.path);
+
   // ─── BUILD_COMMAND (TY-281) ──────────────────────────────────────────────
   // For repos that commit build artifacts (e.g. this repo's `dist/`), run
   // a configurable build step so the auto-fix commit cannot drift out of
   // sync with `src/`. Empty `buildCommand` skips this block, preserving
   // prior behavior for repos without committed build outputs.
   if (config.buildCommand !== "") {
-    // Re-enumerate the working tree after CHECK_COMMAND before running BUILD_COMMAND.
-    // Files written or modified by CHECK_COMMAND (e.g. via --fix or autoformat) are
-    // part of the repair and must be classified as pre-build edits, not as build
-    // artifacts, so they receive strict scope validation rather than the relaxed
-    // checkScopeBuildMode rules that only enforce locked paths.
-    let postCheckNumstat: string;
-    let postCheckUntrackedRaw: string;
-    try {
-      postCheckNumstat = deps.gitDiffNumstat();
-      postCheckUntrackedRaw = deps.gitListUntracked();
-    } catch (error) {
-      deps.error(
-        `[post-fix] Failed to re-enumerate working tree after CHECK_COMMAND: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      try {
-        deps.resetWorkingTree();
-      } catch {
-        // best-effort; outer failureExit still records the failure
-      }
-      await failureExit({
-        config,
-        inputs,
-        state,
-        stopReason: "action_failure",
-        detail: "Could not enumerate working-tree changes after CHECK_COMMAND.",
-      });
-      return;
-    }
-    const postCheckTracked: ChangedFile[] = parseGitNumstat(postCheckNumstat);
-    const postCheckUntracked: ChangedFile[] = postCheckUntrackedRaw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((path) => {
-        const content = deps.readWorkingTreeFile(path);
-        if (content === null) {
-          return { path, added: -1, deleted: -1 };
-        }
-        const added = content.length === 0 ? 0 : content.split("\n").length;
-        return { path, added, deleted: 0 };
-      });
-    const postCheckChangedFiles: ChangedFile[] = [...postCheckTracked, ...postCheckUntracked];
-
     deps.info(`[post-fix] Running BUILD_COMMAND: ${config.buildCommand}`);
     const buildResult = await deps.runBuildCommand(config.buildCommand);
     if (!buildResult.success) {

@@ -110,6 +110,7 @@ function makeDeps(
     info: vi.fn(),
     warning: vi.fn(),
     error: vi.fn(),
+    setFailed: vi.fn(),
     gitDiffNumstat: () => "5\t2\tsrc/foo.ts\n3\t0\ttests/foo.test.ts\n",
     gitDiffHead: () => "",
     gitListUntracked: () => "",
@@ -656,6 +657,8 @@ describe("runPostFix", () => {
       .fn()
       // Initial enumeration (before CHECK_COMMAND): clean.
       .mockReturnValueOnce("")
+      // Post-CHECK enumeration (TY-297 #1): CHECK_COMMAND created the file.
+      .mockReturnValueOnce("data/a => b.json\n")
       // Pre-commit enumeration: untracked file with ` => ` in its name.
       .mockReturnValueOnce("data/a => b.json\n");
     const preCommitDiff = [
@@ -685,7 +688,13 @@ describe("runPostFix", () => {
         gitDiffNumstat: () => "1\t0\tsrc/foo.ts\n",
         gitDiffHead: diffHead,
         gitListUntracked: untrackedListings,
-        readWorkingTreeFile: () => null,
+        // TY-297 #1: the hoisted post-CHECK enumeration reads the working-tree
+        // file to count lines. Return non-null content so the file is treated
+        // as a normal text addition rather than a binary marker (the latter
+        // would trip the post-CHECK scope check before the pre-commit scanner
+        // could detect the embedded token).
+        readWorkingTreeFile: (path) =>
+          path === "data/a => b.json" ? `{ "token": "${fakeGhp}" }` : null,
       },
     );
 
@@ -1248,6 +1257,130 @@ describe("runPostFix", () => {
     expect(lastState.fixingStartedAt).toBeNull();
   });
 
+  // TY-297 #2: post-fix must surface a top-level failure (not a silent
+  // `return`) when the hidden state comment is missing or corrupted at
+  // entry. Without `setFailed`, the workflow step ends in `success` and the
+  // auto-review-loop.yml #2B fail-safe never fires, leaving `status: fixing`
+  // dangling until pre-fix's 30-min stale-detector eventually recovers — the
+  // operator gets no signal in the meantime.
+  it("TY-297 #2: marks the step as failed when hidden state is missing (no-comment case)", async () => {
+    const deps = makeDeps({
+      found: false,
+      corrupted: false,
+      commentId: null,
+    });
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.setFailed).toHaveBeenCalledTimes(1);
+    expect((deps.setFailed as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
+      "Hidden state comment is missing or corrupted",
+    );
+    // None of the write-side spies must fire after a silent-failure entry.
+    expect(deps.updateStateComment).not.toHaveBeenCalled();
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.postStopComment).not.toHaveBeenCalled();
+    expect(deps.runCheckCommand).not.toHaveBeenCalled();
+  });
+
+  it("TY-297 #2: marks the step as failed when hidden state is corrupted (parse-failure case)", async () => {
+    const deps = makeDeps({
+      found: false,
+      corrupted: true,
+      commentId: 123,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+    });
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.setFailed).toHaveBeenCalledTimes(1);
+    expect(deps.updateStateComment).not.toHaveBeenCalled();
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.postStopComment).not.toHaveBeenCalled();
+  });
+
+  // TY-297 #1: the post-CHECK enumeration must run on every path (not just
+  // when BUILD_COMMAND is configured) so CHECK_COMMAND's own writes —
+  // formatter `--fix` output, snapshot regeneration, etc. — actually land in
+  // the commit. And the same re-enumeration enforces the scope policy
+  // against locked paths the agent never touched directly.
+  it("TY-297 #1: stages snapshot files written by CHECK_COMMAND on the no-build path", async () => {
+    // Pre-CHECK numstat sees claude's edit only; post-CHECK numstat picks up
+    // the snapshot file that CHECK_COMMAND regenerated. Without the hoist
+    // the snapshot is silently dropped and re-appears at the next iteration.
+    const numstatMock = vi
+      .fn()
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n")
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t1\t__snapshots__/foo.snap\n");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+      },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.stagedPaths).toEqual([["src/foo.ts", "__snapshots__/foo.snap"]]);
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.pushCalls.length).toBe(1);
+  });
+
+  it("TY-297 #1: stops with scope_violation when CHECK_COMMAND writes to a locked path on the no-build path", async () => {
+    // Pre-CHECK is clean (claude only edited src/foo.ts). CHECK_COMMAND then
+    // touches `.github/workflows/foo.yml` — a locked path the pre-CHECK
+    // scope check never saw. The post-CHECK scope check must catch this.
+    const numstatMock = vi
+      .fn()
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n")
+      .mockReturnValueOnce("5\t2\tsrc/foo.ts\n3\t1\t.github/workflows/foo.yml\n");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+      },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.resetCalls).toBe(1);
+    expect(deps.commitMessages).toEqual([]);
+    expect(deps.pushCalls).toEqual([]);
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
+      "github-token",
+      expect.any(Object),
+    );
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "scope_violation",
+      1234,
+      0,
+      expect.stringContaining(".github/workflows/foo.yml"),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
   // TY-281: BUILD_COMMAND integration. Four cases cover the configurable
   // post-CHECK_COMMAND build step that keeps committed build artifacts in
   // sync with src/ for repos that ship `dist/`.
@@ -1667,6 +1800,12 @@ describe("runPostFix", () => {
       {
         gitDiffNumstat: numstatMock,
         gitListUntracked: untrackedMock,
+        // TY-297 #1: the hoisted post-CHECK enumeration calls
+        // `readWorkingTreeFile` for every untracked path. Give the scratch
+        // file a text body so it is not flagged as a binary scope violation
+        // before BUILD_COMMAND has a chance to clean it up.
+        readWorkingTreeFile: (path) =>
+          path === "tmp/check-report.json" ? "{}\n" : null,
       },
     );
 
@@ -1675,6 +1814,60 @@ describe("runPostFix", () => {
 
     // Scratch-file cleanup by BUILD_COMMAND is not a revert of the repair.
     // The run must succeed: commit and push happen, no reset.
+    expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
+    expect(deps.resetCalls).toBe(0);
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.pushCalls.length).toBe(1);
+  });
+
+  it("TY-297 #2: CHECK_COMMAND scratch file exceeding maxFiles does not cause scope_violation when buildCommand is configured", async () => {
+    // Claude edits src/fix.ts (1 file). CHECK_COMMAND creates a scratch report
+    // (tmp/check-report.json), pushing the post-CHECK count to 2 files.
+    // scopeMaxFiles: 1 means the early post-CHECK gate would fire a false
+    // scope_violation before BUILD_COMMAND even runs. BUILD_COMMAND removes the
+    // scratch file and creates dist/bundle.cjs. Only src/fix.ts (1 file) is a
+    // preBuildFile, which is within the limit.
+    const numstatMock = vi
+      .fn()
+      // Initial enumeration: claude's edit.
+      .mockReturnValueOnce("5\t2\tsrc/fix.ts\n")
+      // Post-CHECK enumeration: same (CHECK_COMMAND did not modify tracked files).
+      .mockReturnValueOnce("5\t2\tsrc/fix.ts\n")
+      // Post-BUILD enumeration: repair intact + dist artifact.
+      .mockReturnValueOnce("5\t2\tsrc/fix.ts\n200\t100\tdist/bundle.cjs\n");
+    const untrackedMock = vi
+      .fn()
+      // Initial enumeration: no untracked files.
+      .mockReturnValueOnce("")
+      // Post-CHECK enumeration: CHECK_COMMAND wrote a scratch report.
+      .mockReturnValueOnce("tmp/check-report.json\n")
+      // Post-BUILD enumeration: BUILD_COMMAND cleaned up the scratch file.
+      .mockReturnValueOnce("")
+      // Pre-commit secret scan enumeration.
+      .mockReturnValueOnce("");
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: numstatMock,
+        gitListUntracked: untrackedMock,
+        readWorkingTreeFile: (path) =>
+          path === "tmp/check-report.json" ? "{}\n" : null,
+      },
+    );
+
+    // scopeMaxFiles: 1 — the single repair file is within budget, but the
+    // transient scratch file (present only between CHECK and BUILD) would push
+    // the count to 2 and fire the pre-build gate without this fix.
+    const configWithBuild = { ...baseConfig, buildCommand: "npm run bundle", scopeMaxFiles: 1 };
+    await runPostFix(configWithBuild, deps, baseInputs);
+
+    // The run must succeed: BUILD_COMMAND runs, commit and push happen, no reset.
     expect(deps.runBuildCommand).toHaveBeenCalledWith("npm run bundle");
     expect(deps.resetCalls).toBe(0);
     expect(deps.commitMessages.length).toBe(1);
