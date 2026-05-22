@@ -17,7 +17,7 @@ inputs:
     required: false
     default: ""
   max-review-iterations:
-    description: "Maximum number of Codex review / Claude fix iterations per PR. Must match the value configured in the loop workflow (MAX_REVIEW_ITERATIONS / vars.MAX_REVIEW_ITERATIONS). Pass `${{ vars.MAX_REVIEW_ITERATIONS || '20' }}` so the initial status comment reflects the actual cap. Defaults to 20."
+    description: "Maximum number of Codex review / Claude fix iterations per PR. Must match the value configured in the loop workflow (MAX_REVIEW_ITERATIONS / vars.MAX_REVIEW_ITERATIONS). Pass the same vars.MAX_REVIEW_ITERATIONS (default 20) so the initial status comment reflects the actual cap. See README quickstart for the recommended expression."
     required: false
     default: "20"
   auto-review-state-comment-authors:
