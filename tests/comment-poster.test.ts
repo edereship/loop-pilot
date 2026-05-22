@@ -18,14 +18,19 @@ const { upsertStatusComment } = await import("../src/status-comment.js");
 const {
   buildStatusCommentPermalink,
   buildTerminalNotificationBody,
+  deriveIterationProgress,
+  nextActionForStopReason,
   postClaudeCodeActionFixSummary,
   postCompletionComment,
+  postFixingStartComment,
+  postInitialStatusComment,
   postInitIncompleteComment,
   postStopComment,
   postTerminalNotification,
   postTestFailureComment,
 } = await import("../src/comment-poster.js");
 const { STOP_REASON_LABELS } = await import("../src/types.js");
+const { createInitialState } = await import("../src/state-manager.js");
 
 const mockedGhApi = vi.mocked(ghApi);
 const mockedUpsertStatusComment = vi.mocked(upsertStatusComment);
@@ -352,5 +357,241 @@ describe("terminal poster wiring (TY-259)", () => {
 
     expect(result).toBe(STATUS_COMMENT_ID);
     expect(warning).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("nextActionForStopReason (TY-291 #4)", () => {
+  it("returns the `--hard` imperative for max_iterations", () => {
+    expect(nextActionForStopReason("max_iterations")).toContain(
+      "`/restart-review --hard`",
+    );
+  });
+
+  it("returns a soft-only message for codex_request_failed", () => {
+    const text = nextActionForStopReason("codex_request_failed");
+    expect(text).toContain("Codex");
+    expect(text).toContain("`/restart-review`");
+    expect(text).not.toContain("--hard");
+  });
+
+  it("points secret_leak_suspected at the hard restart explicitly (TY-274 #1)", () => {
+    expect(nextActionForStopReason("secret_leak_suspected")).toContain(
+      "`/restart-review --hard`",
+    );
+  });
+
+  it("references stop-and-recovery.md for state_corrupted / state_conflict", () => {
+    expect(nextActionForStopReason("state_corrupted")).toContain(
+      "stop-and-recovery.md",
+    );
+    expect(nextActionForStopReason("state_conflict")).toContain(
+      "stop-and-recovery.md",
+    );
+  });
+
+  it("scope_violation points to stop detail and /restart-review without prescribing a single path (Finding 4)", () => {
+    const text = nextActionForStopReason("scope_violation");
+    // Must direct operators to the stop detail rather than assuming AUTO_REVIEW_BLOCK_PATHS is the fix.
+    expect(text).toContain("stop detail");
+    // Still mentions AUTO_REVIEW_BLOCK_PATHS as one option.
+    expect(text).toContain("AUTO_REVIEW_BLOCK_PATHS");
+    expect(text).toContain("`/restart-review`");
+  });
+});
+
+describe("deriveIterationProgress (TY-291 #3)", () => {
+  it("returns lastModelTier=null when the history is empty", () => {
+    const progress = deriveIterationProgress(createInitialState(), 20);
+    expect(progress).toEqual({
+      iterationCount: 0,
+      maxIterations: 20,
+      lastModelTier: null,
+    });
+  });
+
+  it("returns the most recent entry's modelTier", () => {
+    const state = {
+      ...createInitialState(),
+      iterationCount: 2,
+      findingsHashHistory: [
+        { iteration: 1, hash: "a", modelTier: "base" as const },
+        { iteration: 2, hash: "b", modelTier: "escalated" as const },
+      ],
+    };
+    expect(deriveIterationProgress(state, 20)).toEqual({
+      iterationCount: 2,
+      maxIterations: 20,
+      lastModelTier: "escalated",
+    });
+  });
+
+  it("treats missing modelTier on the last entry as `escalated` (TY-243 fallback)", () => {
+    const state = {
+      ...createInitialState(),
+      iterationCount: 1,
+      findingsHashHistory: [{ iteration: 1, hash: "a" }],
+    };
+    expect(deriveIterationProgress(state, 20).lastModelTier).toBe("escalated");
+  });
+});
+
+describe("postClaudeCodeActionFixSummary (TY-291 #1)", () => {
+  it("writes Current=`Fix committed (iteration N) — queuing Codex re-review` (UX-04)", async () => {
+    await postClaudeCodeActionFixSummary(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      3,
+      ["src/foo.ts"],
+      "abcd123",
+      "token",
+    );
+
+    const call = mockedUpsertStatusComment.mock.calls[0]!;
+    const update = call[3] as { current: string; nextAction: string };
+    expect(update.current).toBe("Fix committed (iteration 3) — queuing Codex re-review");
+    expect(update.nextAction).toBe(
+      "Codex re-review is being queued; no operator action needed.",
+    );
+  });
+
+  it("forwards iteration progress when provided", async () => {
+    await postClaudeCodeActionFixSummary(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      3,
+      ["src/foo.ts"],
+      "abcd123",
+      "token",
+      { iterationCount: 3, maxIterations: 20, lastModelTier: "base" },
+    );
+
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as Record<
+      string,
+      unknown
+    >;
+    expect(update.iterationCount).toBe(3);
+    expect(update.maxIterations).toBe(20);
+    expect(update.lastModelTier).toBe("base");
+  });
+});
+
+describe("postCompletionComment (TY-291 #4)", () => {
+  it("uses the auto-merge imperative when autoMergeOnClean=true", async () => {
+    await postCompletionComment(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      2,
+      "token",
+      { autoMergeOnClean: true },
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as {
+      nextAction: string;
+    };
+    expect(update.nextAction).toBe(
+      "Auto-merge will be attempted — the PR will squash-merge once all other CI checks pass; merge manually if it does not.",
+    );
+  });
+
+  it("uses the manual-merge imperative when autoMergeOnClean=false", async () => {
+    await postCompletionComment(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      2,
+      "token",
+      { autoMergeOnClean: false },
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as {
+      nextAction: string;
+    };
+    expect(update.nextAction).toBe("Review the changes and merge manually.");
+  });
+});
+
+describe("postStopComment (TY-291 #4)", () => {
+  it("sets nextAction via nextActionForStopReason instead of generic text", async () => {
+    await postStopComment(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      "max_iterations",
+      111,
+      0,
+      "Reached MAX_REVIEW_ITERATIONS (20)",
+      "token",
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as {
+      nextAction: string;
+    };
+    expect(update.nextAction).toBe(nextActionForStopReason("max_iterations"));
+    expect(update.nextAction).not.toBe("Manual intervention required.");
+  });
+});
+
+describe("postInitialStatusComment (TY-291 #2)", () => {
+  it("seeds the visible status comment with iteration budget = 0 / N", async () => {
+    const result = await postInitialStatusComment(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      20,
+      "token",
+    );
+    expect(result).toBe(STATUS_COMMENT_ID);
+
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as Record<
+      string,
+      unknown
+    >;
+    expect(update.current).toBe("Initialized — waiting for first Codex review");
+    expect(update.iterationCount).toBe(0);
+    expect(update.maxIterations).toBe(20);
+    expect(update.lastModelTier).toBeNull();
+  });
+});
+
+describe("postFixingStartComment (TY-291 #2)", () => {
+  it("announces the fixing transition with iteration and tier in the header", async () => {
+    await postFixingStartComment(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      4,
+      "escalated",
+      20,
+      3,
+      "token",
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as Record<
+      string,
+      unknown
+    >;
+    expect(update.current).toBe(
+      "Fixing — iteration 4 starting (model: escalated)",
+    );
+    expect(update.iterationCount).toBe(4);
+    expect(update.maxIterations).toBe(20);
+    expect(update.lastModelTier).toBe("escalated");
+  });
+
+  it("sets openFindings so operators see the finding count during the repair run (Finding 5)", async () => {
+    await postFixingStartComment(
+      "team-yubune",
+      "test-auto-ai-review",
+      65,
+      1,
+      "base",
+      20,
+      5,
+      "token",
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as Record<
+      string,
+      unknown
+    >;
+    expect(update.openFindings).toBe(5);
   });
 });

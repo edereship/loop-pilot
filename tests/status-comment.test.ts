@@ -34,6 +34,9 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
     lastCommit: "abc1234",
     openFindings: 0,
     nextAction: "Awaiting next Codex review.",
+    iterationCount: null,
+    maxIterations: null,
+    lastModelTier: null,
     entries: [entry()],
     ...overrides,
   };
@@ -66,6 +69,30 @@ describe("renderStatusCommentBody / parseStatusCommentBody round-trip", () => {
     const body = renderStatusCommentBody(snapshot({ entries: [] }));
     expect(body).toContain("_(no entries yet)_");
     expect(body).toContain("History (0 entries)");
+  });
+
+  it("renders Last model tier as '—' when iteration fields are set but lastModelTier is null (Finding 3)", () => {
+    const body = renderStatusCommentBody(
+      snapshot({ iterationCount: 0, maxIterations: 20, lastModelTier: null }),
+    );
+    expect(body).toContain("**Iterations**: 0 / 20");
+    expect(body).toContain("**Last model tier**: —");
+  });
+
+  it("omits Last model tier row for legacy snapshots with no iteration fields and null tier", () => {
+    const body = renderStatusCommentBody(
+      snapshot({ iterationCount: null, maxIterations: null, lastModelTier: null }),
+    );
+    expect(body).not.toContain("**Iterations**");
+    expect(body).not.toContain("**Last model tier**");
+  });
+
+  it("renders Last model tier when iteration fields are set and tier is non-null", () => {
+    const body = renderStatusCommentBody(
+      snapshot({ iterationCount: 1, maxIterations: 20, lastModelTier: "escalated" }),
+    );
+    expect(body).toContain("**Iterations**: 1 / 20");
+    expect(body).toContain("**Last model tier**: escalated");
   });
 
   it("parses the data JSON block back to the same snapshot", () => {

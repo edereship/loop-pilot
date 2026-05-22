@@ -19703,6 +19703,266 @@ function parseCommentSnapshot(stdout, context) {
 var STATUS_COMMENT_MARKER = "auto-review-status";
 var STATUS_COMMENT_OPEN = `<!-- ${STATUS_COMMENT_MARKER} -->`;
 var STATUS_COMMENT_DATA_OPEN = `<!-- ${STATUS_COMMENT_MARKER}-data`;
+var STATUS_COMMENT_DATA_CLOSE = "-->";
+var STATUS_COMMENT_VISIBLE_HEADER = "## Auto-review status";
+var MAX_ENTRIES = 30;
+var MAX_ENTRY_BODY_LENGTH = 16e3;
+var ENTRY_BODY_TRUNCATION_MARKER = "\n\n_(output truncated \u2014 exceeded size limit)_";
+var GITHUB_COMMENT_BODY_LIMIT = 65536;
+function createInitialStatusSnapshot() {
+  return {
+    current: "\u2014",
+    lastCommit: null,
+    openFindings: null,
+    nextAction: "\u2014",
+    iterationCount: null,
+    maxIterations: null,
+    lastModelTier: null,
+    entries: []
+  };
+}
+function renderEntry(entry) {
+  return `### ${entry.title}
+*${entry.timestamp}*
+
+${entry.body}`;
+}
+function renderStatusCommentBodyUnchecked(snapshot) {
+  const headerRows = [
+    STATUS_COMMENT_OPEN,
+    STATUS_COMMENT_VISIBLE_HEADER,
+    "",
+    `**Current**: ${snapshot.current}`,
+    `**Last commit**: ${snapshot.lastCommit ?? "\u2014"}`
+  ];
+  if (snapshot.iterationCount !== null || snapshot.maxIterations !== null) {
+    const iter = snapshot.iterationCount ?? "\u2014";
+    const cap = snapshot.maxIterations ?? "\u2014";
+    headerRows.push(`**Iterations**: ${iter} / ${cap}`);
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier ?? "\u2014"}`);
+  } else if (snapshot.lastModelTier !== null) {
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier}`);
+  }
+  headerRows.push(`**Open findings**: ${snapshot.openFindings ?? "\u2014"}`);
+  headerRows.push(`**Next action**: ${snapshot.nextAction}`);
+  headerRows.push("");
+  const header = headerRows.join("\n");
+  const historyBody = snapshot.entries.length === 0 ? "_(no entries yet)_" : snapshot.entries.map(renderEntry).join("\n\n");
+  const history = [
+    "<details>",
+    `<summary>History (${snapshot.entries.length} ${snapshot.entries.length === 1 ? "entry" : "entries"})</summary>`,
+    "",
+    historyBody,
+    "",
+    "</details>",
+    ""
+  ].join("\n");
+  const data = [
+    STATUS_COMMENT_DATA_OPEN,
+    encodePayload(JSON.stringify(snapshot)),
+    STATUS_COMMENT_DATA_CLOSE
+  ].join("\n");
+  return `${header}
+${history}
+${data}
+`;
+}
+var PAYLOAD_PREFIX = "b64:";
+function encodePayload(json) {
+  return PAYLOAD_PREFIX + Buffer.from(json, "utf8").toString("base64");
+}
+function decodePayload(raw) {
+  if (!raw.startsWith(PAYLOAD_PREFIX))
+    return null;
+  try {
+    return Buffer.from(raw.slice(PAYLOAD_PREFIX.length), "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+function renderStatusCommentBody(snapshot) {
+  for (let count = snapshot.entries.length; count >= 0; count--) {
+    const effective = count === snapshot.entries.length ? snapshot : { ...snapshot, entries: snapshot.entries.slice(0, count) };
+    const body = renderStatusCommentBodyUnchecked(effective);
+    if (body.length <= GITHUB_COMMENT_BODY_LIMIT)
+      return body;
+  }
+  return renderStatusCommentBodyUnchecked({ ...snapshot, entries: [] });
+}
+function parseStatusCommentBody(body) {
+  let result = null;
+  let searchFrom = 0;
+  while (true) {
+    const dataStart = body.indexOf(STATUS_COMMENT_DATA_OPEN, searchFrom);
+    if (dataStart === -1)
+      break;
+    const afterOpen = body.slice(dataStart + STATUS_COMMENT_DATA_OPEN.length);
+    const closeIdx = afterOpen.indexOf(STATUS_COMMENT_DATA_CLOSE);
+    if (closeIdx !== -1) {
+      const raw = afterOpen.slice(0, closeIdx).trim();
+      const candidates = [];
+      const decoded = decodePayload(raw);
+      if (decoded !== null)
+        candidates.push(decoded);
+      candidates.push(raw.replace(/--\\>/g, "-->"));
+      for (const jsonRaw of candidates) {
+        try {
+          const parsed = JSON.parse(jsonRaw);
+          if (isStatusSnapshot(parsed)) {
+            result = {
+              ...parsed,
+              iterationCount: parsed.iterationCount ?? null,
+              maxIterations: parsed.maxIterations ?? null,
+              lastModelTier: parsed.lastModelTier ?? null
+            };
+            break;
+          }
+        } catch {
+        }
+      }
+    }
+    searchFrom = dataStart + 1;
+  }
+  return result;
+}
+function isStatusSnapshot(value) {
+  if (typeof value !== "object" || value === null)
+    return false;
+  const v = value;
+  if (typeof v.current !== "string")
+    return false;
+  if (v.lastCommit !== null && typeof v.lastCommit !== "string")
+    return false;
+  if (v.openFindings !== null && typeof v.openFindings !== "number")
+    return false;
+  if (typeof v.nextAction !== "string")
+    return false;
+  if (v.iterationCount !== void 0 && v.iterationCount !== null && typeof v.iterationCount !== "number")
+    return false;
+  if (v.maxIterations !== void 0 && v.maxIterations !== null && typeof v.maxIterations !== "number")
+    return false;
+  if (v.lastModelTier !== void 0 && v.lastModelTier !== null && v.lastModelTier !== "base" && v.lastModelTier !== "escalated")
+    return false;
+  if (!Array.isArray(v.entries))
+    return false;
+  for (const e of v.entries) {
+    if (typeof e !== "object" || e === null)
+      return false;
+    const en = e;
+    if (typeof en.timestamp !== "string")
+      return false;
+    if (typeof en.title !== "string")
+      return false;
+    if (typeof en.body !== "string")
+      return false;
+    if (en.kind !== "auto_fix_applied" && en.kind !== "completed" && en.kind !== "stopped" && en.kind !== "test_failure" && en.kind !== "init_incomplete")
+      return false;
+  }
+  return true;
+}
+function capEntryBody(body) {
+  if (body.length <= MAX_ENTRY_BODY_LENGTH)
+    return body;
+  return body.slice(0, MAX_ENTRY_BODY_LENGTH - ENTRY_BODY_TRUNCATION_MARKER.length) + ENTRY_BODY_TRUNCATION_MARKER;
+}
+function applyStatusUpdate(snapshot, update) {
+  const cappedEntry = update.newEntry ? { ...update.newEntry, body: capEntryBody(update.newEntry.body) } : void 0;
+  const entries = cappedEntry ? [cappedEntry, ...snapshot.entries].slice(0, MAX_ENTRIES) : snapshot.entries;
+  return {
+    current: update.current ?? snapshot.current,
+    lastCommit: update.lastCommit === void 0 ? snapshot.lastCommit : update.lastCommit,
+    openFindings: update.openFindings === void 0 ? snapshot.openFindings : update.openFindings,
+    nextAction: update.nextAction ?? snapshot.nextAction,
+    // TY-291 #3: same `undefined = preserve, null = clear` semantics as the
+    // existing nullable fields so callers can leave iteration progress alone
+    // when they have nothing to report.
+    iterationCount: update.iterationCount === void 0 ? snapshot.iterationCount : update.iterationCount,
+    maxIterations: update.maxIterations === void 0 ? snapshot.maxIterations : update.maxIterations,
+    lastModelTier: update.lastModelTier === void 0 ? snapshot.lastModelTier : update.lastModelTier,
+    entries
+  };
+}
+function isStatusCommentRecord(value) {
+  if (typeof value !== "object" || value === null)
+    return false;
+  const v = value;
+  return typeof v.id === "number" && typeof v.body === "string";
+}
+async function findStatusComment(owner, name, pr, token) {
+  const authorFilter = buildTrustedAuthorJqFilter(getTrustedStateCommentAuthors());
+  const stdout = await ghApi([
+    "api",
+    `repos/${owner}/${name}/issues/${pr}/comments`,
+    "--paginate",
+    "--jq",
+    `.[] | select(${authorFilter}) | select(.body | startswith("${STATUS_COMMENT_OPEN}")) | {id: .id, body: .body} | @json`
+  ], token);
+  const trimmed = stdout.trim();
+  if (!trimmed)
+    return null;
+  const lines = trimmed.split("\n").filter((l) => l.trim());
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(lines[i]);
+      const value = typeof parsed === "string" ? JSON.parse(parsed) : parsed;
+      if (isStatusCommentRecord(value))
+        return value;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+async function createStatusCommentImpl(owner, name, pr, body, token) {
+  const stdout = await ghApi([
+    "api",
+    "--method",
+    "POST",
+    `repos/${owner}/${name}/issues/${pr}/comments`,
+    // TY-269: `--raw-field` (= `-F`) avoids gh CLI's `@<value>` file-read
+    // interpretation. Status-comment bodies are pre-rendered markdown and
+    // could legitimately start with `@`.
+    "--raw-field",
+    `body=${body}`,
+    "--jq",
+    ".id"
+  ], token);
+  const id = parseInt(stdout.trim(), 10);
+  if (Number.isNaN(id)) {
+    throw new Error(`createStatusComment: unexpected response from GitHub API: ${stdout.trim()}`);
+  }
+  return id;
+}
+async function updateStatusCommentImpl(owner, name, commentId, body, token) {
+  await ghApi([
+    "api",
+    "--method",
+    "PATCH",
+    `repos/${owner}/${name}/issues/comments/${commentId}`,
+    "--raw-field",
+    `body=${body}`,
+    "--jq",
+    ".id"
+  ], token);
+}
+var defaultDeps = {
+  findStatusComment,
+  createStatusComment: createStatusCommentImpl,
+  updateStatusComment: updateStatusCommentImpl
+};
+async function upsertStatusComment(owner, name, pr, update, token, deps = defaultDeps) {
+  const existing = await deps.findStatusComment(owner, name, pr, token);
+  if (existing === null) {
+    const snapshot2 = applyStatusUpdate(createInitialStatusSnapshot(), update);
+    const body2 = renderStatusCommentBody(snapshot2);
+    return deps.createStatusComment(owner, name, pr, body2, token);
+  }
+  const previousSnapshot = parseStatusCommentBody(existing.body) ?? createInitialStatusSnapshot();
+  const snapshot = applyStatusUpdate(previousSnapshot, update);
+  const body = renderStatusCommentBody(snapshot);
+  await deps.updateStatusComment(owner, name, existing.id, body, token);
+  return existing.id;
+}
 
 // dist/comment-poster.js
 async function postComment(owner, name, pr, body, token) {
@@ -19730,6 +19990,19 @@ async function postComment(owner, name, pr, body, token) {
   }
   return commentId;
 }
+async function applyStatusUpdate2(owner, name, pr, update, token) {
+  return upsertStatusComment(owner, name, pr, update, token);
+}
+async function postInitialStatusComment(owner, name, pr, maxIterations, token) {
+  return applyStatusUpdate2(owner, name, pr, {
+    current: "Initialized \u2014 waiting for first Codex review",
+    nextAction: "Codex will reply to the `@codex review` request above; no operator action needed.",
+    openFindings: null,
+    iterationCount: 0,
+    maxIterations,
+    lastModelTier: null
+  }, token);
+}
 async function postCodexReviewRequest(owner, name, pr, token) {
   return postComment(owner, name, pr, "@codex review", token);
 }
@@ -19753,11 +20026,12 @@ function registerAllSecrets(config, setSecret2) {
 }
 
 // dist/main-init.js
-var defaultDeps = {
+var defaultDeps2 = {
   readState,
   createStateComment,
   updateStateComment,
   postCodexReviewRequest,
+  postInitialStatusComment,
   // TY-276 #4: wrap @actions/core methods in arrows for symmetry with
   // main-pre-fix / main-post-fix. The direct-reference form works today
   // because `@actions/core` does not use `this`, but a future version that
@@ -19767,7 +20041,7 @@ var defaultDeps = {
   warning: (message) => warning(message),
   setOutput: (name, value) => setOutput(name, value)
 };
-async function runInit(config, deps = defaultDeps) {
+async function runInit(config, deps = defaultDeps2) {
   registerAllSecrets(config, deps.setSecret);
   deps.info(`Initializing auto-review for PR #${config.prNumber}`);
   const existing = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
@@ -19793,6 +20067,13 @@ async function runInit(config, deps = defaultDeps) {
   deps.info(`Posted @codex review: comment ${reviewRequestId}`);
   state = { ...state, status: "waiting_codex", lastCodexRequestCommentId: reviewRequestId };
   await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+  try {
+    const statusCommentId = await deps.postInitialStatusComment(config.repoOwner, config.repoName, config.prNumber, config.maxReviewIterations, config.githubToken);
+    deps.info(`Created initial status comment: ${statusCommentId}`);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    deps.warning(`Failed to create initial status comment: ${message}`);
+  }
   deps.info("Workflow A completed: status = waiting_codex");
   deps.setOutput("comment-id", String(commentId));
 }

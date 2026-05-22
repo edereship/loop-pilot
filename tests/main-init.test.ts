@@ -54,6 +54,7 @@ function makeDeps(readResult: ReadStateResult) {
     createStateComment: vi.fn().mockResolvedValue(12345),
     updateStateComment: vi.fn().mockResolvedValue(undefined),
     postCodexReviewRequest: vi.fn().mockResolvedValue(67890),
+    postInitialStatusComment: vi.fn().mockResolvedValue(54321),
     setSecret: vi.fn(),
     info: vi.fn(),
     warning: vi.fn(),
@@ -127,5 +128,48 @@ describe("runInit", () => {
       "github-token",
     );
     expect(deps.postCodexReviewRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("seeds the visible status comment after init succeeds (TY-291 #2)", async () => {
+    const deps = makeDeps({ found: false, corrupted: false, commentId: null });
+
+    await runInit(baseConfig, deps);
+
+    expect(deps.postInitialStatusComment).toHaveBeenCalledTimes(1);
+    expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      227,
+      20,
+      "github-token",
+    );
+  });
+
+  it("passes the configured maxReviewIterations (not a hardcoded 20) to the initial status comment (Finding 2)", async () => {
+    const deps = makeDeps({ found: false, corrupted: false, commentId: null });
+
+    await runInit({ ...baseConfig, maxReviewIterations: 15 }, deps);
+
+    expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      227,
+      15,
+      "github-token",
+    );
+  });
+
+  it("swallows postInitialStatusComment failures without rolling back init (TY-291 #2)", async () => {
+    const deps = makeDeps({ found: false, corrupted: false, commentId: null });
+    deps.postInitialStatusComment = vi
+      .fn()
+      .mockRejectedValue(new Error("network"));
+
+    await runInit(baseConfig, deps);
+
+    expect(deps.setOutput).toHaveBeenCalledWith("comment-id", "12345");
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to create initial status comment"),
+    );
   });
 });

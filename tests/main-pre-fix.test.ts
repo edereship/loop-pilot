@@ -65,6 +65,7 @@ function makeDeps(
     fetchReviewComments: vi.fn().mockResolvedValue(reviewComments),
     stabilizeReviewComments: vi.fn().mockResolvedValue(reviewComments),
     postCompletionComment: vi.fn().mockResolvedValue(1),
+    postFixingStartComment: vi.fn().mockResolvedValue(4),
     postStopComment: vi.fn().mockResolvedValue(2),
     postInitIncompleteComment: vi.fn().mockResolvedValue(3),
     mergeIfChecksPass: vi.fn().mockResolvedValue(undefined),
@@ -236,6 +237,20 @@ describe("runPreFix", () => {
       }),
       "github-token",
       expect.any(Object),
+    );
+    // TY-291 #2 (UX-05): the fixing transition must also refresh the visible
+    // status comment so operators see "Fixing — iteration N starting" during
+    // the multi-minute claude-code-action run.
+    expect(deps.postFixingStartComment).toHaveBeenCalledTimes(1);
+    expect(deps.postFixingStartComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      2,
+      expect.stringMatching(/^(base|escalated)$/),
+      20,
+      1, // findings.length from the single finding in this test
+      "github-token",
     );
   });
 
@@ -988,6 +1003,7 @@ describe("runPreFix", () => {
       0,
       expect.stringContaining("/restart-review"),
       "github-token",
+    expect.any(Object),
     );
   });
 

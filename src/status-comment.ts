@@ -45,6 +45,16 @@ export interface StatusSnapshot {
   openFindings: number | null;
   /** Suggested next human action. */
   nextAction: string;
+  /**
+   * Current iteration count (TY-291 #3 / UX-09). `null` renders as `—`. Both
+   * `iterationCount` and `maxIterations` need a value to render the
+   * `Iterations` header row; otherwise the row is omitted.
+   */
+  iterationCount: number | null;
+  /** Configured iteration cap (MAX_REVIEW_ITERATIONS). */
+  maxIterations: number | null;
+  /** Tier used for the most recent repair iteration. `null` renders as `—`. */
+  lastModelTier: "base" | "escalated" | null;
   /** Newest entries first; capped at `MAX_ENTRIES`. */
   entries: StatusEntry[];
 }
@@ -55,6 +65,9 @@ export function createInitialStatusSnapshot(): StatusSnapshot {
     lastCommit: null,
     openFindings: null,
     nextAction: "—",
+    iterationCount: null,
+    maxIterations: null,
+    lastModelTier: null,
     entries: [],
   };
 }
@@ -64,16 +77,32 @@ function renderEntry(entry: StatusEntry): string {
 }
 
 function renderStatusCommentBodyUnchecked(snapshot: StatusSnapshot): string {
-  const header = [
+  const headerRows: string[] = [
     STATUS_COMMENT_OPEN,
     STATUS_COMMENT_VISIBLE_HEADER,
     "",
     `**Current**: ${snapshot.current}`,
     `**Last commit**: ${snapshot.lastCommit ?? "—"}`,
-    `**Open findings**: ${snapshot.openFindings ?? "—"}`,
-    `**Next action**: ${snapshot.nextAction}`,
-    "",
-  ].join("\n");
+  ];
+  // TY-291 #3 (UX-09): surface iteration budget + model tier so operators can
+  // read the cost / progress state from the PR alone. Both rows are omitted for
+  // legacy snapshots that pre-date the fields (`null` × `null`) to keep the
+  // header compact when there is nothing useful to show.
+  if (snapshot.iterationCount !== null || snapshot.maxIterations !== null) {
+    const iter = snapshot.iterationCount ?? "—";
+    const cap = snapshot.maxIterations ?? "—";
+    headerRows.push(`**Iterations**: ${iter} / ${cap}`);
+    // Always render when iteration budget is present — null means "no repair yet" → show "—"
+    // rather than hiding the row and leaving the progress header incomplete.
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier ?? "—"}`);
+  } else if (snapshot.lastModelTier !== null) {
+    // Legacy snapshots without iteration fields: only show tier if it was already set.
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier}`);
+  }
+  headerRows.push(`**Open findings**: ${snapshot.openFindings ?? "—"}`);
+  headerRows.push(`**Next action**: ${snapshot.nextAction}`);
+  headerRows.push("");
+  const header = headerRows.join("\n");
 
   const historyBody =
     snapshot.entries.length === 0
@@ -179,7 +208,16 @@ export function parseStatusCommentBody(body: string): StatusSnapshot | null {
         try {
           const parsed: unknown = JSON.parse(jsonRaw);
           if (isStatusSnapshot(parsed)) {
-            result = parsed;
+            // TY-291 #3: legacy snapshots predate iterationCount /
+            // maxIterations / lastModelTier. Normalise undefined → null so the
+            // renderer's `null` check produces the legacy 4-row header instead
+            // of `**Iterations**: undefined / —`.
+            result = {
+              ...parsed,
+              iterationCount: parsed.iterationCount ?? null,
+              maxIterations: parsed.maxIterations ?? null,
+              lastModelTier: parsed.lastModelTier ?? null,
+            };
             break;
           }
         } catch {
@@ -199,6 +237,29 @@ function isStatusSnapshot(value: unknown): value is StatusSnapshot {
   if (v.lastCommit !== null && typeof v.lastCommit !== "string") return false;
   if (v.openFindings !== null && typeof v.openFindings !== "number") return false;
   if (typeof v.nextAction !== "string") return false;
+  // TY-291 #3 (UX-09): legacy snapshots predate iterationCount / maxIterations
+  // / lastModelTier. Treat missing fields as `null` (preserves back-compat) but
+  // reject explicit values of the wrong type so a malformed write surfaces in
+  // tests instead of silently falling through.
+  if (
+    v.iterationCount !== undefined &&
+    v.iterationCount !== null &&
+    typeof v.iterationCount !== "number"
+  )
+    return false;
+  if (
+    v.maxIterations !== undefined &&
+    v.maxIterations !== null &&
+    typeof v.maxIterations !== "number"
+  )
+    return false;
+  if (
+    v.lastModelTier !== undefined &&
+    v.lastModelTier !== null &&
+    v.lastModelTier !== "base" &&
+    v.lastModelTier !== "escalated"
+  )
+    return false;
   if (!Array.isArray(v.entries)) return false;
   for (const e of v.entries) {
     if (typeof e !== "object" || e === null) return false;
@@ -224,6 +285,9 @@ export interface StatusUpdate {
   lastCommit?: string | null;
   openFindings?: number | null;
   nextAction?: string;
+  iterationCount?: number | null;
+  maxIterations?: number | null;
+  lastModelTier?: "base" | "escalated" | null;
   /** Optional entry to prepend to history (newest first). */
   newEntry?: StatusEntry;
 }
@@ -259,6 +323,21 @@ export function applyStatusUpdate(
         ? snapshot.openFindings
         : update.openFindings,
     nextAction: update.nextAction ?? snapshot.nextAction,
+    // TY-291 #3: same `undefined = preserve, null = clear` semantics as the
+    // existing nullable fields so callers can leave iteration progress alone
+    // when they have nothing to report.
+    iterationCount:
+      update.iterationCount === undefined
+        ? snapshot.iterationCount
+        : update.iterationCount,
+    maxIterations:
+      update.maxIterations === undefined
+        ? snapshot.maxIterations
+        : update.maxIterations,
+    lastModelTier:
+      update.lastModelTier === undefined
+        ? snapshot.lastModelTier
+        : update.lastModelTier,
     entries,
   };
 }

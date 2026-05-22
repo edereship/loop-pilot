@@ -7,7 +7,10 @@ import {
   updateStateComment,
   readState,
 } from "./state-manager.js";
-import { postCodexReviewRequest } from "./comment-poster.js";
+import {
+  postCodexReviewRequest,
+  postInitialStatusComment,
+} from "./comment-poster.js";
 import type { BaseConfig } from "./config.js";
 import { registerAllSecrets } from "./secrets.js";
 
@@ -15,12 +18,14 @@ type ReadState = typeof readState;
 type CreateStateComment = typeof createStateComment;
 type UpdateStateComment = typeof updateStateComment;
 type PostCodexReviewRequest = typeof postCodexReviewRequest;
+type PostInitialStatusComment = typeof postInitialStatusComment;
 
 export interface InitDeps {
   readState: ReadState;
   createStateComment: CreateStateComment;
   updateStateComment: UpdateStateComment;
   postCodexReviewRequest: PostCodexReviewRequest;
+  postInitialStatusComment: PostInitialStatusComment;
   setSecret: (secret: string) => void;
   info: (message: string) => void;
   warning: (message: string) => void;
@@ -32,6 +37,7 @@ const defaultDeps: InitDeps = {
   createStateComment,
   updateStateComment,
   postCodexReviewRequest,
+  postInitialStatusComment,
   // TY-276 #4: wrap @actions/core methods in arrows for symmetry with
   // main-pre-fix / main-post-fix. The direct-reference form works today
   // because `@actions/core` does not use `this`, but a future version that
@@ -83,6 +89,25 @@ export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps):
   // Update status to waiting_codex
   state = { ...state, status: "waiting_codex", lastCodexRequestCommentId: reviewRequestId };
   await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken);
+
+  // TY-291 #2 (UX-05): seed the visible status comment so the PR shows
+  // "Initialized — waiting for first Codex review" during the 5-15 minute gap
+  // before post-fix runs its first iteration. Best-effort: a failure here is
+  // logged but does not roll back init — the next post-fix iteration's
+  // `upsertStatusComment` is idempotent and will pick the snapshot back up.
+  try {
+    const statusCommentId = await deps.postInitialStatusComment(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      config.maxReviewIterations,
+      config.githubToken,
+    );
+    deps.info(`Created initial status comment: ${statusCommentId}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    deps.warning(`Failed to create initial status comment: ${message}`);
+  }
 
   deps.info("Workflow A completed: status = waiting_codex");
   deps.setOutput("comment-id", String(commentId));

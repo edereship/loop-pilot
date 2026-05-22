@@ -16,6 +16,10 @@ inputs:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false
     default: ""
+  max-review-iterations:
+    description: "Maximum number of Codex review / Claude fix iterations per PR. Must match the value configured in the loop workflow (MAX_REVIEW_ITERATIONS / vars.MAX_REVIEW_ITERATIONS). Pass `${{ vars.MAX_REVIEW_ITERATIONS || '20' }}` so the initial status comment reflects the actual cap. Defaults to 20."
+    required: false
+    default: "20"
   auto-review-state-comment-authors:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false

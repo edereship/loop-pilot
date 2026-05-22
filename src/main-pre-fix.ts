@@ -21,7 +21,9 @@ import {
 import { computeFindingsHash } from "./findings-hash.js";
 import { isLoop } from "./loop-detector.js";
 import {
+  deriveIterationProgress,
   postCompletionComment as defaultPostCompletionComment,
+  postFixingStartComment as defaultPostFixingStartComment,
   postStopComment as defaultPostStopComment,
   postInitIncompleteComment as defaultPostInitIncompleteComment,
 } from "./comment-poster.js";
@@ -81,6 +83,7 @@ export interface PreFixDeps {
   fetchReviewComments: typeof defaultFetchReviewComments;
   stabilizeReviewComments: typeof defaultStabilizeReviewComments;
   postCompletionComment: typeof defaultPostCompletionComment;
+  postFixingStartComment: typeof defaultPostFixingStartComment;
   postStopComment: typeof defaultPostStopComment;
   postInitIncompleteComment: typeof defaultPostInitIncompleteComment;
   mergeIfChecksPass: typeof defaultMergeIfChecksPass;
@@ -105,6 +108,7 @@ const defaultDeps: PreFixDeps = {
   fetchReviewComments: defaultFetchReviewComments,
   stabilizeReviewComments: defaultStabilizeReviewComments,
   postCompletionComment: defaultPostCompletionComment,
+  postFixingStartComment: defaultPostFixingStartComment,
   postStopComment: defaultPostStopComment,
   postInitIncompleteComment: defaultPostInitIncompleteComment,
   mergeIfChecksPass: defaultMergeIfChecksPass,
@@ -362,6 +366,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       0,
       "Previous fixing state timed out — recovered automatically. Use /restart-review to resume.",
       config.githubToken,
+      deriveIterationProgress(recoveredState, config.maxReviewIterations),
     );
     return;
   }
@@ -417,6 +422,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       0,
       "Codex replied with a usage-limit notice instead of a review. Wait for quota to reset (or upgrade), then run /restart-review.",
       config.githubToken,
+      deriveIterationProgress(stoppedState, config.maxReviewIterations),
     );
     return;
   }
@@ -508,6 +514,13 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       config.prNumber,
       doneState.iterationCount,
       config.githubToken,
+      {
+        autoMergeOnClean: config.autoMergeOnClean,
+        progress: deriveIterationProgress(
+          doneState,
+          config.maxReviewIterations,
+        ),
+      },
     );
     if (config.autoMergeOnClean) {
       await deps.mergeIfChecksPass(
@@ -550,6 +563,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       findings.length,
       `Reached MAX_REVIEW_ITERATIONS (${config.maxReviewIterations})`,
       config.githubToken,
+      deriveIterationProgress(stoppedState, config.maxReviewIterations),
     );
     return;
   }
@@ -577,6 +591,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       findings.length,
       "Same findings hash detected in previous iteration",
       config.githubToken,
+      deriveIterationProgress(stoppedState, config.maxReviewIterations),
     );
     return;
   }
@@ -670,6 +685,27 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     ))
   )
     return;
+
+  // TY-291 #2 (UX-05): announce the fixing transition on the status comment so
+  // operators see "Fixing — iteration N starting" during the multi-minute
+  // claude-code-action run. Best-effort: a failure here only loses the
+  // intermediate header update; the next post-fix entry will re-anchor
+  // the snapshot.
+  try {
+    await deps.postFixingStartComment(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      newIteration,
+      selection.tier,
+      config.maxReviewIterations,
+      findings.length,
+      config.githubToken,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    deps.warning(`[pre-fix] Failed to update fixing-start status: ${message}`);
+  }
 
   // ─── Build claude-code-action prompt ─────────────────────────────────────
   const prContext: PrContext = {

@@ -294,6 +294,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining(".github/workflows/auto-review-loop.yml"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -357,6 +358,7 @@ describe("runPostFix", () => {
       // (asserted both ways).
       expect.stringContaining("github-pat-classic in src/foo.ts"),
       "github-token",
+    expect.any(Object),
     );
     const detailArg = (deps.postStopComment as ReturnType<typeof vi.fn>).mock
       .calls[0]?.[6] as string;
@@ -495,6 +497,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("github-pat-classic in src/new-leak.ts"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -554,6 +557,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("github-pat-classic in src/foo.ts"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -701,6 +705,7 @@ describe("runPostFix", () => {
       // Path with " => " in its name must surface in the stop detail.
       expect.stringContaining("github-pat-classic in data/a => b.json"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -752,6 +757,7 @@ describe("runPostFix", () => {
       99,
       "tsc error: unexpected token",
       "github-token",
+    expect.any(Object),
     );
     // TY-290 #2: status-comment edit does not fire GitHub notifications, so
     // `failureExit` must follow `postTestFailureComment` (status update) with
@@ -818,6 +824,7 @@ describe("runPostFix", () => {
       ["src/foo.ts", "src/new-helper.ts", "tests/new-helper.test.ts"],
       "abc1234",
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -882,6 +889,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("cancelled"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -1078,6 +1086,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining(".github/workflows/auto-review-loop.yml"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -1177,6 +1186,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("no file changes"),
       "github-token",
+    expect.any(Object),
     );
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
   });
@@ -1216,6 +1226,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("HTTP 403: forbidden"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -1386,6 +1397,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("BUILD_COMMAND erased all working-tree changes"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -1439,6 +1451,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("BUILD_COMMAND failed"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -1492,6 +1505,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("package.json"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -1551,6 +1565,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("BUILD_COMMAND reverted all repair edits"),
       "github-token",
+    expect.any(Object),
     );
   });
 
@@ -1612,6 +1627,7 @@ describe("runPostFix", () => {
       0,
       expect.stringContaining("BUILD_COMMAND reverted some repair edits"),
       "github-token",
+    expect.any(Object),
     );
   });
 

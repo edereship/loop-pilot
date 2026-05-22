@@ -35,6 +35,7 @@ import {
   truncatePreviousCheckFailure,
 } from "./claude-code-repair-request.js";
 import {
+  deriveIterationProgress,
   postClaudeCodeActionFixSummary as defaultPostClaudeCodeActionFixSummary,
   postCodexReviewRequest as defaultPostCodexReviewRequest,
   postStopComment as defaultPostStopComment,
@@ -531,6 +532,10 @@ export async function runPostFix(
     ) {
       return;
     }
+    const progress = deriveIterationProgress(
+      stoppedState,
+      config.maxReviewIterations,
+    );
     if (opts.stopReason === "test_failure" && opts.postCheckFailureBody) {
       // TY-290 #2: `postTestFailureComment` only edits the aggregated status
       // comment, which does NOT fire a GitHub notification (the same reason
@@ -544,6 +549,7 @@ export async function runPostFix(
         config.prNumber,
         opts.postCheckFailureBody,
         config.githubToken,
+        progress,
       );
       await deps.postTerminalNotification(
         config.repoOwner,
@@ -567,6 +573,7 @@ export async function runPostFix(
         opts.remainingFindings ?? 0,
         opts.detail,
         config.githubToken,
+        progress,
       );
     }
   }
@@ -1280,6 +1287,7 @@ export async function runPostFix(
     modifiedFiles,
     commitSha || undefined,
     config.githubToken,
+    deriveIterationProgress(state, config.maxReviewIterations),
   );
 
   // ─── Phase 4: Re-review ──────────────────────────────────────────────────
@@ -1377,6 +1385,7 @@ export async function runPostFix(
       0,
       `Failed to post @codex review after the repair commit: ${message}`,
       config.githubToken,
+      deriveIterationProgress(stoppedState, config.maxReviewIterations),
     );
   }
 }

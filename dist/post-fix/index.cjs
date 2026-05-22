@@ -19646,6 +19646,9 @@ function createInitialStatusSnapshot() {
     lastCommit: null,
     openFindings: null,
     nextAction: "\u2014",
+    iterationCount: null,
+    maxIterations: null,
+    lastModelTier: null,
     entries: []
   };
 }
@@ -19656,16 +19659,25 @@ function renderEntry(entry2) {
 ${entry2.body}`;
 }
 function renderStatusCommentBodyUnchecked(snapshot) {
-  const header = [
+  const headerRows = [
     STATUS_COMMENT_OPEN,
     STATUS_COMMENT_VISIBLE_HEADER,
     "",
     `**Current**: ${snapshot.current}`,
-    `**Last commit**: ${snapshot.lastCommit ?? "\u2014"}`,
-    `**Open findings**: ${snapshot.openFindings ?? "\u2014"}`,
-    `**Next action**: ${snapshot.nextAction}`,
-    ""
-  ].join("\n");
+    `**Last commit**: ${snapshot.lastCommit ?? "\u2014"}`
+  ];
+  if (snapshot.iterationCount !== null || snapshot.maxIterations !== null) {
+    const iter = snapshot.iterationCount ?? "\u2014";
+    const cap = snapshot.maxIterations ?? "\u2014";
+    headerRows.push(`**Iterations**: ${iter} / ${cap}`);
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier ?? "\u2014"}`);
+  } else if (snapshot.lastModelTier !== null) {
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier}`);
+  }
+  headerRows.push(`**Open findings**: ${snapshot.openFindings ?? "\u2014"}`);
+  headerRows.push(`**Next action**: ${snapshot.nextAction}`);
+  headerRows.push("");
+  const header = headerRows.join("\n");
   const historyBody = snapshot.entries.length === 0 ? "_(no entries yet)_" : snapshot.entries.map(renderEntry).join("\n\n");
   const history = [
     "<details>",
@@ -19728,7 +19740,12 @@ function parseStatusCommentBody(body) {
         try {
           const parsed = JSON.parse(jsonRaw);
           if (isStatusSnapshot(parsed)) {
-            result = parsed;
+            result = {
+              ...parsed,
+              iterationCount: parsed.iterationCount ?? null,
+              maxIterations: parsed.maxIterations ?? null,
+              lastModelTier: parsed.lastModelTier ?? null
+            };
             break;
           }
         } catch {
@@ -19750,6 +19767,12 @@ function isStatusSnapshot(value) {
   if (v.openFindings !== null && typeof v.openFindings !== "number")
     return false;
   if (typeof v.nextAction !== "string")
+    return false;
+  if (v.iterationCount !== void 0 && v.iterationCount !== null && typeof v.iterationCount !== "number")
+    return false;
+  if (v.maxIterations !== void 0 && v.maxIterations !== null && typeof v.maxIterations !== "number")
+    return false;
+  if (v.lastModelTier !== void 0 && v.lastModelTier !== null && v.lastModelTier !== "base" && v.lastModelTier !== "escalated")
     return false;
   if (!Array.isArray(v.entries))
     return false;
@@ -19781,6 +19804,12 @@ function applyStatusUpdate(snapshot, update) {
     lastCommit: update.lastCommit === void 0 ? snapshot.lastCommit : update.lastCommit,
     openFindings: update.openFindings === void 0 ? snapshot.openFindings : update.openFindings,
     nextAction: update.nextAction ?? snapshot.nextAction,
+    // TY-291 #3: same `undefined = preserve, null = clear` semantics as the
+    // existing nullable fields so callers can leave iteration progress alone
+    // when they have nothing to report.
+    iterationCount: update.iterationCount === void 0 ? snapshot.iterationCount : update.iterationCount,
+    maxIterations: update.maxIterations === void 0 ? snapshot.maxIterations : update.maxIterations,
+    lastModelTier: update.lastModelTier === void 0 ? snapshot.lastModelTier : update.lastModelTier,
     entries
   };
 }
@@ -19917,8 +19946,57 @@ async function postComment(owner, name, pr, body, token) {
 function entry(kind, title, body) {
   return { kind, title, body, timestamp: nowIso() };
 }
+function progressUpdate(progress) {
+  if (progress === void 0)
+    return {};
+  return {
+    iterationCount: progress.iterationCount,
+    maxIterations: progress.maxIterations,
+    lastModelTier: progress.lastModelTier
+  };
+}
+function deriveIterationProgress(state, maxIterations) {
+  const lastEntry = state.findingsHashHistory.length > 0 ? state.findingsHashHistory[state.findingsHashHistory.length - 1] : null;
+  return {
+    iterationCount: state.iterationCount,
+    maxIterations,
+    lastModelTier: lastEntry === null ? null : lastEntry.modelTier ?? "escalated"
+  };
+}
 async function applyStatusUpdate2(owner, name, pr, update, token) {
   return upsertStatusComment(owner, name, pr, update, token);
+}
+function nextActionForStopReason(reason) {
+  switch (reason) {
+    case "no_findings":
+      return "Auto-review is complete; merge when ready.";
+    case "max_iterations":
+      return "Review history, then `/restart-review --hard` to clear the iteration count.";
+    case "loop_detected":
+      return "Same finding repeated at the escalated tier; review the diff manually before `/restart-review --hard`.";
+    case "secret_leak_suspected":
+      return "Audit the diff for leaked credentials, then `/restart-review --hard` (soft is rejected).";
+    case "scope_violation":
+      return "Review the stop detail above for the specific violation; revert if needed, adjust `AUTO_REVIEW_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
+    case "test_failure":
+      return "Fix the underlying CHECK_COMMAND failure, push, then `/restart-review`.";
+    case "codex_usage_limit":
+      return "Wait for the Codex quota to reset, then `/restart-review`.";
+    case "codex_request_failed":
+      return "Verify Codex auth / connectivity, then `/restart-review`.";
+    case "max_turns_exceeded":
+      return "`/restart-review` to retry; the next iteration auto-escalates to the higher tier.";
+    case "workflow_crashed":
+      return "`/restart-review` to resume; add `--hard` if iteration history needs clearing.";
+    case "action_no_op":
+      return "Review the Codex findings manually; `/restart-review` if you believe the next iteration can resolve them.";
+    case "state_corrupted":
+    case "state_conflict":
+      return "See docs/operations/stop-and-recovery.md for the recovery procedure.";
+    case "action_failure":
+    case "action_timeout":
+      return "Check the workflow run logs, then `/restart-review`.";
+  }
 }
 function buildStatusCommentPermalink(owner, name, pr, statusCommentId) {
   return `https://github.com/${owner}/${name}/pull/${pr}#issuecomment-${statusCommentId}`;
@@ -19960,16 +20038,17 @@ async function postTerminalNotification(owner, name, pr, statusCommentId, kind, 
     warning(`[comment-poster] Failed to post terminal notification: ${message}`);
   }
 }
-async function postClaudeCodeActionFixSummary(owner, name, pr, iteration, changedPaths, lastCommit, token) {
+async function postClaudeCodeActionFixSummary(owner, name, pr, iteration, changedPaths, lastCommit, token, progress) {
   const fileLines = changedPaths.length > 0 ? changedPaths.map((path) => `- \`${path}\``).join("\n") : "_(no files changed)_";
   return applyStatusUpdate2(owner, name, pr, {
-    current: `Fixing \u2014 iteration ${iteration} applied`,
-    nextAction: "Awaiting next Codex review.",
+    current: `Fix committed (iteration ${iteration}) \u2014 queuing Codex re-review`,
+    nextAction: "Codex re-review is being queued; no operator action needed.",
     lastCommit,
+    ...progressUpdate(progress),
     newEntry: entry("auto_fix_applied", `Iteration ${iteration} \u2014 Auto-fix applied`, fileLines)
   }, token);
 }
-async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token) {
+async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token, progress) {
   const formattedReason = STOP_REASON_LABELS[stopReason];
   const body = [
     `Reason: ${formattedReason}`,
@@ -19980,13 +20059,17 @@ async function postStopComment(owner, name, pr, stopReason, reviewId, remainingF
   const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: `Stopped \u2014 ${formattedReason}`,
     openFindings: remainingFindings,
-    nextAction: "Manual intervention required.",
+    // TY-291 #4 (UX-11): stopReason-specific imperative replaces the generic
+    // "Manual intervention required." line so the row tells the operator
+    // exactly which recovery command to run.
+    nextAction: nextActionForStopReason(stopReason),
+    ...progressUpdate(progress),
     newEntry: entry("stopped", `Automation stopped \u2014 ${formattedReason}`, body)
   }, token);
   await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "stopped", stopReason, remainingFindings }, token);
   return statusCommentId;
 }
-async function postTestFailureComment(owner, name, pr, checkOutput, token) {
+async function postTestFailureComment(owner, name, pr, checkOutput, token, progress) {
   const MAX_FENCE_RUN_CHARS = 100;
   const cappedRun = (ch) => new RegExp(`${ch === "`" ? "`" : "~"}{${MAX_FENCE_RUN_CHARS + 1},}`, "g");
   const truncatedPayload = checkOutput.replace(cappedRun("`"), "`".repeat(MAX_FENCE_RUN_CHARS)).replace(cappedRun("~"), "~".repeat(MAX_FENCE_RUN_CHARS));
@@ -20002,8 +20085,13 @@ ${fence}
 
 Changes have been rolled back.`;
   return applyStatusUpdate2(owner, name, pr, {
-    current: "Stopped \u2014 CHECK_COMMAND failed after fix",
-    nextAction: "Manual intervention required.",
+    // TY-291 #4 (UX-11): align with the post-TY-292 test_failure label and
+    // share the stopReason-specific imperative with `postStopComment` so the
+    // status row and the eventual top-level notification agree on the
+    // recovery step.
+    current: `Stopped \u2014 ${STOP_REASON_LABELS.test_failure}`,
+    nextAction: nextActionForStopReason("test_failure"),
+    ...progressUpdate(progress),
     newEntry: entry("test_failure", "Auto-fix stopped: CHECK_COMMAND failed", body)
   }, token);
 }
@@ -21118,15 +21206,16 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     if (!await updateStateCommentLocked(stoppedState, `Could not stop after ${opts.stopReason}.`)) {
       return;
     }
+    const progress = deriveIterationProgress(stoppedState, config.maxReviewIterations);
     if (opts.stopReason === "test_failure" && opts.postCheckFailureBody) {
-      const statusCommentId = await deps.postTestFailureComment(config.repoOwner, config.repoName, config.prNumber, opts.postCheckFailureBody, config.githubToken);
+      const statusCommentId = await deps.postTestFailureComment(config.repoOwner, config.repoName, config.prNumber, opts.postCheckFailureBody, config.githubToken, progress);
       await deps.postTerminalNotification(config.repoOwner, config.repoName, config.prNumber, statusCommentId, {
         kind: "stopped",
         stopReason: "test_failure",
         remainingFindings: opts.remainingFindings
       }, config.githubToken);
     } else {
-      await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, opts.stopReason, inputs.triggerCommentId, opts.remainingFindings ?? 0, opts.detail, config.githubToken);
+      await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, opts.stopReason, inputs.triggerCommentId, opts.remainingFindings ?? 0, opts.detail, config.githubToken, progress);
     }
   }
   const outcome = inputs.actionOutcome.toLowerCase();
@@ -21569,7 +21658,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   } else {
     deps.warning("[post-fix] No staged changes after `git add`. Skipping commit; treating as no-op.");
   }
-  await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, commitSha || void 0, config.githubToken);
+  await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, commitSha || void 0, config.githubToken, deriveIterationProgress(state, config.maxReviewIterations));
   const waitingState = {
     ...state,
     status: "waiting_codex",
@@ -21612,7 +21701,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     if (!await updateStateCommentLocked(stoppedState, "Could not record codex_request_failed stop.")) {
       return;
     }
-    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Failed to post @codex review after the repair commit: ${message}`, config.githubToken);
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Failed to post @codex review after the repair commit: ${message}`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
   }
 }
 async function run() {

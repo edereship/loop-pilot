@@ -68,6 +68,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
           pr-number: ${{ github.event.pull_request.number }}
+          # Pass the same cap used by Workflow B so the initial status comment
+          # shows the correct "Iterations: 0 / N" bound from the start.
+          max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           # TY-272 #A: trusted state-comment author override; empty falls
           # back to `github-actions[bot]`.
           auto-review-state-comment-authors: ${{ vars.AUTO_REVIEW_STATE_COMMENT_AUTHORS }}

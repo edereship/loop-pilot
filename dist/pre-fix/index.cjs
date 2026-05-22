@@ -19999,6 +19999,9 @@ function createInitialStatusSnapshot() {
     lastCommit: null,
     openFindings: null,
     nextAction: "\u2014",
+    iterationCount: null,
+    maxIterations: null,
+    lastModelTier: null,
     entries: []
   };
 }
@@ -20009,16 +20012,25 @@ function renderEntry(entry2) {
 ${entry2.body}`;
 }
 function renderStatusCommentBodyUnchecked(snapshot) {
-  const header = [
+  const headerRows = [
     STATUS_COMMENT_OPEN,
     STATUS_COMMENT_VISIBLE_HEADER,
     "",
     `**Current**: ${snapshot.current}`,
-    `**Last commit**: ${snapshot.lastCommit ?? "\u2014"}`,
-    `**Open findings**: ${snapshot.openFindings ?? "\u2014"}`,
-    `**Next action**: ${snapshot.nextAction}`,
-    ""
-  ].join("\n");
+    `**Last commit**: ${snapshot.lastCommit ?? "\u2014"}`
+  ];
+  if (snapshot.iterationCount !== null || snapshot.maxIterations !== null) {
+    const iter = snapshot.iterationCount ?? "\u2014";
+    const cap = snapshot.maxIterations ?? "\u2014";
+    headerRows.push(`**Iterations**: ${iter} / ${cap}`);
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier ?? "\u2014"}`);
+  } else if (snapshot.lastModelTier !== null) {
+    headerRows.push(`**Last model tier**: ${snapshot.lastModelTier}`);
+  }
+  headerRows.push(`**Open findings**: ${snapshot.openFindings ?? "\u2014"}`);
+  headerRows.push(`**Next action**: ${snapshot.nextAction}`);
+  headerRows.push("");
+  const header = headerRows.join("\n");
   const historyBody = snapshot.entries.length === 0 ? "_(no entries yet)_" : snapshot.entries.map(renderEntry).join("\n\n");
   const history = [
     "<details>",
@@ -20081,7 +20093,12 @@ function parseStatusCommentBody(body) {
         try {
           const parsed = JSON.parse(jsonRaw);
           if (isStatusSnapshot(parsed)) {
-            result = parsed;
+            result = {
+              ...parsed,
+              iterationCount: parsed.iterationCount ?? null,
+              maxIterations: parsed.maxIterations ?? null,
+              lastModelTier: parsed.lastModelTier ?? null
+            };
             break;
           }
         } catch {
@@ -20103,6 +20120,12 @@ function isStatusSnapshot(value) {
   if (v.openFindings !== null && typeof v.openFindings !== "number")
     return false;
   if (typeof v.nextAction !== "string")
+    return false;
+  if (v.iterationCount !== void 0 && v.iterationCount !== null && typeof v.iterationCount !== "number")
+    return false;
+  if (v.maxIterations !== void 0 && v.maxIterations !== null && typeof v.maxIterations !== "number")
+    return false;
+  if (v.lastModelTier !== void 0 && v.lastModelTier !== null && v.lastModelTier !== "base" && v.lastModelTier !== "escalated")
     return false;
   if (!Array.isArray(v.entries))
     return false;
@@ -20134,6 +20157,12 @@ function applyStatusUpdate(snapshot, update) {
     lastCommit: update.lastCommit === void 0 ? snapshot.lastCommit : update.lastCommit,
     openFindings: update.openFindings === void 0 ? snapshot.openFindings : update.openFindings,
     nextAction: update.nextAction ?? snapshot.nextAction,
+    // TY-291 #3: same `undefined = preserve, null = clear` semantics as the
+    // existing nullable fields so callers can leave iteration progress alone
+    // when they have nothing to report.
+    iterationCount: update.iterationCount === void 0 ? snapshot.iterationCount : update.iterationCount,
+    maxIterations: update.maxIterations === void 0 ? snapshot.maxIterations : update.maxIterations,
+    lastModelTier: update.lastModelTier === void 0 ? snapshot.lastModelTier : update.lastModelTier,
     entries
   };
 }
@@ -20270,8 +20299,57 @@ async function postComment(owner, name, pr, body, token) {
 function entry(kind, title, body) {
   return { kind, title, body, timestamp: nowIso() };
 }
+function progressUpdate(progress) {
+  if (progress === void 0)
+    return {};
+  return {
+    iterationCount: progress.iterationCount,
+    maxIterations: progress.maxIterations,
+    lastModelTier: progress.lastModelTier
+  };
+}
+function deriveIterationProgress(state, maxIterations) {
+  const lastEntry = state.findingsHashHistory.length > 0 ? state.findingsHashHistory[state.findingsHashHistory.length - 1] : null;
+  return {
+    iterationCount: state.iterationCount,
+    maxIterations,
+    lastModelTier: lastEntry === null ? null : lastEntry.modelTier ?? "escalated"
+  };
+}
 async function applyStatusUpdate2(owner, name, pr, update, token) {
   return upsertStatusComment(owner, name, pr, update, token);
+}
+function nextActionForStopReason(reason) {
+  switch (reason) {
+    case "no_findings":
+      return "Auto-review is complete; merge when ready.";
+    case "max_iterations":
+      return "Review history, then `/restart-review --hard` to clear the iteration count.";
+    case "loop_detected":
+      return "Same finding repeated at the escalated tier; review the diff manually before `/restart-review --hard`.";
+    case "secret_leak_suspected":
+      return "Audit the diff for leaked credentials, then `/restart-review --hard` (soft is rejected).";
+    case "scope_violation":
+      return "Review the stop detail above for the specific violation; revert if needed, adjust `AUTO_REVIEW_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
+    case "test_failure":
+      return "Fix the underlying CHECK_COMMAND failure, push, then `/restart-review`.";
+    case "codex_usage_limit":
+      return "Wait for the Codex quota to reset, then `/restart-review`.";
+    case "codex_request_failed":
+      return "Verify Codex auth / connectivity, then `/restart-review`.";
+    case "max_turns_exceeded":
+      return "`/restart-review` to retry; the next iteration auto-escalates to the higher tier.";
+    case "workflow_crashed":
+      return "`/restart-review` to resume; add `--hard` if iteration history needs clearing.";
+    case "action_no_op":
+      return "Review the Codex findings manually; `/restart-review` if you believe the next iteration can resolve them.";
+    case "state_corrupted":
+    case "state_conflict":
+      return "See docs/operations/stop-and-recovery.md for the recovery procedure.";
+    case "action_failure":
+    case "action_timeout":
+      return "Check the workflow run logs, then `/restart-review`.";
+  }
 }
 function buildStatusCommentPermalink(owner, name, pr, statusCommentId) {
   return `https://github.com/${owner}/${name}/pull/${pr}#issuecomment-${statusCommentId}`;
@@ -20313,17 +20391,20 @@ async function postTerminalNotification(owner, name, pr, statusCommentId, kind, 
     warning(`[comment-poster] Failed to post terminal notification: ${message}`);
   }
 }
-async function postCompletionComment(owner, name, pr, iterations, token) {
+async function postCompletionComment(owner, name, pr, iterations, token, options) {
+  const autoMergeOnClean = options?.autoMergeOnClean ?? false;
+  const nextAction = autoMergeOnClean ? "Auto-merge will be attempted \u2014 the PR will squash-merge once all other CI checks pass; merge manually if it does not." : "Review the changes and merge manually.";
   const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: "Completed",
     openFindings: 0,
-    nextAction: "All in-scope findings (at or above the configured severity threshold) have been resolved.",
+    nextAction,
+    ...progressUpdate(options?.progress),
     newEntry: entry("completed", `Auto-review completed (${iterations} iterations)`, "All in-scope findings (at or above the configured severity threshold) have been resolved.")
   }, token);
   await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "done", iterations }, token);
   return statusCommentId;
 }
-async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token) {
+async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token, progress) {
   const formattedReason = STOP_REASON_LABELS[stopReason];
   const body = [
     `Reason: ${formattedReason}`,
@@ -20334,11 +20415,25 @@ async function postStopComment(owner, name, pr, stopReason, reviewId, remainingF
   const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: `Stopped \u2014 ${formattedReason}`,
     openFindings: remainingFindings,
-    nextAction: "Manual intervention required.",
+    // TY-291 #4 (UX-11): stopReason-specific imperative replaces the generic
+    // "Manual intervention required." line so the row tells the operator
+    // exactly which recovery command to run.
+    nextAction: nextActionForStopReason(stopReason),
+    ...progressUpdate(progress),
     newEntry: entry("stopped", `Automation stopped \u2014 ${formattedReason}`, body)
   }, token);
   await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "stopped", stopReason, remainingFindings }, token);
   return statusCommentId;
+}
+async function postFixingStartComment(owner, name, pr, iteration, modelTier, maxIterations, openFindings, token) {
+  return applyStatusUpdate2(owner, name, pr, {
+    current: `Fixing \u2014 iteration ${iteration} starting (model: ${modelTier})`,
+    nextAction: "Claude Code Action is running; no operator action needed.",
+    iterationCount: iteration,
+    maxIterations,
+    lastModelTier: modelTier,
+    openFindings
+  }, token);
 }
 async function postInitIncompleteComment(owner, name, pr, token) {
   const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
@@ -21270,6 +21365,7 @@ var defaultDeps3 = {
   fetchReviewComments,
   stabilizeReviewComments,
   postCompletionComment,
+  postFixingStartComment,
   postStopComment,
   postInitIncompleteComment,
   mergeIfChecksPass,
@@ -21393,7 +21489,7 @@ async function runPreFix(config, deps = defaultDeps3) {
     };
     if (!await updateStateCommentLocked(recoveredState, "Could not recover stale fixing state."))
       return;
-    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "workflow_crashed", triggerCommentId, 0, "Previous fixing state timed out \u2014 recovered automatically. Use /restart-review to resume.", config.githubToken);
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "workflow_crashed", triggerCommentId, 0, "Previous fixing state timed out \u2014 recovered automatically. Use /restart-review to resume.", config.githubToken, deriveIterationProgress(recoveredState, config.maxReviewIterations));
     return;
   }
   if (state.status !== "waiting_codex") {
@@ -21414,7 +21510,7 @@ async function runPreFix(config, deps = defaultDeps3) {
     };
     if (!await updateStateCommentLocked(stoppedState, "Could not stop after detecting Codex usage limit."))
       return;
-    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_usage_limit", triggerCommentId, 0, "Codex replied with a usage-limit notice instead of a review. Wait for quota to reset (or upgrade), then run /restart-review.", config.githubToken);
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_usage_limit", triggerCommentId, 0, "Codex replied with a usage-limit notice instead of a review. Wait for quota to reset (or upgrade), then run /restart-review.", config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
     return;
   }
   deps.info(`[pre-fix] Debouncing ${config.debounceSeconds}s...`);
@@ -21456,7 +21552,10 @@ async function runPreFix(config, deps = defaultDeps3) {
     };
     if (!await updateStateCommentLocked(doneState, "Could not mark auto-review as done."))
       return;
-    await deps.postCompletionComment(config.repoOwner, config.repoName, config.prNumber, doneState.iterationCount, config.githubToken);
+    await deps.postCompletionComment(config.repoOwner, config.repoName, config.prNumber, doneState.iterationCount, config.githubToken, {
+      autoMergeOnClean: config.autoMergeOnClean,
+      progress: deriveIterationProgress(doneState, config.maxReviewIterations)
+    });
     if (config.autoMergeOnClean) {
       await deps.mergeIfChecksPass(config.repoOwner, config.repoName, config.prNumber, config.githubToken, { info: deps.info, warning: deps.warning }, {
         pollIntervalMs: config.autoMergePollSeconds * 1e3,
@@ -21474,7 +21573,7 @@ async function runPreFix(config, deps = defaultDeps3) {
     };
     if (!await updateStateCommentLocked(stoppedState, "Could not stop after reaching the max iteration limit."))
       return;
-    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "max_iterations", triggerCommentId, findings.length, `Reached MAX_REVIEW_ITERATIONS (${config.maxReviewIterations})`, config.githubToken);
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "max_iterations", triggerCommentId, findings.length, `Reached MAX_REVIEW_ITERATIONS (${config.maxReviewIterations})`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
     return;
   }
   if (isLoop(findings, state.findingsHashHistory)) {
@@ -21486,7 +21585,7 @@ async function runPreFix(config, deps = defaultDeps3) {
     };
     if (!await updateStateCommentLocked(stoppedState, "Could not stop after detecting a findings loop."))
       return;
-    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "loop_detected", triggerCommentId, findings.length, "Same findings hash detected in previous iteration", config.githubToken);
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "loop_detected", triggerCommentId, findings.length, "Same findings hash detected in previous iteration", config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
     return;
   }
   const currentHash = computeFindingsHash(findings);
@@ -21525,6 +21624,12 @@ async function runPreFix(config, deps = defaultDeps3) {
   };
   if (!await updateStateCommentLocked(fixingState, "Could not claim the hidden comment state for fixing."))
     return;
+  try {
+    await deps.postFixingStartComment(config.repoOwner, config.repoName, config.prNumber, newIteration, selection.tier, config.maxReviewIterations, findings.length, config.githubToken);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    deps.warning(`[pre-fix] Failed to update fixing-start status: ${message}`);
+  }
   const prContext = {
     number: config.prNumber,
     title: config.prTitle,
