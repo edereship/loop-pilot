@@ -204,6 +204,79 @@ describe("runPostFix", () => {
     );
   });
 
+  it("TY-327: a non-412 waiting_codex write failure after a successful push preserves the committed iteration (no rollback)", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState(), // iterationCount 2, findingsHashHistory length 2
+    });
+    // 1st Phase 4 write (waiting_codex) rejects with a NON-conflict error
+    // (transient 5xx); the fallback stopped write succeeds.
+    (deps.updateStateComment as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("HTTP 500: server error"))
+      .mockResolvedValue({ updatedAt: "2026-05-14T12:31:00Z" });
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    // The repair commit was committed AND pushed.
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.pushCalls.length).toBe(1);
+
+    // The fallback write records stopped/codex_request_failed WITHOUT rolling
+    // back the pushed iteration: iterationCount stays 2 and history stays length 2.
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3] as ReviewState;
+    expect(lastState).toMatchObject({
+      status: "stopped",
+      stopReason: "codex_request_failed",
+      iterationCount: 2,
+    });
+    expect(lastState.findingsHashHistory).toHaveLength(2);
+
+    // crash-recovery rollback must NOT run on this (non-throwing) path.
+    expect(deps.demoteFixingOnCrash).not.toHaveBeenCalled();
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      99,
+      "codex_request_failed",
+      expect.any(Number),
+      0,
+      expect.stringContaining("pushed"),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
+  it("TY-329 #2: stops with action_no_op (no @codex review) when `git add` stages nothing despite a non-empty change set", async () => {
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      { hasStagedChanges: () => false },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3] as ReviewState;
+    expect(lastState).toMatchObject({
+      status: "stopped",
+      stopReason: "action_no_op",
+      // failureExit's rollbackFixingClaim rewinds the optimistic Phase 3 claim.
+      iterationCount: 1,
+    });
+    expect(lastState.findingsHashHistory).toHaveLength(1);
+    expect(deps.postClaudeCodeActionFixSummary).not.toHaveBeenCalled();
+    expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+  });
+
   it("TY-286 #A: does NOT emit state_conflict 🛑 when the Phase 4 2nd write conflicts; warns instead", async () => {
     // The 1st write (waiting_codex) succeeded and `@codex review` was
     // posted, so the loop is already healthy. A 412 on the 2nd write (which

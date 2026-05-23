@@ -21113,11 +21113,24 @@ async function mergeIfChecksPass(owner, name, pr, token, log, overrides = {}) {
     if (elapsedMs >= deps.timeoutMs) {
       const timeoutMinutes = Math.round(deps.timeoutMs / 6e4);
       if (others.length === 0) {
+        if (!mergeShaLookupNull) {
+          try {
+            await deps.mergeSquash(owner, name, pr, initialHeadSha, token);
+            log.info(`[pr-merger] Auto-merge (squash) succeeded for PR #${pr} at ${initialHeadSha} (no non-self CI appeared within the ${timeoutMinutes} min budget; treated as no CI configured).`);
+          } catch (err) {
+            await deps.postSkipNotification?.({
+              kind: "merge_call_failed",
+              detail: errMessage(err)
+            });
+            log.warning(`[pr-merger] Failed to merge PR #${pr} (non-fatal): ${errMessage(err)}.`);
+          }
+          return;
+        }
         await deps.postSkipNotification?.({
           kind: "timeout_no_runs",
           timeoutMinutes
         });
-        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min waiting for non-self CI runs to appear.`);
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min waiting for the merge commit sha to settle.`);
       } else {
         const pendingNames = pending.map((r) => r.name);
         await deps.postSkipNotification?.({

@@ -498,12 +498,40 @@ export async function mergeIfChecksPass(
     if (elapsedMs >= deps.timeoutMs) {
       const timeoutMinutes = Math.round(deps.timeoutMs / 60000);
       if (others.length === 0) {
+        // TY-328: no non-self CI run ever appeared within the full timeout
+        // budget. The fast-path no-CI merge below only fires once
+        // `elapsedMs >= noCiConfiguredDelayMs` (default 60s); when the operator
+        // configures `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` at or below that
+        // delay (the input minimum is 1 min == 60s), this timeout gate is
+        // reached first and the fast path is never evaluated — so a genuinely
+        // CI-less repo would skip auto-merge forever. Treat "waited the whole
+        // budget, still zero non-self runs" as "no CI configured" and merge,
+        // provided GitHub has already computed the merge commit sha
+        // (`!mergeShaLookupNull`); otherwise CI may still be pending on the
+        // merge ref, so fall through to the skip notification.
+        if (!mergeShaLookupNull) {
+          try {
+            await deps.mergeSquash(owner, name, pr, initialHeadSha, token);
+            log.info(
+              `[pr-merger] Auto-merge (squash) succeeded for PR #${pr} at ${initialHeadSha} (no non-self CI appeared within the ${timeoutMinutes} min budget; treated as no CI configured).`,
+            );
+          } catch (err) {
+            await deps.postSkipNotification?.({
+              kind: "merge_call_failed",
+              detail: errMessage(err),
+            });
+            log.warning(
+              `[pr-merger] Failed to merge PR #${pr} (non-fatal): ${errMessage(err)}.`,
+            );
+          }
+          return;
+        }
         await deps.postSkipNotification?.({
           kind: "timeout_no_runs",
           timeoutMinutes,
         });
         log.warning(
-          `[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min waiting for non-self CI runs to appear.`,
+          `[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min waiting for the merge commit sha to settle.`,
         );
       } else {
         const pendingNames = pending.map((r) => r.name);

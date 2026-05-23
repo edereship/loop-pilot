@@ -21782,7 +21782,15 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     commitSha = deps.readHeadSha();
     deps.info(`[post-fix] Committed and pushed: ${commitSha}`);
   } else {
-    deps.warning("[post-fix] No staged changes after `git add`. Skipping commit; treating as no-op.");
+    deps.error("[post-fix] No staged changes after `git add` despite a non-empty change set. Stopping (action_no_op).");
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_no_op",
+      detail: "claude-code-action's edits passed scope / CHECK_COMMAND but produced no staged changes after `git add`, so there is nothing to commit. Use /restart-review to retry the same findings as a fresh iteration."
+    });
+    return;
   }
   await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, commitSha || void 0, config.githubToken, deriveIterationProgress(state, config.maxReviewIterations));
   const waitingState = {
@@ -21798,7 +21806,28 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     // TY-273 #B4: see no-op path and failureExit.
     fixingStartedAt: null
   };
-  if (!await updateStateCommentLocked(waitingState, "Could not return state to waiting_codex after committing fixes.")) {
+  try {
+    if (!await updateStateCommentLocked(waitingState, "Could not return state to waiting_codex after committing fixes.")) {
+      return;
+    }
+  } catch (writeError) {
+    const message = writeError instanceof Error ? writeError.message : String(writeError);
+    deps.error(`[post-fix] Pushed repair commit ${commitSha || "(unknown sha)"} but failed to persist waiting_codex: ${message}. Recording stopped/codex_request_failed without rolling back the pushed iteration.`);
+    const stoppedState = {
+      ...waitingState,
+      status: "stopped",
+      stopReason: "codex_request_failed"
+    };
+    let recorded;
+    try {
+      recorded = await updateStateCommentLocked(stoppedState, "Could not record stopped/codex_request_failed after the post-push waiting_codex write failed.");
+    } catch (secondError) {
+      deps.error(`[post-fix] Could not record stopped state after push (${secondError instanceof Error ? secondError.message : String(secondError)}); falling back to crash recovery.`);
+      throw writeError;
+    }
+    if (recorded) {
+      await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `The repair commit ${commitSha || "(unknown sha)"} was pushed, but persisting the waiting_codex state failed: ${message}. The commit is preserved on the branch; use /restart-review to resume.`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
+    }
     return;
   }
   deps.info("[post-fix] Posting @codex review request...");

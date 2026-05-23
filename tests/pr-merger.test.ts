@@ -497,11 +497,13 @@ describe("mergeIfChecksPass — no other runs", () => {
     expect(fake.sleepCalls.length).toBe(0);
   });
 
-  it("does not apply two-poll no-CI shortcut after timeout has elapsed", async () => {
-    // Bug scenario: pollIntervalMs=40s, timeoutMs=60s — after two sleeps the
-    // elapsed time (80s) exceeds the timeout, so the no-CI shortcut (pollCount>=2)
-    // must NOT trigger a merge. The timeout guard must be checked before the
-    // merge condition.
+  it("TY-328: a no-CI repo whose timeout equals the no-CI delay merges at the timeout instead of skipping forever", async () => {
+    // pollIntervalMs=40s, timeoutMs=60s, default noCiConfiguredDelayMs=60s. No
+    // non-self run ever appears. Pre-TY-328 the timeout gate fired first (at
+    // the same instant the 60s no-CI merge gate would have), so the merge gate
+    // was never reached and auto-merge skipped forever. Now "waited the full
+    // budget, still zero non-self runs (and the merge sha is resolved)" merges,
+    // treating the repo as having no CI configured.
     const fake = makeDeps({
       workflowRunPages: [[run(999, "auto-review-loop", "in_progress", null)]],
       selfRunId: "999",
@@ -509,30 +511,31 @@ describe("mergeIfChecksPass — no other runs", () => {
       timeoutMs: 60_000,
       clockTickMs: 40_000,
     });
-    const { log, calls } = captureLog();
+    const { log } = captureLog();
 
     await mergeIfChecksPass("o", "r", 42, "tok", log, fake.deps);
 
-    expect(fake.mergeCalls).toBe(0);
-    expect(calls.find((c) => c.level === "warning")?.message).toMatch(/timed out after/);
+    expect(fake.mergeCalls).toBe(1);
   });
 });
 
 describe("mergeIfChecksPass — no-CI delay (TY-308)", () => {
-  it("#A: does not merge while elapsed < noCiConfiguredDelayMs, even past two polls", async () => {
-    // Slow CI registration: no non-self run is ever visible, but the wall-clock
-    // delay (60s) has not elapsed. The previous pollCount>=2 shortcut would
-    // have merged at ~30s; the time-based gate must keep waiting (and here
-    // eventually time out) rather than merge before a required check appears.
+  it("#A (TY-328): a CI-less repo whose timeout is below the no-CI delay merges at the timeout, not never", async () => {
+    // timeoutMs=55s, noCiConfiguredDelayMs=60s: the no-CI fast-path merge gate
+    // (>= 60s) is unreachable because the timeout fires first. Pre-TY-328 this
+    // skipped auto-merge on every clean PR forever; now the no-CI timeout
+    // branch merges (the operator's short timeout opts into the shorter
+    // CI-registration window).
     const clock = { t: 0 };
     let mergeCalls = 0;
-    const { log, calls } = captureLog();
+    const mergeShas: string[] = [];
+    const { log } = captureLog();
 
     await mergeIfChecksPass("o", "r", 42, "tok", log, {
       getPrHeadSha: async () => "abc123",
       getPrMergeSha: undefined,
       listWorkflowRuns: async () => [run(999, "auto-review-loop", "in_progress", null)],
-      mergeSquash: async () => { mergeCalls += 1; },
+      mergeSquash: async (_o, _n, _pr, sha) => { mergeCalls += 1; mergeShas.push(sha); },
       sleep: async () => { clock.t += 10_000; },
       now: () => clock.t,
       selfRunId: "999",
@@ -542,10 +545,8 @@ describe("mergeIfChecksPass — no-CI delay (TY-308)", () => {
       noCiConfiguredDelayMs: 60_000,
     });
 
-    // Polls at 30s/40s/50s (pollCount > 2) all stay below the 60s delay, so no
-    // merge fires; the run ends via the timeout guard instead.
-    expect(mergeCalls).toBe(0);
-    expect(calls.find((c) => c.level === "warning")?.message).toMatch(/timed out after/);
+    expect(mergeCalls).toBe(1);
+    expect(mergeShas).toEqual(["abc123"]);
   });
 
   it("#B: merges once elapsed reaches noCiConfiguredDelayMs with no non-self runs", async () => {
@@ -1111,11 +1112,13 @@ describe("mergeIfChecksPass — postSkipNotification on every skip path (TY-295)
     ]);
   });
 
-  it("path 9 — timeout_no_runs when wait elapses with no non-self CI runs visible", async () => {
-    // Timing mirrors the existing "no-CI shortcut after timeout" test
-    // (pollIntervalMs=40s, timeoutMs=60s, clockTickMs=40s): after two
-    // sleeps the elapsed time (80s) exceeds the timeout, so the no-CI
-    // two-poll shortcut must NOT fire and we land in the timeout branch.
+  it("path 9 — timeout_no_runs when the merge sha never resolves and the wait elapses", async () => {
+    // TY-328: with the merge commit sha resolved, "no non-self runs after the
+    // full budget" now MERGES (treated as no CI configured). The timeout_no_runs
+    // skip remains for the case where GitHub never computes the merge sha
+    // (mergeShaLookupNull) — CI may still be pending on the merge ref, so we
+    // must not merge. Timing: pollIntervalMs=40s, timeoutMs=60s, clockTickMs=40s
+    // → elapsed 80s exceeds the timeout, landing in the timeout branch.
     const fake = makeDeps({
       workflowRunPages: [[run(999, "auto-review-loop", "in_progress", null)]],
       selfRunId: "999",
@@ -1128,6 +1131,9 @@ describe("mergeIfChecksPass — postSkipNotification on every skip path (TY-295)
 
     await mergeIfChecksPass("o", "r", 42, "tok", log, {
       ...fake.deps,
+      // Merge sha never resolves → mergeShaLookupNull stays true → the no-CI
+      // timeout merge is suppressed and we skip with timeout_no_runs.
+      getPrMergeSha: async () => null,
       postSkipNotification,
     });
 

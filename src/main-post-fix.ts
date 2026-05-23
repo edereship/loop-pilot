@@ -1547,9 +1547,25 @@ export async function runPostFix(
     commitSha = deps.readHeadSha();
     deps.info(`[post-fix] Committed and pushed: ${commitSha}`);
   } else {
-    deps.warning(
-      "[post-fix] No staged changes after `git add`. Skipping commit; treating as no-op.",
+    // TY-329 #2: changedFiles was non-empty and passed scope / CHECK / BUILD,
+    // but `git add` staged nothing. The earlier net-zero guards (TY-325) catch
+    // the realistic cases; this residual branch previously fell through to
+    // postClaudeCodeActionFixSummary + a fresh `@codex review` on unchanged
+    // code with iterationCount NOT rolled back. Stop with action_no_op so every
+    // net-zero exit is symmetric and a soft /restart-review re-evaluates the
+    // same findings as a fresh iteration (failureExit's rollbackFixingClaim).
+    deps.error(
+      "[post-fix] No staged changes after `git add` despite a non-empty change set. Stopping (action_no_op).",
     );
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_no_op",
+      detail:
+        "claude-code-action's edits passed scope / CHECK_COMMAND but produced no staged changes after `git add`, so there is nothing to commit. Use /restart-review to retry the same findings as a fresh iteration.",
+    });
+    return;
   }
 
   await deps.postClaudeCodeActionFixSummary(
@@ -1577,12 +1593,64 @@ export async function runPostFix(
     // TY-273 #B4: see no-op path and failureExit.
     fixingStartedAt: null,
   };
-  if (
-    !(await updateStateCommentLocked(
-      waitingState,
-      "Could not return state to waiting_codex after committing fixes.",
-    ))
-  ) {
+  try {
+    if (
+      !(await updateStateCommentLocked(
+        waitingState,
+        "Could not return state to waiting_codex after committing fixes.",
+      ))
+    ) {
+      // 412 conflict: another writer reconciled. The hidden state is no longer
+      // `fixing`, so demoteFixingOnCrash will not roll back the pushed commit.
+      return;
+    }
+  } catch (writeError) {
+    // TY-327: the repair commit was already committed AND pushed above. The
+    // locker re-throws non-412 errors (transient 5xx / network); left
+    // unhandled they propagate to runIfNotVitest's onError → demoteFixingOnCrash,
+    // which sees status still === "fixing" (this write never landed) and rolls
+    // back iterationCount + findingsHashHistory for an iteration whose commit is
+    // already on the branch. Persist a restartable stop that PRESERVES the
+    // committed iteration (no rollback) instead.
+    const message =
+      writeError instanceof Error ? writeError.message : String(writeError);
+    deps.error(
+      `[post-fix] Pushed repair commit ${commitSha || "(unknown sha)"} but failed to persist waiting_codex: ${message}. Recording stopped/codex_request_failed without rolling back the pushed iteration.`,
+    );
+    const stoppedState: ReviewState = {
+      ...waitingState,
+      status: "stopped",
+      stopReason: "codex_request_failed",
+    };
+    let recorded: boolean;
+    try {
+      recorded = await updateStateCommentLocked(
+        stoppedState,
+        "Could not record stopped/codex_request_failed after the post-push waiting_codex write failed.",
+      );
+    } catch (secondError) {
+      // Both writes failed (sustained API outage). Re-throw the ORIGINAL error
+      // so demoteFixingOnCrash posts the crash notification; the iteration
+      // rollback in that rare path is accounting-only since the commit is on
+      // the branch.
+      deps.error(
+        `[post-fix] Could not record stopped state after push (${secondError instanceof Error ? secondError.message : String(secondError)}); falling back to crash recovery.`,
+      );
+      throw writeError;
+    }
+    if (recorded) {
+      await deps.postStopComment(
+        config.repoOwner,
+        config.repoName,
+        config.prNumber,
+        "codex_request_failed",
+        inputs.triggerCommentId,
+        0,
+        `The repair commit ${commitSha || "(unknown sha)"} was pushed, but persisting the waiting_codex state failed: ${message}. The commit is preserved on the branch; use /restart-review to resume.`,
+        config.githubToken,
+        deriveIterationProgress(stoppedState, config.maxReviewIterations),
+      );
+    }
     return;
   }
 
