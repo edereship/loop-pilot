@@ -27,6 +27,15 @@ export interface ParsedComment {
 export interface ReviewState {
   iterationCount: number;
   lastProcessedReviewId: number | null;
+  /**
+   * Trigger event source of `lastProcessedReviewId` (TY-301 #2). issue_comment
+   * と pull_request_review は別 ID 名前空間を持つため、id だけで dedup すると
+   * 稀にだが (review id, comment id) 衝突で正当な trigger を silently skip
+   * しうる。Legacy state では `null`(= 未収集) として現行ロジックと互換になり、
+   * id のみでの dedup にフォールバックする。Pre-fix が trigger event を識別
+   * できないとき (legacy workflow YAML, `triggerEventName === ""`) も `null`。
+   */
+  lastProcessedTriggerSource: "comment" | "review" | null;
   lastClaudeCommitSha: string | null;
   lastCodexRequestCommentId: number | null;
   lastCodexReviewReceivedAt: string | null;

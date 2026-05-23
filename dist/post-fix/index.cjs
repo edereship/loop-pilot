@@ -19215,6 +19215,7 @@ function loadBaseConfig() {
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
+    triggerEventName: input("trigger-event-name", "TRIGGER_EVENT_NAME", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
@@ -19411,6 +19412,9 @@ function validateState(obj) {
     return false;
   if (s.lastProcessedReviewId !== null && typeof s.lastProcessedReviewId !== "number")
     return false;
+  if ("lastProcessedTriggerSource" in s && s.lastProcessedTriggerSource !== null && s.lastProcessedTriggerSource !== "comment" && s.lastProcessedTriggerSource !== "review") {
+    return false;
+  }
   if (s.lastClaudeCommitSha !== null && typeof s.lastClaudeCommitSha !== "string")
     return false;
   if (s.lastCodexRequestCommentId !== null && typeof s.lastCodexRequestCommentId !== "number")
@@ -19486,7 +19490,11 @@ function deserializeState(commentBody) {
     const normalized = {
       ...parsed,
       previousCheckFailure: parsed.previousCheckFailure ?? null,
-      fixingStartedAt: parsed.fixingStartedAt ?? null
+      fixingStartedAt: parsed.fixingStartedAt ?? null,
+      // TY-301 #2: legacy state comments lack this field. Normalize to `null`
+      // so the dedup check in pre-fix falls back to id-only comparison
+      // (preserving the pre-TY-301 behaviour for in-flight PRs).
+      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null
     };
     return normalized;
   } catch {

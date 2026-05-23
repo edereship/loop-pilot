@@ -34,6 +34,7 @@ const crashConfig: Config = {
   triggerCommentId: 0,
   triggerCommentBody: "",
   triggerUserLogin: "",
+  triggerEventName: "",
   prHeadRef: "linear/TY-252",
   prTitle: "TY-252",
   autoReviewLabel: "",

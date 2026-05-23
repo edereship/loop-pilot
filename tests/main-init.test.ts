@@ -25,6 +25,7 @@ const baseConfig: Config = {
   triggerCommentId: 0,
   triggerCommentBody: "",
   triggerUserLogin: "",
+  triggerEventName: "",
   prHeadRef: "linear/TY-227",
   prTitle: "TY-227",
   autoReviewLabel: "",

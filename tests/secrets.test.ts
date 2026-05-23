@@ -28,6 +28,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     triggerCommentId: 0,
     triggerCommentBody: "",
     triggerUserLogin: "",
+    triggerEventName: "",
     prHeadRef: "",
     prTitle: "",
     autoReviewLabel: "",

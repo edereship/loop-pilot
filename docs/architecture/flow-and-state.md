@@ -158,7 +158,7 @@ soft restart:
 - 対象: `done(no_findings)`, `stopped(...)`, `waiting_codex`
 - `status` を `waiting_codex` に戻す
 - `stopReason` は **保持する** (TY-258 で挙動変更)。`max_turns_exceeded` で停止していた場合は次 iteration の [モデル選定](../operations/security.md#escalation-条件-いずれかが真で-escalated-tier) で escalated tier を選ぶためのシグナルとして使う。post-fix が次の clean commit (`waiting_codex` 遷移) に到達した時点で `stopReason: null` にクリアされるので、escalation は one-shot
-- `lastProcessedReviewId` を `null` に戻す
+- `lastProcessedReviewId` を `null` に戻す (TY-301 #2: `lastProcessedTriggerSource` は spread で保持されるが、`lastProcessedReviewId` が `null` の間は dedup 条件 `state.lastProcessedReviewId === triggerCommentId` が成立しないため source 値は dedup 結果に影響しない)
 - `lastCodexReviewReceivedAt` は保持し、過去の Codex inline comment を再処理しない
 - `lastCodexRequestCommentId` を新しい `@codex review` comment ID に更新する
 - `iterationCount`、`findingsHashHistory`、`lastClaudeCommitSha`、`lastFindingsHash` は保持する
@@ -176,6 +176,7 @@ PR ごとに以下の状態を持つ。
 {
   "iteration_count": 3,
   "last_processed_review_id": 123456789,
+  "last_processed_trigger_source": "comment",
   "last_claude_commit_sha": "abc123",
   "last_codex_request_comment_id": 999,
   "last_codex_review_received_at": "2026-03-19T10:00:00Z",
@@ -195,6 +196,7 @@ PR ごとに以下の状態を持つ。
 |-----------|------|
 | `iteration_count` | 現在の往復回数。`MAX_REVIEW_ITERATIONS` と比較して強制停止を判定 |
 | `last_processed_review_id` | 最後に処理した Codex trigger の ID（`github.event.review.id` または `github.event.comment.id`）。冪等化に使用 |
+| `last_processed_trigger_source` | TY-301 #2 で追加。`last_processed_review_id` がどちらの GitHub event 名前空間から来たかを記録 (`"comment"` / `"review"` / `null`)。pre-fix の dedup は `(id, source)` 複合比較を行い、issue_comment.id と pull_request_review.id の稀な衝突で正当な trigger を silently skip しないようにする。legacy state は `null` で normalize され、id のみの比較に fallback する |
 | `last_claude_commit_sha` | Claude が最後に push した commit SHA。デバッグ用 |
 | `last_codex_request_comment_id` | `@codex review` を投稿したコメントの ID。重複投稿防止 |
 | `last_codex_review_received_at` | Codex review の受信時刻。インラインコメントの取得範囲フィルタに使用 |
@@ -239,6 +241,7 @@ Auto-review state is stored in this comment.
 {
   "iteration_count": 3,
   "last_processed_review_id": 123456789,
+  "last_processed_trigger_source": "comment",
   "last_claude_commit_sha": "abc123",
   "last_codex_request_comment_id": 999,
   "last_codex_review_received_at": "2026-03-19T10:00:00Z",

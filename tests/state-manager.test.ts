@@ -389,6 +389,7 @@ describe("createInitialState", () => {
 
     expect(state.iterationCount).toBe(0);
     expect(state.lastProcessedReviewId).toBeNull();
+    expect(state.lastProcessedTriggerSource).toBeNull();
     expect(state.lastClaudeCommitSha).toBeNull();
     expect(state.lastCodexRequestCommentId).toBeNull();
     expect(state.lastCodexReviewReceivedAt).toBeNull();
@@ -397,6 +398,88 @@ describe("createInitialState", () => {
     expect(state.status).toBe("initialized");
     expect(state.stopReason).toBeNull();
     expect(state.previousCheckFailure).toBeNull();
+  });
+});
+
+describe("lastProcessedTriggerSource round-trip (TY-301 #2)", () => {
+  it("includes lastProcessedTriggerSource in createInitialState (null by default)", () => {
+    const state = createInitialState();
+    expect(state.lastProcessedTriggerSource).toBeNull();
+  });
+
+  it("round-trips lastProcessedTriggerSource through serialize / deserialize", () => {
+    for (const source of ["comment", "review"] as const) {
+      const state = {
+        ...createInitialState(),
+        lastProcessedTriggerSource: source,
+      };
+      const body = serializeState(state);
+      const restored = deserializeState(body);
+      expect(restored?.lastProcessedTriggerSource).toBe(source);
+    }
+  });
+
+  it("normalizes legacy state without lastProcessedTriggerSource to null (forward compatibility)", () => {
+    // Pre-TY-301 state comments do not have the field. Restoring them must
+    // surface `null` so the dedup check in pre-fix falls back to id-only
+    // comparison, preserving the pre-TY-301 behaviour for in-flight PRs.
+    const legacyBody = [
+      "Auto-review state is stored in this comment.",
+      "",
+      "<!-- auto-review-state",
+      JSON.stringify(
+        {
+          iterationCount: 0,
+          lastProcessedReviewId: 42,
+          lastClaudeCommitSha: null,
+          lastCodexRequestCommentId: null,
+          lastCodexReviewReceivedAt: null,
+          lastFindingsHash: null,
+          findingsHashHistory: [],
+          status: "waiting_codex",
+          stopReason: null,
+          previousCheckFailure: null,
+          fixingStartedAt: null,
+        },
+        null,
+        2,
+      ),
+      "-->",
+    ].join("\n");
+    const restored = deserializeState(legacyBody);
+    expect(restored).not.toBeNull();
+    expect(restored!.lastProcessedTriggerSource).toBeNull();
+    // Existing fields must still deserialize correctly.
+    expect(restored!.lastProcessedReviewId).toBe(42);
+    expect(restored!.status).toBe("waiting_codex");
+  });
+
+  it("rejects state with an out-of-range lastProcessedTriggerSource so a forged value cannot smuggle in arbitrary strings", () => {
+    const tamperedBody = [
+      "Auto-review state is stored in this comment.",
+      "",
+      "<!-- auto-review-state",
+      JSON.stringify(
+        {
+          iterationCount: 0,
+          lastProcessedReviewId: null,
+          lastProcessedTriggerSource: "webhook", // not a known source
+          lastClaudeCommitSha: null,
+          lastCodexRequestCommentId: null,
+          lastCodexReviewReceivedAt: null,
+          lastFindingsHash: null,
+          findingsHashHistory: [],
+          status: "waiting_codex",
+          stopReason: null,
+          previousCheckFailure: null,
+          fixingStartedAt: null,
+        },
+        null,
+        2,
+      ),
+      "-->",
+    ].join("\n");
+    expect(deserializeState(tamperedBody)).toBeNull();
   });
 });
 

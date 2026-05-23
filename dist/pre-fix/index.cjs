@@ -19351,6 +19351,7 @@ function loadBaseConfig() {
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
+    triggerEventName: input("trigger-event-name", "TRIGGER_EVENT_NAME", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
@@ -19746,6 +19747,9 @@ function validateState(obj) {
     return false;
   if (s.lastProcessedReviewId !== null && typeof s.lastProcessedReviewId !== "number")
     return false;
+  if ("lastProcessedTriggerSource" in s && s.lastProcessedTriggerSource !== null && s.lastProcessedTriggerSource !== "comment" && s.lastProcessedTriggerSource !== "review") {
+    return false;
+  }
   if (s.lastClaudeCommitSha !== null && typeof s.lastClaudeCommitSha !== "string")
     return false;
   if (s.lastCodexRequestCommentId !== null && typeof s.lastCodexRequestCommentId !== "number")
@@ -19781,6 +19785,7 @@ function createInitialState() {
   return {
     iterationCount: 0,
     lastProcessedReviewId: null,
+    lastProcessedTriggerSource: null,
     lastClaudeCommitSha: null,
     lastCodexRequestCommentId: null,
     lastCodexReviewReceivedAt: null,
@@ -19836,7 +19841,11 @@ function deserializeState(commentBody) {
     const normalized = {
       ...parsed,
       previousCheckFailure: parsed.previousCheckFailure ?? null,
-      fixingStartedAt: parsed.fixingStartedAt ?? null
+      fixingStartedAt: parsed.fixingStartedAt ?? null,
+      // TY-301 #2: legacy state comments lack this field. Normalize to `null`
+      // so the dedup check in pre-fix falls back to id-only comparison
+      // (preserving the pre-TY-301 behaviour for in-flight PRs).
+      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null
     };
     return normalized;
   } catch {
@@ -21715,8 +21724,9 @@ async function runPreFix(config, deps = defaultDeps3) {
     deps.warning(`[pre-fix] Unexpected status '${state.status}'. Only 'waiting_codex' is processable. Skipping.`);
     return;
   }
-  if (triggerCommentId !== 0 && state.lastProcessedReviewId === triggerCommentId) {
-    deps.info(`[pre-fix] Trigger comment ${triggerCommentId} already processed. Skipping.`);
+  const currentTriggerSource = config.triggerEventName === "issue_comment" ? "comment" : config.triggerEventName === "pull_request_review" ? "review" : null;
+  if (triggerCommentId !== 0 && state.lastProcessedReviewId === triggerCommentId && (state.lastProcessedTriggerSource === null || currentTriggerSource === null || state.lastProcessedTriggerSource === currentTriggerSource)) {
+    deps.info(`[pre-fix] Trigger comment ${triggerCommentId} (source=${currentTriggerSource ?? "unknown"}) already processed. Skipping.`);
     return;
   }
   if (config.triggerUserLogin === config.codexBotLogin && isCodexUsageLimitMessage(config.triggerCommentBody)) {
@@ -21724,8 +21734,20 @@ async function runPreFix(config, deps = defaultDeps3) {
     const stoppedState = {
       ...state,
       lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
+      // TY-301 #2: keep `lastProcessedTriggerSource` consistent with the id we
+      // just wrote so the next dedup decision sees a coherent (id, source) pair.
+      // When the event-name input is absent (legacy workflow YAML), fall back
+      // to whatever source the previous trigger recorded.
+      lastProcessedTriggerSource: currentTriggerSource ?? state.lastProcessedTriggerSource,
       status: "stopped",
-      stopReason: "codex_usage_limit"
+      stopReason: "codex_usage_limit",
+      // TY-301 #1: pre-fix terminal transitions must explicitly clear
+      // `fixingStartedAt` to uphold the `types.ts` invariant
+      // "`fixingStartedAt === null` whenever `status !== 'fixing'`". The
+      // happy-path input here is always `waiting_codex` with the field already
+      // null, but a hand-edited / legacy state could carry a stale timestamp
+      // that the spread would otherwise preserve into a `stopped` state.
+      fixingStartedAt: null
     };
     if (!await updateStateCommentLocked(stoppedState, "Could not stop after detecting Codex usage limit."))
       return;
@@ -21766,6 +21788,12 @@ async function runPreFix(config, deps = defaultDeps3) {
   const updatedStateBase = {
     ...state,
     lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
+    // TY-301 #2: write the trigger source alongside the id so the next pre-fix
+    // run can disambiguate the issue_comment / pull_request_review namespaces.
+    // When the workflow YAML does not pass `triggerEventName` (legacy), keep
+    // whatever the previous trigger recorded — `null` simply preserves the
+    // id-only fallback dedup behaviour.
+    lastProcessedTriggerSource: currentTriggerSource ?? state.lastProcessedTriggerSource,
     lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString()
   };
   if (findings.length === 0) {
@@ -21773,7 +21801,11 @@ async function runPreFix(config, deps = defaultDeps3) {
     const doneState = {
       ...updatedStateBase,
       status: "done",
-      stopReason: "no_findings"
+      stopReason: "no_findings",
+      // TY-301 #1: see codex_usage_limit branch — defense-in-depth clear so a
+      // stale `fixingStartedAt` carried in by a hand-edited / legacy state
+      // cannot leak into a non-`fixing` status.
+      fixingStartedAt: null
     };
     if (!await updateStateCommentLocked(doneState, "Could not mark auto-review as done."))
       return;
@@ -21798,7 +21830,9 @@ async function runPreFix(config, deps = defaultDeps3) {
     const stoppedState = {
       ...updatedStateBase,
       status: "stopped",
-      stopReason: "max_iterations"
+      stopReason: "max_iterations",
+      // TY-301 #1: defense-in-depth clear (see codex_usage_limit branch).
+      fixingStartedAt: null
     };
     if (!await updateStateCommentLocked(stoppedState, "Could not stop after reaching the max iteration limit."))
       return;
@@ -21810,7 +21844,9 @@ async function runPreFix(config, deps = defaultDeps3) {
     const stoppedState = {
       ...updatedStateBase,
       status: "stopped",
-      stopReason: "loop_detected"
+      stopReason: "loop_detected",
+      // TY-301 #1: defense-in-depth clear (see codex_usage_limit branch).
+      fixingStartedAt: null
     };
     if (!await updateStateCommentLocked(stoppedState, "Could not stop after detecting a findings loop."))
       return;

@@ -396,12 +396,29 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     return;
   }
 
+  // TY-301 #2: dedup the trigger by (id, source) instead of id alone.
+  // issue_comment.id and pull_request_review.id are drawn from separate ID
+  // namespaces; without a source check, a stored review-id colliding with an
+  // incoming comment-id (or vice versa) would silently skip the legitimate
+  // trigger as "already processed". Legacy state (`lastProcessedTriggerSource
+  // === null`) and legacy workflow YAML (no `triggerEventName`) both fall back
+  // to id-only comparison so existing in-flight PRs do not regress.
+  const currentTriggerSource: "comment" | "review" | null =
+    config.triggerEventName === "issue_comment"
+      ? "comment"
+      : config.triggerEventName === "pull_request_review"
+        ? "review"
+        : null;
+
   if (
     triggerCommentId !== 0 &&
-    state.lastProcessedReviewId === triggerCommentId
+    state.lastProcessedReviewId === triggerCommentId &&
+    (state.lastProcessedTriggerSource === null ||
+      currentTriggerSource === null ||
+      state.lastProcessedTriggerSource === currentTriggerSource)
   ) {
     deps.info(
-      `[pre-fix] Trigger comment ${triggerCommentId} already processed. Skipping.`,
+      `[pre-fix] Trigger comment ${triggerCommentId} (source=${currentTriggerSource ?? "unknown"}) already processed. Skipping.`,
     );
     return;
   }
@@ -421,8 +438,21 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     const stoppedState: ReviewState = {
       ...state,
       lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
+      // TY-301 #2: keep `lastProcessedTriggerSource` consistent with the id we
+      // just wrote so the next dedup decision sees a coherent (id, source) pair.
+      // When the event-name input is absent (legacy workflow YAML), fall back
+      // to whatever source the previous trigger recorded.
+      lastProcessedTriggerSource:
+        currentTriggerSource ?? state.lastProcessedTriggerSource,
       status: "stopped",
       stopReason: "codex_usage_limit",
+      // TY-301 #1: pre-fix terminal transitions must explicitly clear
+      // `fixingStartedAt` to uphold the `types.ts` invariant
+      // "`fixingStartedAt === null` whenever `status !== 'fixing'`". The
+      // happy-path input here is always `waiting_codex` with the field already
+      // null, but a hand-edited / legacy state could carry a stale timestamp
+      // that the spread would otherwise preserve into a `stopped` state.
+      fixingStartedAt: null,
     };
     if (
       !(await updateStateCommentLocked(
@@ -527,6 +557,13 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   const updatedStateBase: ReviewState = {
     ...state,
     lastProcessedReviewId: triggerCommentId || state.lastProcessedReviewId,
+    // TY-301 #2: write the trigger source alongside the id so the next pre-fix
+    // run can disambiguate the issue_comment / pull_request_review namespaces.
+    // When the workflow YAML does not pass `triggerEventName` (legacy), keep
+    // whatever the previous trigger recorded — `null` simply preserves the
+    // id-only fallback dedup behaviour.
+    lastProcessedTriggerSource:
+      currentTriggerSource ?? state.lastProcessedTriggerSource,
     lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString(),
   };
 
@@ -536,6 +573,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       ...updatedStateBase,
       status: "done",
       stopReason: "no_findings",
+      // TY-301 #1: see codex_usage_limit branch — defense-in-depth clear so a
+      // stale `fixingStartedAt` carried in by a hand-edited / legacy state
+      // cannot leak into a non-`fixing` status.
+      fixingStartedAt: null,
     };
     if (
       !(await updateStateCommentLocked(
@@ -602,6 +643,8 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       ...updatedStateBase,
       status: "stopped",
       stopReason: "max_iterations",
+      // TY-301 #1: defense-in-depth clear (see codex_usage_limit branch).
+      fixingStartedAt: null,
     };
     if (
       !(await updateStateCommentLocked(
@@ -630,6 +673,8 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       ...updatedStateBase,
       status: "stopped",
       stopReason: "loop_detected",
+      // TY-301 #1: defense-in-depth clear (see codex_usage_limit branch).
+      fixingStartedAt: null,
     };
     if (
       !(await updateStateCommentLocked(

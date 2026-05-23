@@ -39,6 +39,16 @@ export interface BaseConfig {
   triggerCommentId: number;
   triggerCommentBody: string;
   triggerUserLogin: string;
+  /**
+   * GitHub event name that fired the trigger (`issue_comment` /
+   * `pull_request_review`). Used by pre-fix to disambiguate the
+   * `lastProcessedReviewId` namespace (TY-301 #2) — issue_comment.id and
+   * pull_request_review.id are drawn from separate ID spaces and can collide
+   * in theory, silently skipping a legitimate trigger as "already processed".
+   * Empty string indicates a legacy workflow YAML that does not yet pass
+   * `trigger-event-name`; dedup falls back to id-only comparison in that case.
+   */
+  triggerEventName: string;
   prHeadRef: string;
   prTitle: string;
   // Label-based opt-in (default-strict: PR must carry the label unless full-auto is on).
@@ -296,6 +306,7 @@ function loadBaseConfig(): BaseConfig {
     triggerCommentId: intInput("trigger-comment-id", "TRIGGER_COMMENT_ID", 0),
     triggerCommentBody: input("trigger-comment-body", "TRIGGER_COMMENT_BODY", ""),
     triggerUserLogin: input("trigger-user-login", "TRIGGER_USER_LOGIN", ""),
+    triggerEventName: input("trigger-event-name", "TRIGGER_EVENT_NAME", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
     autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),

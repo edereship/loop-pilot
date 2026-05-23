@@ -196,6 +196,11 @@ jobs:
           trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
           trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
           trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
+          # TY-301 #2: pass the event name so pre-fix can disambiguate
+          # issue_comment.id and pull_request_review.id when comparing against
+          # `lastProcessedReviewId` — the two IDs are drawn from separate
+          # namespaces and can theoretically collide.
+          trigger-event-name: ${{ github.event_name }}
           max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           debounce-seconds: ${{ vars.DEBOUNCE_SECONDS || '90' }}
           check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}

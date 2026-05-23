@@ -27,6 +27,7 @@ const baseConfig: Config = {
   triggerCommentId: 1234,
   triggerCommentBody: "Codex Review summary",
   triggerUserLogin: "chatgpt-codex-connector[bot]",
+  triggerEventName: "issue_comment",
   prHeadRef: "linear/TY-237",
   prTitle: "TY-237: split main-loop",
   autoReviewLabel: "auto-review-fix",
@@ -1183,5 +1184,333 @@ describe("runPreFix", () => {
     expect(
       sleepCalls.some((call) => call[0] === 90 * 1000),
     ).toBe(true);
+  });
+
+  // TY-301 #1: every pre-fix terminal stop transition must explicitly write
+  // `fixingStartedAt: null` so the `types.ts:46-57` invariant holds even when
+  // the input state was hand-edited or restored from legacy data with a stale
+  // timestamp. The happy-path input is `status: "waiting_codex"` with a null
+  // timestamp, but the spread operator alone cannot defend against a stale
+  // value being carried through into a non-`fixing` status.
+  describe("TY-301 #1: clears fixingStartedAt on every pre-fix stop transition", () => {
+    const STALE = "2026-04-01T00:00:00Z";
+
+    it("no_findings clears fixingStartedAt", async () => {
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({
+            status: "waiting_codex",
+            fixingStartedAt: STALE,
+          }),
+        },
+        [],
+      );
+
+      await runPreFix(baseConfig, deps);
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "done",
+          stopReason: "no_findings",
+          fixingStartedAt: null,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("max_iterations clears fixingStartedAt", async () => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 1301,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 Race in cache\n\nstuff.",
+          path: "src/cache.ts",
+          line: 12,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({
+            status: "waiting_codex",
+            iterationCount: 20,
+            fixingStartedAt: STALE,
+          }),
+        },
+        findings,
+      );
+
+      await runPreFix(baseConfig, deps);
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "max_iterations",
+          fixingStartedAt: null,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("loop_detected clears fixingStartedAt", async () => {
+      const comments: RawReviewComment[] = [
+        {
+          id: 1302,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P0 Critical auth bypass\n\nStill broken.",
+          path: "src/auth.ts",
+          line: 14,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const { findings: parsed } = filterAndParseComments(
+        comments,
+        "chatgpt-codex-connector[bot]",
+        null,
+        "P2",
+      );
+      const hash = computeFindingsHash(parsed);
+
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({
+            status: "waiting_codex",
+            iterationCount: 2,
+            findingsHashHistory: [
+              { iteration: 1, hash, modelTier: "base" },
+              { iteration: 2, hash, modelTier: "escalated" },
+            ],
+            lastFindingsHash: hash,
+            fixingStartedAt: STALE,
+          }),
+        },
+        comments,
+      );
+
+      await runPreFix(baseConfig, deps);
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "loop_detected",
+          fixingStartedAt: null,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("codex_usage_limit clears fixingStartedAt", async () => {
+      const usageLimitBody =
+        "You have reached your Codex usage limits for code reviews.";
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          fixingStartedAt: STALE,
+        }),
+      });
+
+      await runPreFix(
+        {
+          ...baseConfig,
+          triggerCommentBody: usageLimitBody,
+          triggerUserLogin: baseConfig.codexBotLogin,
+        },
+        deps,
+      );
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "codex_usage_limit",
+          fixingStartedAt: null,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+  });
+
+  // TY-301 #2: dedup must consider both `lastProcessedReviewId` AND
+  // `lastProcessedTriggerSource`. issue_comment.id and pull_request_review.id
+  // live in separate namespaces and can collide; an id-only check would
+  // silently skip the legitimate trigger as "already processed".
+  describe("TY-301 #2: trigger dedup honours (id, source) namespace", () => {
+    it("does NOT skip when the stored id matches but the source differs", async () => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 2001,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 Race in cache\n\nfindings.",
+          path: "src/cache.ts",
+          line: 12,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({
+            status: "waiting_codex",
+            lastProcessedReviewId: baseConfig.triggerCommentId,
+            // The last trigger we processed was a comment; the incoming
+            // trigger uses the same numeric id but is a review.
+            lastProcessedTriggerSource: "comment",
+          }),
+        },
+        findings,
+      );
+
+      await runPreFix(
+        { ...baseConfig, triggerEventName: "pull_request_review" },
+        deps,
+      );
+
+      // The id collided but the source did not, so the dedup must NOT fire.
+      // The run proceeds to the normal collect-findings path.
+      expect(deps.fetchReviewComments).toHaveBeenCalled();
+      expect(deps.outputs.should_run).toBe("true");
+    });
+
+    it("still skips when the stored id AND source both match (regression)", async () => {
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          lastProcessedReviewId: baseConfig.triggerCommentId,
+          lastProcessedTriggerSource: "comment",
+        }),
+      });
+
+      await runPreFix(
+        { ...baseConfig, triggerEventName: "issue_comment" },
+        deps,
+      );
+
+      expect(deps.outputs.should_run).toBe("false");
+      expect(deps.fetchReviewComments).not.toHaveBeenCalled();
+    });
+
+    it("falls back to id-only dedup for legacy state (lastProcessedTriggerSource === null)", async () => {
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          lastProcessedReviewId: baseConfig.triggerCommentId,
+          // Legacy: pre-TY-301 state has no source recorded.
+          lastProcessedTriggerSource: null,
+        }),
+      });
+
+      await runPreFix(
+        { ...baseConfig, triggerEventName: "pull_request_review" },
+        deps,
+      );
+
+      // Legacy state preserves the pre-TY-301 behaviour: id-only dedup.
+      expect(deps.outputs.should_run).toBe("false");
+      expect(deps.fetchReviewComments).not.toHaveBeenCalled();
+    });
+
+    it("falls back to id-only dedup when the workflow YAML does not pass triggerEventName", async () => {
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          lastProcessedReviewId: baseConfig.triggerCommentId,
+          lastProcessedTriggerSource: "comment",
+        }),
+      });
+
+      // Legacy workflow YAML predating TY-301 does not pass the input.
+      await runPreFix({ ...baseConfig, triggerEventName: "" }, deps);
+
+      // currentTriggerSource resolves to null; the id-only fallback fires.
+      expect(deps.outputs.should_run).toBe("false");
+      expect(deps.fetchReviewComments).not.toHaveBeenCalled();
+    });
+
+    it("persists lastProcessedTriggerSource alongside lastProcessedReviewId on the Phase 3 fixing transition", async () => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 2010,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 finding\n\nbody.",
+          path: "src/x.ts",
+          line: 5,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({ status: "waiting_codex" }),
+        },
+        findings,
+      );
+
+      await runPreFix(
+        { ...baseConfig, triggerEventName: "pull_request_review" },
+        deps,
+      );
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "fixing",
+          lastProcessedReviewId: baseConfig.triggerCommentId,
+          lastProcessedTriggerSource: "review",
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
   });
 });

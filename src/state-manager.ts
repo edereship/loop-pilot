@@ -95,6 +95,18 @@ function validateState(obj: unknown): obj is ReviewState {
 
   // Validate nullable fields used in downstream comparisons and Date parsing
   if (s.lastProcessedReviewId !== null && typeof s.lastProcessedReviewId !== "number") return false;
+  // TY-301 #2: lastProcessedTriggerSource was added after the initial release.
+  // Tolerate missing and explicit-null shapes; present values must be one of
+  // the known sources so a forged state cannot smuggle in arbitrary strings
+  // that would silently change dedup behaviour.
+  if (
+    "lastProcessedTriggerSource" in s &&
+    s.lastProcessedTriggerSource !== null &&
+    s.lastProcessedTriggerSource !== "comment" &&
+    s.lastProcessedTriggerSource !== "review"
+  ) {
+    return false;
+  }
   if (s.lastClaudeCommitSha !== null && typeof s.lastClaudeCommitSha !== "string") return false;
   if (s.lastCodexRequestCommentId !== null && typeof s.lastCodexRequestCommentId !== "number") return false;
   if (s.lastCodexReviewReceivedAt !== null && typeof s.lastCodexReviewReceivedAt !== "string") return false;
@@ -155,6 +167,7 @@ export function createInitialState(): ReviewState {
   return {
     iterationCount: 0,
     lastProcessedReviewId: null,
+    lastProcessedTriggerSource: null,
     lastClaudeCommitSha: null,
     lastCodexRequestCommentId: null,
     lastCodexReviewReceivedAt: null,
@@ -284,6 +297,12 @@ export function deserializeState(commentBody: string): ReviewState | null {
         (parsed as { previousCheckFailure?: string | null }).previousCheckFailure ?? null,
       fixingStartedAt:
         (parsed as { fixingStartedAt?: string | null }).fixingStartedAt ?? null,
+      // TY-301 #2: legacy state comments lack this field. Normalize to `null`
+      // so the dedup check in pre-fix falls back to id-only comparison
+      // (preserving the pre-TY-301 behaviour for in-flight PRs).
+      lastProcessedTriggerSource:
+        (parsed as { lastProcessedTriggerSource?: "comment" | "review" | null })
+          .lastProcessedTriggerSource ?? null,
     };
     return normalized;
   } catch {

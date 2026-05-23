@@ -39,6 +39,10 @@ inputs:
     description: "GitHub login of the user who posted the trigger comment or review"
     required: false
     default: ""
+  trigger-event-name:
+    description: "GitHub event name that fired the trigger (`issue_comment` or `pull_request_review`). Used by pre-fix to disambiguate the `lastProcessedReviewId` namespace (TY-301 #2). Empty default keeps the pre-TY-301 id-only dedup behaviour."
+    required: false
+    default: ""
   max-review-iterations:
     description: "Maximum number of review-fix iterations"
     required: false
