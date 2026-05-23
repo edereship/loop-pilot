@@ -18637,6 +18637,7 @@ var require_undici = __commonJS({
 var main_post_fix_exports = {};
 __export(main_post_fix_exports, {
   SECRET_WARN_LOG_CAP: () => SECRET_WARN_LOG_CAP,
+  SECRET_WARN_LOG_CAP_PER_PATTERN: () => SECRET_WARN_LOG_CAP_PER_PATTERN,
   SECRET_WARN_PATH_SUPPRESS_RE: () => SECRET_WARN_PATH_SUPPRESS_RE,
   formatScopeViolationDetail: () => formatScopeViolationDetail,
   logSecretScanWarnings: () => logSecretScanWarnings,
@@ -21141,25 +21142,31 @@ function scanWithIntentToAdd(args) {
   }
 }
 var SECRET_WARN_PATH_SUPPRESS_RE = /(?:(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|poetry\.lock|Pipfile\.lock|composer\.lock)$|^dist\/|\.snap$|\.lockb?$)/i;
-var SECRET_WARN_LOG_CAP = 20;
+var SECRET_WARN_LOG_CAP_PER_PATTERN = 20;
+var SECRET_WARN_LOG_CAP = SECRET_WARN_LOG_CAP_PER_PATTERN;
 function logSecretScanWarnings(result, stage, deps) {
-  let logged = 0;
   let suppressedByPath = 0;
   let cappedOver = 0;
+  let totalLogged = 0;
+  const loggedByPattern = /* @__PURE__ */ new Map();
   for (const w of result.warnings) {
     if (SECRET_WARN_PATH_SUPPRESS_RE.test(w.path)) {
       suppressedByPath += 1;
       continue;
     }
-    if (logged >= SECRET_WARN_LOG_CAP) {
+    const loggedSoFar = loggedByPattern.get(w.pattern) ?? 0;
+    if (loggedSoFar >= SECRET_WARN_LOG_CAP_PER_PATTERN) {
       cappedOver += 1;
       continue;
     }
     deps.info(`[secret-scan] WARN stage=${stage} pattern=${w.pattern} path=${w.path} (warning-only; not stopping the loop)`);
-    logged += 1;
+    loggedByPattern.set(w.pattern, loggedSoFar + 1);
+    totalLogged += 1;
   }
   if (suppressedByPath > 0 || cappedOver > 0) {
-    deps.info(`[secret-scan] WARN summary stage=${stage} logged=${logged} suppressed_by_path=${suppressedByPath} capped_over=${cappedOver}`);
+    const cappedByPattern = [...loggedByPattern.entries()].filter(([, count]) => count >= SECRET_WARN_LOG_CAP_PER_PATTERN).map(([name]) => name).sort();
+    const cappedHint = cappedByPattern.length > 0 ? ` (capped patterns: ${cappedByPattern.join(", ")})` : "";
+    deps.info(`[secret-scan] WARN summary stage=${stage} logged=${totalLogged} suppressed_by_path=${suppressedByPath} capped_over=${cappedOver}${cappedHint}`);
   }
 }
 function formatScopeViolationDetail(violation, maxFiles, maxLines) {
@@ -21794,6 +21801,7 @@ runIfNotVitest(run, () => demoteFixingOnCrash("post-fix"));
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   SECRET_WARN_LOG_CAP,
+  SECRET_WARN_LOG_CAP_PER_PATTERN,
   SECRET_WARN_PATH_SUPPRESS_RE,
   formatScopeViolationDetail,
   logSecretScanWarnings,

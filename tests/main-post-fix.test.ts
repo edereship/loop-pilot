@@ -2246,4 +2246,124 @@ describe("logSecretScanWarnings (TY-298 #2)", () => {
       .filter((m) => m.startsWith("[secret-scan] WARN summary"));
     expect(summaries).toEqual([]);
   });
+
+  // TY-304: the cap is per-pattern, not shared. A noisy pattern saturating
+  // its own budget must NOT push the first observation of a low-FP pattern
+  // out of the log — otherwise the "WARN observation → HARD promote" track
+  // record breaks for the pattern operators care most about.
+  describe("TY-304: per-pattern cap keeps low-FP patterns observable", () => {
+    it("#A: credential-assignment is still logged when high-entropy-long-string saturates its own cap", () => {
+      const warnings: SecretScanFinding[] = [
+        ...Array.from({ length: SECRET_WARN_LOG_CAP + 5 }, (_, i) =>
+          makeWarn(`src/foo-${i}.ts`, "high-entropy-long-string"),
+        ),
+        makeWarn("src/bar.ts", "credential-assignment"),
+      ];
+      const info = vi.fn();
+
+      logSecretScanWarnings({ hardFailures: [], warnings }, "pre-check", {
+        info,
+      });
+
+      const individualLines = info.mock.calls
+        .map((c) => c[0])
+        .filter((m: string) => m.startsWith("[secret-scan] WARN stage="));
+      const credentialLines = individualLines.filter((m: string) =>
+        m.includes("pattern=credential-assignment"),
+      );
+      expect(credentialLines).toHaveLength(1);
+      expect(credentialLines[0]).toContain("path=src/bar.ts");
+    });
+
+    it("#B: total individual log lines = SECRET_WARN_LOG_CAP per saturated pattern + each non-saturated pattern's full count", () => {
+      const warnings: SecretScanFinding[] = [
+        ...Array.from({ length: SECRET_WARN_LOG_CAP + 5 }, (_, i) =>
+          makeWarn(`src/foo-${i}.ts`, "high-entropy-long-string"),
+        ),
+        makeWarn("src/bar.ts", "credential-assignment"),
+      ];
+      const info = vi.fn();
+
+      logSecretScanWarnings({ hardFailures: [], warnings }, "pre-check", {
+        info,
+      });
+
+      const individualLines = info.mock.calls
+        .map((c) => c[0])
+        .filter((m: string) => m.startsWith("[secret-scan] WARN stage="));
+      // SECRET_WARN_LOG_CAP entropy lines + 1 credential line.
+      expect(individualLines).toHaveLength(SECRET_WARN_LOG_CAP + 1);
+      // Plus exactly one summary line because some entropy entries were
+      // capped (= capped_over > 0).
+      expect(info).toHaveBeenCalledTimes(SECRET_WARN_LOG_CAP + 1 + 1);
+    });
+
+    it("#C: summary line lists only the patterns that hit their cap", () => {
+      const warnings: SecretScanFinding[] = [
+        ...Array.from({ length: SECRET_WARN_LOG_CAP + 3 }, (_, i) =>
+          makeWarn(`src/foo-${i}.ts`, "high-entropy-long-string"),
+        ),
+        makeWarn("src/bar.ts", "credential-assignment"),
+      ];
+      const info = vi.fn();
+
+      logSecretScanWarnings({ hardFailures: [], warnings }, "pre-check", {
+        info,
+      });
+
+      const summaries = info.mock.calls
+        .map((c) => c[0])
+        .filter((m: string) => m.startsWith("[secret-scan] WARN summary"));
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toContain(
+        "capped patterns: high-entropy-long-string",
+      );
+      expect(summaries[0]).not.toContain("credential-assignment");
+      expect(summaries[0]).toContain("capped_over=3");
+    });
+
+    it("#D: path suppression is still honored independently of the per-pattern cap (regression)", () => {
+      // Hash-bearing paths must remain fully suppressed regardless of pattern,
+      // and must not consume any pattern's logging budget.
+      const warnings: SecretScanFinding[] = [
+        makeWarn("package-lock.json", "high-entropy-long-string"),
+        makeWarn("pnpm-lock.yaml", "credential-assignment"),
+        makeWarn("src/foo.ts", "high-entropy-long-string"),
+      ];
+      const info = vi.fn();
+
+      logSecretScanWarnings({ hardFailures: [], warnings }, "pre-check", {
+        info,
+      });
+
+      const individualLines = info.mock.calls
+        .map((c) => c[0])
+        .filter((m: string) => m.startsWith("[secret-scan] WARN stage="));
+      expect(individualLines).toHaveLength(1);
+      expect(individualLines[0]).toContain("path=src/foo.ts");
+
+      const summaries = info.mock.calls
+        .map((c) => c[0])
+        .filter((m: string) => m.startsWith("[secret-scan] WARN summary"));
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toContain("suppressed_by_path=2");
+      expect(summaries[0]).toContain("capped_over=0");
+      expect(summaries[0]).not.toContain("capped patterns:");
+    });
+
+    it("#E: hard-fail findings are unaffected — still ignored by this helper (regression)", () => {
+      const result: SecretScanResult = {
+        hardFailures: [
+          makeHard("src/leak.ts", "github-pat-classic"),
+          makeHard("src/another-leak.ts", "github-pat-classic"),
+        ],
+        warnings: [],
+      };
+      const info = vi.fn();
+
+      logSecretScanWarnings(result, "pre-check", { info });
+
+      expect(info).not.toHaveBeenCalled();
+    });
+  });
 });

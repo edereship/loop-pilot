@@ -338,11 +338,21 @@ export const SECRET_WARN_PATH_SUPPRESS_RE =
   /(?:(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|poetry\.lock|Pipfile\.lock|composer\.lock)$|^dist\/|\.snap$|\.lockb?$)/i;
 
 /**
- * Per-run upper bound on individually emitted WARN lines. Once exceeded,
- * additional WARN findings are folded into the summary line so the log
- * cannot grow unboundedly on PRs that touch many high-entropy files.
+ * Per-pattern upper bound on individually emitted WARN lines. Once exceeded
+ * for one pattern, additional WARN findings of that same pattern are folded
+ * into the summary line. Other patterns continue to log up to their own cap.
+ *
+ * TY-304: previously a single shared counter capped at this value, so a
+ * noisy pattern like `high-entropy-long-string` could exhaust the budget
+ * with 20 false positives and silently push out the first
+ * `credential-assignment` line — defeating the "WARN observation → HARD
+ * promote" design intent for low-FP patterns. Pre-pattern accounting keeps
+ * the low-FP pattern observable even when a noisy pattern saturates.
+ *
+ * Aliased as `SECRET_WARN_LOG_CAP` for legacy callers / tests.
  */
-export const SECRET_WARN_LOG_CAP = 20;
+export const SECRET_WARN_LOG_CAP_PER_PATTERN = 20;
+export const SECRET_WARN_LOG_CAP = SECRET_WARN_LOG_CAP_PER_PATTERN;
 
 /**
  * Emit `core.info` lines for warning-tier secret-scan findings.
@@ -351,39 +361,59 @@ export const SECRET_WARN_LOG_CAP = 20;
  * workflow log itself cannot become a secret-leak vector.
  *
  * TY-298 #2: WARN findings on hash-bearing paths (`SECRET_WARN_PATH_SUPPRESS_RE`)
- * are suppressed, and the total emitted-per-stage count is capped at
- * `SECRET_WARN_LOG_CAP`. Suppressed / capped counts are surfaced via a single
- * summary line so the original "track record" design intent (observe WARN
- * volume before promoting a rule to hard-fail) keeps working, but a noisy
- * pattern like `high-entropy-long-string` cannot drown out a low-volume
- * actionable pattern like `credential-assignment`. Hard-fail findings are
- * logged separately by the caller via `deps.error` and are unaffected.
+ * are suppressed and the emitted volume is capped so the log cannot grow
+ * unboundedly on PRs that touch many high-entropy files.
+ *
+ * TY-304: the cap is now **per-pattern** (`SECRET_WARN_LOG_CAP_PER_PATTERN`)
+ * rather than a single shared counter. A high-FP pattern like
+ * `high-entropy-long-string` saturating its own 20-line budget no longer
+ * pushes out a low-FP pattern like `credential-assignment`, which preserves
+ * the "observe WARN volume → promote to hard-fail" track record the design
+ * intent (`src/secret-scanner.ts:36-46`) relies on. The summary line lists
+ * which patterns hit their cap so operators can spot saturation per-pattern.
+ *
+ * Hard-fail findings are logged separately by the caller via `deps.error`
+ * and are unaffected.
  */
 export function logSecretScanWarnings(
   result: SecretScanResult,
   stage: "pre-check" | "pre-commit",
   deps: { info: (msg: string) => void },
 ): void {
-  let logged = 0;
   let suppressedByPath = 0;
   let cappedOver = 0;
+  let totalLogged = 0;
+  const loggedByPattern = new Map<string, number>();
   for (const w of result.warnings) {
     if (SECRET_WARN_PATH_SUPPRESS_RE.test(w.path)) {
       suppressedByPath += 1;
       continue;
     }
-    if (logged >= SECRET_WARN_LOG_CAP) {
+    const loggedSoFar = loggedByPattern.get(w.pattern) ?? 0;
+    if (loggedSoFar >= SECRET_WARN_LOG_CAP_PER_PATTERN) {
       cappedOver += 1;
       continue;
     }
     deps.info(
       `[secret-scan] WARN stage=${stage} pattern=${w.pattern} path=${w.path} (warning-only; not stopping the loop)`,
     );
-    logged += 1;
+    loggedByPattern.set(w.pattern, loggedSoFar + 1);
+    totalLogged += 1;
   }
   if (suppressedByPath > 0 || cappedOver > 0) {
+    // TY-304: surface *which* patterns saturated so operators can act on
+    // per-pattern volume (e.g. tune the regex, promote to hard-fail, add a
+    // path-suppress entry). Sorted for deterministic test output.
+    const cappedByPattern = [...loggedByPattern.entries()]
+      .filter(([, count]) => count >= SECRET_WARN_LOG_CAP_PER_PATTERN)
+      .map(([name]) => name)
+      .sort();
+    const cappedHint =
+      cappedByPattern.length > 0
+        ? ` (capped patterns: ${cappedByPattern.join(", ")})`
+        : "";
     deps.info(
-      `[secret-scan] WARN summary stage=${stage} logged=${logged} suppressed_by_path=${suppressedByPath} capped_over=${cappedOver}`,
+      `[secret-scan] WARN summary stage=${stage} logged=${totalLogged} suppressed_by_path=${suppressedByPath} capped_over=${cappedOver}${cappedHint}`,
     );
   }
 }

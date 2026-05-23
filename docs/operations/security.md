@@ -550,14 +550,14 @@ diff parsing は state machine で hunk 内外を区別し、以下の edge case
 
 検出結果のログ・stop コメント本文には **マッチした値そのものを含めない**。pattern 名 (`github-pat-classic` 等) と path のみを出力する。これにより workflow ログ自体が secret leak の vector にならない。
 
-### WARN ログの path 抑制と上限 (TY-298 #2)
+### WARN ログの path 抑制と上限 (TY-298 #2 / TY-304)
 
 `high-entropy-long-string` のような広域マッチ規則は、運用 repo の `package-lock.json` integrity hash・`dist/` バンドルのシンボル名・vitest / jest スナップショット・バイナリ lockfile などに対し PR あたり数十〜数百件マッチする。これを無加工で log に流すと、本来 promote 判断材料にしたい低頻度パターン (`credential-assignment` 等) が埋もれてしまうため、`logSecretScanWarnings` (`src/main-post-fix.ts`) で 2 段の抑制を入れている:
 
 1. **path-glob 抑制**: 既知の hash-bearing path は WARN ログを出さない。対象は `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `Cargo.lock` / `poetry.lock` / `Pipfile.lock` / `composer.lock` / `dist/**` / `*.snap` / `*.lock(b)?`。
-2. **総数上限**: それ以外も 1 stage あたり `SECRET_WARN_LOG_CAP` (= 20) 件で打ち切る。
+2. **per-pattern 上限**: それ以外は **pattern 別** に `SECRET_WARN_LOG_CAP_PER_PATTERN` (= 20) 件で打ち切る (TY-304)。当初は全 pattern 共有の単一カウンタだったが、`high-entropy-long-string` のような高 FP pattern が 20 件枠を消費して `credential-assignment` の WARN を silent に押し出していたため、cap を pattern ごとに分けて「ノイジーな pattern が低 FP 率 pattern の track record を潰さない」よう変更。合計上限は `WARN_SECRET_PATTERNS.length * 20` (現状 2 pattern → 40 件)。
 
-抑制 / 打ち切りが発生した場合は `[secret-scan] WARN summary stage=<stage> logged=<n> suppressed_by_path=<n> capped_over=<n>` の 1 行で件数だけ surface する (運用者が「数だけ知りたい」ニーズを満たし、log 全体は flood しない)。`scanForSecrets` 本体の挙動は触らないため、**Hard-fail** finding は引き続き `core.error` で全件 log される (抑制対象外)。新パターンを追加する際の「WARN を観察してから hard-fail に promote」フローは、suppression 件数を summary から読み取って判断できる。
+抑制 / 打ち切りが発生した場合は `[secret-scan] WARN summary stage=<stage> logged=<n> suppressed_by_path=<n> capped_over=<n> (capped patterns: <name>, ...)` の 1 行で件数 + cap に達した pattern 名を surface する (運用者は「どの pattern が cap に達したか」を 1 行で把握でき、`credential-assignment` の track record を取りたい運用判断に直結する)。`scanForSecrets` 本体の挙動は触らないため、**Hard-fail** finding は引き続き `core.error` で全件 log される (抑制対象外)。新パターンを追加する際の「WARN を観察してから hard-fail に promote」フローは、suppression 件数 / capped 内訳を summary から読み取って判断できる。
 
 ### 復旧経路 (`secret_leak_suspected` 停止後)
 
