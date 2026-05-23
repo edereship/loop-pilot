@@ -21109,8 +21109,21 @@ function readPostFixInputs() {
 function detectMaxTurnsExceeded(executionFileContents) {
   if (executionFileContents === null)
     return false;
+  try {
+    const parsed = JSON.parse(executionFileContents);
+    const messages = Array.isArray(parsed) ? parsed : [parsed];
+    for (const message of messages) {
+      if (typeof message === "object" && message !== null && message.type === "result") {
+        const subtype = message.subtype;
+        if (typeof subtype === "string") {
+          return subtype === "error_max_turns";
+        }
+      }
+    }
+  } catch {
+  }
   const haystack = executionFileContents.toLowerCase();
-  return haystack.includes("max_turns") || haystack.includes("max turns") || haystack.includes("maximum turns");
+  return /\b(?:reach(?:ed|ing)?|exceed(?:ed|ing|s)?|exhaust(?:ed|ing|s)?|hit)\b[^\n.]*\b(?:max[ _-]?turns|maximum turns)\b/.test(haystack);
 }
 var SCOPE_POLICY_DOC = "docs/operations/scope-policy.md";
 function buildSecretScanTargets(args) {

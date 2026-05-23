@@ -908,6 +908,8 @@ describe("runPostFix", () => {
   });
 
   it("detects max_turns_exceeded from the action execution file", async () => {
+    // TY-324 #C: a non-JSON execution file still classifies via the
+    // verb-anchored human-readable fallback ("Reached" + "max_turns").
     const deps = makeDeps(
       {
         found: true,
@@ -938,6 +940,7 @@ describe("runPostFix", () => {
   });
 
   it("falls back to action_failure when execution file does not indicate max_turns", async () => {
+    // TY-324 #D: default readActionExecutionFile returns null (missing file).
     const deps = makeDeps({
       found: true,
       corrupted: false,
@@ -949,6 +952,90 @@ describe("runPostFix", () => {
     await runPostFix(baseConfig, deps, {
       ...baseInputs,
       actionOutcome: "failure",
+    });
+
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({ status: "stopped", stopReason: "action_failure" }),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
+  it("TY-324 #B: classifies a structured error_max_turns result as max_turns_exceeded", async () => {
+    // Real claude-code-action execution file: a JSON array of Claude Agent SDK
+    // messages terminated by a `type: "result"` message whose `subtype` is the
+    // authoritative stop reason.
+    const executionFile = JSON.stringify([
+      { type: "system", subtype: "init", session_id: "sess-b", model: "claude-opus-4-7" },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "working" }] } },
+      { type: "result", subtype: "error_max_turns", is_error: true, num_turns: 40, duration_ms: 120000 },
+    ]);
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        readActionExecutionFile: () => executionFile,
+      },
+    );
+
+    await runPostFix(baseConfig, deps, {
+      ...baseInputs,
+      actionOutcome: "failure",
+      actionExecutionFile: "/tmp/execution.json",
+    });
+
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
+  it("TY-324 #A: a generic failure whose execution file echoes the max_turns config is action_failure, not max_turns_exceeded", async () => {
+    // Regression for the loose `includes("max_turns")` heuristic: the
+    // `--max-turns 40` config echo is present in the log, but the terminal
+    // result subtype is `error_during_execution` (a generic failure). The old
+    // substring scan misclassified this as max_turns_exceeded, which TY-258
+    // then carried across /restart-review to force an unnecessary Opus tier.
+    const executionFile = JSON.stringify([
+      {
+        type: "system",
+        subtype: "init",
+        session_id: "sess-a",
+        model: "claude-opus-4-7",
+        max_turns: 40,
+      },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "boom" }] } },
+      { type: "result", subtype: "error_during_execution", is_error: true, num_turns: 3, duration_ms: 5000 },
+    ]);
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        readActionExecutionFile: () => executionFile,
+      },
+    );
+
+    await runPostFix(baseConfig, deps, {
+      ...baseInputs,
+      actionOutcome: "failure",
+      actionExecutionFile: "/tmp/execution.json",
     });
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(

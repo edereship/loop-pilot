@@ -237,18 +237,62 @@ function readPostFixInputs(): PostFixInputs {
 
 /**
  * Determine whether a non-success claude-code-action outcome was caused by the
- * configured `--max-turns` budget being exhausted. Returns null when the
- * execution file is missing / unreadable / does not match the heuristic.
+ * configured `--max-turns` budget being exhausted. Returns false when the
+ * execution file is missing / unreadable / does not indicate a limit hit.
+ *
+ * The execution file is claude-code-action's structured log: a JSON array of
+ * Claude Agent SDK messages written via `JSON.stringify(messages, null, 2)`
+ * (base-action/src/run-claude-sdk.ts). The terminal `{ type: "result" }`
+ * message carries a `subtype` that is exactly one of `success` /
+ * `error_max_turns` / `error_during_execution`, so a real limit hit is
+ * `subtype === "error_max_turns"` — authoritative, and distinct from the
+ * `--max-turns N` config echo that surfaces as `"max_turns": N` in every run.
+ *
+ * TY-324: the previous heuristic returned true on any `includes("max_turns")`,
+ * which also matched that config echo (plus log / doc lines), so EVERY
+ * `outcome=failure` was misclassified as `max_turns_exceeded`. That is not a
+ * cosmetic label error: TY-258 carries `max_turns_exceeded` across
+ * `/restart-review` as a one-shot escalation signal that forces the next
+ * iteration's `selectModel` (via `previousMaxTurnsExceeded`) onto the escalated
+ * (Opus) tier. Misclassifying a transient infra / tool failure therefore burned
+ * an unnecessary Opus iteration on resume. Keying off the structured stop
+ * reason removes that secondary cost; the textual scan is only a fallback for
+ * non-JSON execution files and is verb-anchored so the config echo never trips.
  */
 function detectMaxTurnsExceeded(executionFileContents: string | null): boolean {
   if (executionFileContents === null) return false;
-  // The Claude Code SDK surfaces the limit either as a structured field or
-  // a human-readable line; match both shapes leniently.
+
+  // 1) Structured result subtype — authoritative when the file is valid JSON.
+  try {
+    const parsed: unknown = JSON.parse(executionFileContents);
+    const messages: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    for (const message of messages) {
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        (message as { type?: unknown }).type === "result"
+      ) {
+        const subtype = (message as { subtype?: unknown }).subtype;
+        // A result message with a string subtype is decisive: only
+        // `error_max_turns` is a budget exhaustion. Any other subtype
+        // (e.g. `error_during_execution`) is a generic action_failure.
+        if (typeof subtype === "string") {
+          return subtype === "error_max_turns";
+        }
+      }
+    }
+    // Valid JSON but no result message with a string subtype: fall through to
+    // the textual heuristic rather than silently returning false.
+  } catch {
+    // Not JSON (e.g. a plain stderr dump) — fall through to the text heuristic.
+  }
+
+  // 2) Human-readable fallback: require a verb that denotes hitting the limit
+  //    adjacent (same line) to the "turns" noun, so the bare `"max_turns": N`
+  //    config echo — which has no such verb — does not match.
   const haystack = executionFileContents.toLowerCase();
-  return (
-    haystack.includes("max_turns") ||
-    haystack.includes("max turns") ||
-    haystack.includes("maximum turns")
+  return /\b(?:reach(?:ed|ing)?|exceed(?:ed|ing|s)?|exhaust(?:ed|ing|s)?|hit)\b[^\n.]*\b(?:max[ _-]?turns|maximum turns)\b/.test(
+    haystack,
   );
 }
 
