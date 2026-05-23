@@ -20865,7 +20865,8 @@ function computeFindingsHash(findings) {
   return stableHash(JSON.stringify(uniqueSorted));
 }
 function normalizeFinding(finding) {
-  const bodyHash = stableHash(finding.body);
+  const normalizedBody = finding.body.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+  const bodyHash = stableHash(normalizedBody);
   return JSON.stringify([finding.severity, finding.path, bodyHash]);
 }
 function stableHash(input2) {

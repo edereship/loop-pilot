@@ -123,6 +123,33 @@ describe("isLoop", () => {
     expect(isLoop(findings, findingsHashHistory)).toBe(true);
   });
 
+  it("TY-305 #F: detects a loop across Codex cosmetic whitespace re-renders of the same finding", () => {
+    // Codex emitted findings A at iteration 1 (base) and iteration 2
+    // (escalated). At iteration 3 it re-renders the same logical finding
+    // with cosmetic whitespace drift (trailing newline + CRLF) — without
+    // body whitespace normalization those would hash differently and
+    // `isLoop` would return false, burning iterations until max_iterations.
+    // With TY-305 normalization the hash matches and the second escalated
+    // observation correctly trips `loop_detected`.
+    const original: Finding = { ...baseFinding, body: "foo bar" };
+    const cosmeticDrift: Finding = {
+      ...baseFinding,
+      body: "foo bar  \r\n",
+    };
+
+    const originalHash = computeFindingsHash([original]);
+    const driftHash = computeFindingsHash([cosmeticDrift]);
+    // Sanity check: the normalization actually collapses the two bodies.
+    expect(originalHash).toBe(driftHash);
+
+    const findingsHashHistory: FindingsHashEntry[] = [
+      { iteration: 1, hash: originalHash, modelTier: "base" },
+      { iteration: 2, hash: originalHash, modelTier: "escalated" },
+    ];
+
+    expect(isLoop([cosmeticDrift], findingsHashHistory)).toBe(true);
+  });
+
   it("TY-296: detects an A→B→C→D→A cycle after the history has been persisted through serializeState", () => {
     // Regression for TY-296: with MAX_HISTORY_ENTRIES=3 the original A was
     // trimmed before the cycle closed, so `isLoop` returned false and the

@@ -64,4 +64,46 @@ describe("computeFindingsHash", () => {
     const hash = computeFindingsHash([baseFinding]);
     expect(hash).toMatch(/^[0-9a-f]{16}$/);
   });
+
+  // TY-305: Codex re-renders the same logical finding with cosmetic whitespace
+  // drift (CRLF↔LF, trailing line whitespace, outer trim) between iterations.
+  // The hash must treat those as the same body so loop detection still fires.
+  describe("TY-305: body whitespace normalization", () => {
+    it("#A: trailing newline does not affect the hash", () => {
+      const withoutNewline: Finding = { ...baseFinding, body: "foo bar" };
+      const withNewline: Finding = { ...baseFinding, body: "foo bar\n" };
+      expect(computeFindingsHash([withoutNewline])).toBe(
+        computeFindingsHash([withNewline]),
+      );
+    });
+
+    it("#B: CRLF vs LF line endings produce the same hash", () => {
+      const lf: Finding = { ...baseFinding, body: "foo\nbar" };
+      const crlf: Finding = { ...baseFinding, body: "foo\r\nbar" };
+      expect(computeFindingsHash([lf])).toBe(computeFindingsHash([crlf]));
+    });
+
+    it("#C: trailing per-line whitespace does not affect the hash", () => {
+      const trimmed: Finding = { ...baseFinding, body: "foo bar\nbaz" };
+      const trailingSpaces: Finding = {
+        ...baseFinding,
+        body: "foo bar  \nbaz",
+      };
+      expect(computeFindingsHash([trimmed])).toBe(
+        computeFindingsHash([trailingSpaces]),
+      );
+    });
+
+    it("#D: internal whitespace runs (inside a line) are preserved as distinct", () => {
+      // Code snippets / stack-trace indentation must stay distinguishable —
+      // we only normalize *edge* whitespace, not internal runs. A body
+      // with double-space inside a line is a different finding from one
+      // with single-space.
+      const singleSpace: Finding = { ...baseFinding, body: "foo bar" };
+      const doubleSpace: Finding = { ...baseFinding, body: "foo  bar" };
+      expect(computeFindingsHash([singleSpace])).not.toBe(
+        computeFindingsHash([doubleSpace]),
+      );
+    });
+  });
 });

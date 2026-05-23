@@ -58,6 +58,12 @@ def is_loop(current_findings, findings_hash_history):
 
 - `(severity, path, body の hash)` を正規化キーとし、セット全体のハッシュで比較する
 - `line` はキーに含めない（Claude の修正で行数が変動すると、同一指摘がループ検知をすり抜けるため）
+- `title` はキーに含めない（TY-276 #7。Codex が同一指摘の title を iteration 間で cosmetic に書き換えることがあるため、含めると loop 検知を bypass される）
+- `body` は hash 前に **whitespace を正規化** する（TY-305）。Codex は同じ logical finding を CRLF↔LF (renderer の OS 差) / trailing-line-whitespace (markdown line break) / 先頭末尾 trim (summary template 編集) の差分で再描画することがあり、raw のまま hash すると cosmetic 差分で別 hash になる。正規化規則は以下 3 段:
+  1. `\r\n` → `\n` (line-ending 統一)
+  2. `[ \t]+\n` → `\n` (行末 trailing whitespace 除去)
+  3. body 全体に `trim()` (先頭末尾の whitespace 除去)
+  内部 whitespace runs (行内の連続 space) は **保持** する。コード片 / stack trace の意図的なインデントを潰すと「実際に違う content」を同一視するリスクがあるため、edge whitespace だけを正規化する
 - **hidden comment に保持するのはハッシュ値のみ**。`normalized_set` は保持しない（コメントサイズ制限のため）
 - そのため、異なる workflow 実行間では**ハッシュの完全一致のみ**で判定する。部分一致（80%マッチ）の判定は `normalized_set` が必要なため、hidden comment からの復元では不可能
 - **振動パターン（A → B → A）の検知:** `findings_hash_history` に直近 N 回分を保持し、いずれかとの一致でループ検知する（直近1回のみの比較では検知できない）
