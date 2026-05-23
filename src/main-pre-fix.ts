@@ -5,7 +5,7 @@ import {
   type Config,
 } from "./config.js";
 import { runIfNotVitest } from "./entrypoint.js";
-import { demoteFixingOnCrash } from "./crash-recovery.js";
+import { demoteFixingOnCrash, rollbackFixingClaim } from "./crash-recovery.js";
 import {
   createInitialState,
   readState as defaultReadState,
@@ -364,6 +364,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     // so `/restart-review` recovers cleanly.
     const recoveredState: ReviewState = {
       ...state,
+      // TY-302 #1: roll back the iteration / history entries pre-fix Phase 3
+      // claimed before the prior workflow died so a soft `/restart-review`
+      // does not loop-detect on the orphan entry.
+      ...rollbackFixingClaim(state),
       status: "stopped",
       stopReason: "workflow_crashed",
       fixingStartedAt: null,

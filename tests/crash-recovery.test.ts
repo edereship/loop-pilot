@@ -232,4 +232,91 @@ describe("demoteFixingOnCrash", () => {
       "[post-fix] Crash recovery failed: conflict",
     );
   });
+
+  it("TY-302 #1: rolls back the orphan iteration / findings-hash entry pre-fix Phase 3 claimed before the crash", async () => {
+    // Pre-fix Phase 3 sets `status: fixing` + `iterationCount: N+1` and
+    // appends a new history entry before claude-code-action runs. A crash
+    // before post-fix commits the fix used to leave this orphan bookkeeping
+    // intact, so the first soft `/restart-review` produced a phantom
+    // `loop_detected` (next pre-fix matched the orphan entry on the same
+    // hash). Crash recovery now rolls back iterationCount, findingsHashHistory,
+    // and lastFindingsHash alongside the status demotion.
+    const deps = makeDeps({
+      readState: vi.fn().mockResolvedValue({
+        found: true,
+        corrupted: false,
+        state: {
+          ...createInitialState(),
+          status: "fixing",
+          iterationCount: 3,
+          findingsHashHistory: [
+            { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+            { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
+            { iteration: 3, hash: "cccccccccccccccc", modelTier: "escalated" },
+          ],
+          lastFindingsHash: "cccccccccccccccc",
+          fixingStartedAt: "2026-05-23T00:00:00Z",
+        },
+        commentId: 12345,
+        commentUpdatedAt: "2026-05-15T00:00:00.000Z",
+      }),
+    });
+
+    await demoteFixingOnCrash("pre-fix", deps);
+
+    const [, , , writtenState] = (
+      deps.updateStateComment as ReturnType<typeof vi.fn>
+    ).mock.calls[0];
+    expect(writtenState).toMatchObject({
+      status: "stopped",
+      stopReason: "workflow_crashed",
+      iterationCount: 2,
+      findingsHashHistory: [
+        { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+        { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
+      ],
+      lastFindingsHash: "bbbbbbbbbbbbbbbb",
+      fixingStartedAt: null,
+    });
+  });
+
+  it("TY-302 #1: leaves iteration / history untouched when the last entry's iteration does not match (legacy / hand-edited state)", async () => {
+    // Defensive: if the bookkeeping invariant is broken (last entry's iteration
+    // !== state.iterationCount), the rollback heuristic does not fire so the
+    // helper does not blindly destroy state we cannot reason about.
+    const deps = makeDeps({
+      readState: vi.fn().mockResolvedValue({
+        found: true,
+        corrupted: false,
+        state: {
+          ...createInitialState(),
+          status: "fixing",
+          iterationCount: 5,
+          findingsHashHistory: [
+            { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+          ],
+          lastFindingsHash: "aaaaaaaaaaaaaaaa",
+          fixingStartedAt: "2026-05-23T00:00:00Z",
+        },
+        commentId: 12345,
+        commentUpdatedAt: "2026-05-15T00:00:00.000Z",
+      }),
+    });
+
+    await demoteFixingOnCrash("pre-fix", deps);
+
+    const [, , , writtenState] = (
+      deps.updateStateComment as ReturnType<typeof vi.fn>
+    ).mock.calls[0];
+    expect(writtenState).toMatchObject({
+      status: "stopped",
+      stopReason: "workflow_crashed",
+      iterationCount: 5,
+      findingsHashHistory: [
+        { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+      ],
+      lastFindingsHash: "aaaaaaaaaaaaaaaa",
+      fixingStartedAt: null,
+    });
+  });
 });

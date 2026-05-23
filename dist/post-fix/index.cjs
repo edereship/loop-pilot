@@ -20121,6 +20121,23 @@ var defaultDeps2 = {
   updateStateComment,
   postStopComment
 };
+function rollbackFixingClaim(state) {
+  const lastEntry = state.findingsHashHistory.at(-1);
+  const shouldRollback = lastEntry !== void 0 && lastEntry.iteration === state.iterationCount;
+  if (!shouldRollback) {
+    return {
+      iterationCount: state.iterationCount,
+      findingsHashHistory: state.findingsHashHistory,
+      lastFindingsHash: state.lastFindingsHash
+    };
+  }
+  const rolledBackHistory = state.findingsHashHistory.slice(0, -1);
+  return {
+    iterationCount: Math.max(0, state.iterationCount - 1),
+    findingsHashHistory: rolledBackHistory,
+    lastFindingsHash: rolledBackHistory.at(-1)?.hash ?? null
+  };
+}
 async function demoteFixingOnCrash(label, deps = defaultDeps2) {
   try {
     const crashConfig = deps.loadInitConfig();
@@ -20131,6 +20148,10 @@ async function demoteFixingOnCrash(label, deps = defaultDeps2) {
     warning(`[${label}] Crash recovery: resetting fixing \u2192 stopped (workflow_crashed)`);
     const recoveredState = {
       ...crashStateResult.state,
+      // TY-302 #1: roll back the iteration / history entries pre-fix Phase 3
+      // optimistically claimed before the crash so a soft `/restart-review`
+      // does not loop-detect on the orphan entry.
+      ...rollbackFixingClaim(crashStateResult.state),
       status: "stopped",
       stopReason: "workflow_crashed",
       // TY-273 #B4 / TY-282: the fixing attempt did not complete so the
@@ -21234,14 +21255,10 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     }
   });
   async function failureExit(opts) {
-    const previousCheckFailure = opts.preservePreviousCheckFailure && opts.postCheckFailureBody ? truncatePreviousCheckFailure(opts.postCheckFailureBody) : null;
-    const rolledBackHistory = opts.state.findingsHashHistory.slice(0, -1);
-    const rolledBackLastHash = rolledBackHistory.length > 0 ? rolledBackHistory[rolledBackHistory.length - 1].hash : null;
+    const previousCheckFailure = opts.preservePreviousCheckFailure && opts.postCheckFailureBody ? truncatePreviousCheckFailure(opts.postCheckFailureBody) : opts.state.previousCheckFailure;
     const stoppedState = {
       ...opts.state,
-      iterationCount: Math.max(0, opts.state.iterationCount - 1),
-      findingsHashHistory: rolledBackHistory,
-      lastFindingsHash: rolledBackLastHash,
+      ...rollbackFixingClaim(opts.state),
       status: "stopped",
       stopReason: opts.stopReason,
       previousCheckFailure,

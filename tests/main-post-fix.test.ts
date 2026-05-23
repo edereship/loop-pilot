@@ -992,6 +992,211 @@ describe("runPostFix", () => {
     );
   });
 
+  // TY-302 #2: non-test_failure failure paths preserve the previousCheckFailure
+  // tail saved by a prior iteration's test_failure stop. Old behavior cleared
+  // it to null, which dropped the repair prompt's Previous Failure section and
+  // `selectModel`'s `previous_check_failure` escalation reason — operator's
+  // next `/restart-review` would lose the original test failure context.
+  describe("TY-302 #2: preserves previousCheckFailure across non-test_failure stops", () => {
+    const PRIOR_TAIL = "tsc error: prior tail";
+
+    it("action_failure preserves previousCheckFailure carried over from a prior test_failure stop", async () => {
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState({ previousCheckFailure: PRIOR_TAIL }),
+      });
+
+      await runPostFix(baseConfig, deps, {
+        ...baseInputs,
+        actionOutcome: "failure",
+      });
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "action_failure",
+          previousCheckFailure: PRIOR_TAIL,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("action_no_op preserves previousCheckFailure", async () => {
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState({ previousCheckFailure: PRIOR_TAIL }),
+        },
+        {
+          gitDiffNumstat: () => "",
+        },
+      );
+
+      await runPostFix(baseConfig, deps, baseInputs);
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "action_no_op",
+          previousCheckFailure: PRIOR_TAIL,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("scope_violation preserves previousCheckFailure", async () => {
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState({ previousCheckFailure: PRIOR_TAIL }),
+        },
+        {
+          gitDiffNumstat: () => "10\t0\t.github/workflows/auto-review-loop.yml\n",
+        },
+      );
+
+      await runPostFix(baseConfig, deps, baseInputs);
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "scope_violation",
+          previousCheckFailure: PRIOR_TAIL,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("max_turns_exceeded preserves previousCheckFailure", async () => {
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState({ previousCheckFailure: PRIOR_TAIL }),
+        },
+        {
+          readActionExecutionFile: () => "Error: Reached max_turns limit",
+        },
+      );
+
+      await runPostFix(baseConfig, deps, {
+        ...baseInputs,
+        actionOutcome: "failure",
+        actionExecutionFile: "/tmp/execution.json",
+      });
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "max_turns_exceeded",
+          previousCheckFailure: PRIOR_TAIL,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("secret_leak_suspected preserves previousCheckFailure", async () => {
+      const fakeGhp = "g" + "hp_abcdefghijklmnopqrstuv0123456789";
+      const diff = [
+        "diff --git a/src/foo.ts b/src/foo.ts",
+        "--- a/src/foo.ts",
+        "+++ b/src/foo.ts",
+        "@@ -1 +1 @@",
+        `+export const t = '${fakeGhp}';`,
+      ].join("\n");
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState({ previousCheckFailure: PRIOR_TAIL }),
+        },
+        {
+          gitDiffNumstat: () => "5\t2\tsrc/foo.ts\n",
+          gitDiffHead: () => diff,
+        },
+      );
+
+      await runPostFix(baseConfig, deps, baseInputs);
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "secret_leak_suspected",
+          previousCheckFailure: PRIOR_TAIL,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("test_failure still overwrites previousCheckFailure with the new CHECK_COMMAND failure tail (regression)", async () => {
+      // test_failure passes `preservePreviousCheckFailure: true` with a fresh
+      // body, so the stale prior tail must be replaced — not kept.
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState({ previousCheckFailure: "outdated tail" }),
+        },
+        {
+          runCheckCommand: vi.fn().mockResolvedValue({
+            success: false,
+            output: "tsc error: fresh tail",
+          }),
+        },
+      );
+
+      await runPostFix(baseConfig, deps, baseInputs);
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "test_failure",
+          previousCheckFailure: "tsc error: fresh tail",
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+  });
+
   it("AUTO_REVIEW_BLOCK_PATHS=!package.json lets package.json pass the scope check (TY-271)", async () => {
     // The new block-list lets operators opt specific defaults out via `!path`.
     // After the override, `package.json` is no longer blocked — the diff

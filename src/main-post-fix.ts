@@ -5,7 +5,7 @@ import {
   type BaseConfig,
 } from "./config.js";
 import { runIfNotVitest } from "./entrypoint.js";
-import { demoteFixingOnCrash } from "./crash-recovery.js";
+import { demoteFixingOnCrash, rollbackFixingClaim } from "./crash-recovery.js";
 import {
   readState as defaultReadState,
   updateStateComment as defaultUpdateStateComment,
@@ -558,29 +558,32 @@ export async function runPostFix(
   });
 
   async function failureExit(opts: FailureExitOptions): Promise<void> {
+    // TY-302 #2: when the caller supplies a fresh CHECK_COMMAND failure tail
+    // (= test_failure callsite), record it. Otherwise preserve the existing
+    // `previousCheckFailure` so soft `/restart-review` after a non-test
+    // failure (action_no_op / scope_violation / secret_leak_suspected /
+    // max_turns_exceeded / action_timeout / action_failure / BUILD_COMMAND
+    // failures) keeps the prior test_failure context available for the next
+    // iteration's repair prompt and the `selectModel` escalation.
+    // The clean-commit path (`:1423`) explicitly writes `previousCheckFailure:
+    // null` outside failureExit, so successful repairs still clear context.
     const previousCheckFailure =
       opts.preservePreviousCheckFailure && opts.postCheckFailureBody
         ? truncatePreviousCheckFailure(opts.postCheckFailureBody)
-        : null;
+        : opts.state.previousCheckFailure;
 
-    // Pre-fix optimistically claimed `fixing` with iterationCount+1 and
-    // appended the current findings hash to history before claude-code-action
-    // ran. When post-fix is stopping without a committed fix, that bookkeeping
-    // would otherwise consume an iteration and pre-poison loop detection for
-    // a subsequent soft /restart-review (next run sees the same hash already
-    // in history → `loop_detected` immediately). Roll back both fields so the
-    // user can retry the same Codex findings after intervention.
-    const rolledBackHistory = opts.state.findingsHashHistory.slice(0, -1);
-    const rolledBackLastHash =
-      rolledBackHistory.length > 0
-        ? rolledBackHistory[rolledBackHistory.length - 1].hash
-        : null;
-
+    // TY-302 #1: pre-fix Phase 3 optimistically claimed `fixing` with
+    // iterationCount+1 and appended the current findings hash to history
+    // before claude-code-action ran. When post-fix stops without a committed
+    // fix, that bookkeeping would otherwise consume an iteration and
+    // pre-poison loop detection for a subsequent soft `/restart-review`
+    // (next run sees the same hash already in history → `loop_detected`
+    // immediately). The shared `rollbackFixingClaim` helper is also used by
+    // `demoteFixingOnCrash` and pre-fix stale-fixing recovery so all three
+    // paths share a single source of truth.
     const stoppedState: ReviewState = {
       ...opts.state,
-      iterationCount: Math.max(0, opts.state.iterationCount - 1),
-      findingsHashHistory: rolledBackHistory,
-      lastFindingsHash: rolledBackLastHash,
+      ...rollbackFixingClaim(opts.state),
       status: "stopped",
       stopReason: opts.stopReason,
       previousCheckFailure,

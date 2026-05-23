@@ -178,6 +178,55 @@ describe("runPreFix", () => {
     );
   });
 
+  it("TY-302 #1: stale 'fixing' recovery rolls back the orphan iteration / findings-hash entry pre-fix Phase 3 claimed", async () => {
+    // The stale-fixing recovery used to only flip status + clear
+    // fixingStartedAt, leaving the orphan iterationCount + findingsHashHistory
+    // entry pre-fix Phase 3 had claimed before the prior workflow died.
+    // The first soft `/restart-review` would then `loop_detected` immediately
+    // because next pre-fix's hash matched the orphan entry. Now the rollback
+    // shares `rollbackFixingClaim` with `demoteFixingOnCrash` / failureExit.
+    const staleStartedAt = new Date("2026-05-14T10:00:00Z").toISOString();
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T11:00:00Z",
+      state: makeState({
+        status: "fixing",
+        fixingStartedAt: staleStartedAt,
+        iterationCount: 3,
+        findingsHashHistory: [
+          { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+          { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
+          { iteration: 3, hash: "cccccccccccccccc", modelTier: "escalated" },
+        ],
+        lastFindingsHash: "cccccccccccccccc",
+      }),
+    });
+
+    await runPreFix(baseConfig, deps);
+
+    expect(deps.outputs.should_run).toBe("false");
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      100,
+      expect.objectContaining({
+        status: "stopped",
+        stopReason: "workflow_crashed",
+        iterationCount: 2,
+        findingsHashHistory: [
+          { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+          { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
+        ],
+        lastFindingsHash: "bbbbbbbbbbbbbbbb",
+        fixingStartedAt: null,
+      }),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
   // TY-273 #B4: `fixingStartedAt` is the authoritative stale-detection
   // timestamp once a state comment has been written by post-TY-273 code.
 

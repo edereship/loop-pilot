@@ -20571,6 +20571,23 @@ var defaultDeps2 = {
   updateStateComment,
   postStopComment
 };
+function rollbackFixingClaim(state) {
+  const lastEntry = state.findingsHashHistory.at(-1);
+  const shouldRollback = lastEntry !== void 0 && lastEntry.iteration === state.iterationCount;
+  if (!shouldRollback) {
+    return {
+      iterationCount: state.iterationCount,
+      findingsHashHistory: state.findingsHashHistory,
+      lastFindingsHash: state.lastFindingsHash
+    };
+  }
+  const rolledBackHistory = state.findingsHashHistory.slice(0, -1);
+  return {
+    iterationCount: Math.max(0, state.iterationCount - 1),
+    findingsHashHistory: rolledBackHistory,
+    lastFindingsHash: rolledBackHistory.at(-1)?.hash ?? null
+  };
+}
 async function demoteFixingOnCrash(label, deps = defaultDeps2) {
   try {
     const crashConfig = deps.loadInitConfig();
@@ -20581,6 +20598,10 @@ async function demoteFixingOnCrash(label, deps = defaultDeps2) {
     warning(`[${label}] Crash recovery: resetting fixing \u2192 stopped (workflow_crashed)`);
     const recoveredState = {
       ...crashStateResult.state,
+      // TY-302 #1: roll back the iteration / history entries pre-fix Phase 3
+      // optimistically claimed before the crash so a soft `/restart-review`
+      // does not loop-detect on the orphan entry.
+      ...rollbackFixingClaim(crashStateResult.state),
       status: "stopped",
       stopReason: "workflow_crashed",
       // TY-273 #B4 / TY-282: the fixing attempt did not complete so the
@@ -21711,6 +21732,10 @@ async function runPreFix(config, deps = defaultDeps3) {
     deps.warning(`[pre-fix] Status stuck in 'fixing' for ${Math.round(elapsed / 6e4)}min. Recovering.`);
     const recoveredState = {
       ...state,
+      // TY-302 #1: roll back the iteration / history entries pre-fix Phase 3
+      // claimed before the prior workflow died so a soft `/restart-review`
+      // does not loop-detect on the orphan entry.
+      ...rollbackFixingClaim(state),
       status: "stopped",
       stopReason: "workflow_crashed",
       fixingStartedAt: null

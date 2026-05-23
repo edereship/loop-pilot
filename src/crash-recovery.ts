@@ -29,6 +29,47 @@ const defaultDeps: CrashRecoveryDeps = {
 };
 
 /**
+ * TY-302 #1: pre-fix Phase 3 claims `fixing` by writing
+ * `iterationCount: N+1` and appending the current findings hash to
+ * `findingsHashHistory` before claude-code-action runs. When the loop
+ * exits the `fixing` phase without finalizing a repair commit
+ * (workflow crash, stale-fixing recovery, post-fix failureExit), that
+ * bookkeeping must be rolled back so a subsequent soft `/restart-review`
+ * does not see a phantom `loop_detected` (next pre-fix would match the
+ * orphan history entry on the same hash).
+ *
+ * The rollback target is identified by `findingsHashHistory.at(-1).iteration
+ * === state.iterationCount` — pre-fix's Phase 3 write keeps those two in sync,
+ * so on crash recovery paths the heuristic is always true. If the invariant
+ * is broken (legacy / hand-edited state), the helper is a no-op rather than
+ * destroying state we cannot reason about.
+ *
+ * Returns only the rollback-affected fields; callers merge them into the
+ * full `ReviewState` they are writing.
+ */
+export function rollbackFixingClaim(state: ReviewState): Pick<
+  ReviewState,
+  "iterationCount" | "findingsHashHistory" | "lastFindingsHash"
+> {
+  const lastEntry = state.findingsHashHistory.at(-1);
+  const shouldRollback =
+    lastEntry !== undefined && lastEntry.iteration === state.iterationCount;
+  if (!shouldRollback) {
+    return {
+      iterationCount: state.iterationCount,
+      findingsHashHistory: state.findingsHashHistory,
+      lastFindingsHash: state.lastFindingsHash,
+    };
+  }
+  const rolledBackHistory = state.findingsHashHistory.slice(0, -1);
+  return {
+    iterationCount: Math.max(0, state.iterationCount - 1),
+    findingsHashHistory: rolledBackHistory,
+    lastFindingsHash: rolledBackHistory.at(-1)?.hash ?? null,
+  };
+}
+
+/**
  * Recover from a crash in pre-fix / post-fix: if the hidden state was left at
  * `status === "fixing"`, demote it back to `stopped + workflow_crashed` so the
  * next trigger can proceed without manual intervention, and best-effort post
@@ -82,6 +123,10 @@ export async function demoteFixingOnCrash(
     );
     const recoveredState: ReviewState = {
       ...crashStateResult.state,
+      // TY-302 #1: roll back the iteration / history entries pre-fix Phase 3
+      // optimistically claimed before the crash so a soft `/restart-review`
+      // does not loop-detect on the orphan entry.
+      ...rollbackFixingClaim(crashStateResult.state),
       status: "stopped",
       stopReason: "workflow_crashed",
       // TY-273 #B4 / TY-282: the fixing attempt did not complete so the
