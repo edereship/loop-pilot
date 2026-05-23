@@ -100,6 +100,7 @@ GitHub Actions 内で `sleep $DEBOUNCE_SECONDS` を使う場合、**ランナー
   - `cancelled` → `git reset --hard HEAD` + `stopped(action_timeout)`
   - `failure` → execution file から max-turns ヒットを推定し、該当時 `stopped(max_turns_exceeded)`、それ以外 `stopped(action_failure)`
 - 変更ファイルが 0 件（`success` outcome なのに file change が無い no-op）の場合は `stopped(action_no_op)` で停止する (TY-284)。`failureExit` 経由で Phase 3 で進めた `iterationCount` / `findingsHashHistory` / `lastFindingsHash` / `fixingStartedAt` を pre-fix 直前の状態に rollback するので、`/restart-review` (soft) で同じ findings を再評価できる。旧 TY-273 #B3 の自動 `@codex review` 再依頼経路は廃止
+  - この net-zero 判定は pre-CHECK だけでなく **CHECK_COMMAND 後の再列挙にも適用される** (TY-325)。no-build path (`buildCommand === ""`) で claude の編集が scope + CHECK を通過したのに CHECK_COMMAND (formatter / codegen) が working tree を HEAD と同一に巻き戻した場合も `stopped(action_no_op)` で停止し、変更の無いコードへの `@codex review` 再投稿と iteration 浪費を防ぐ。build path は同じ net-zero を `action_failure` で停止しており扱いが対称
 - `git diff --numstat HEAD` → [`parseGitNumstat`](../../src/scope-checker.ts) → [`checkScope`](../../src/scope-checker.ts):
   - 違反（`scope_violation`）時は `git reset --hard HEAD` + `stopped(scope_violation)` + PR コメント
   - 受理時は変更ファイル一覧を modifiedFiles として保持

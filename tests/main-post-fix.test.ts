@@ -160,6 +160,10 @@ describe("runPostFix", () => {
     vi.clearAllMocks();
   });
 
+  // TY-325 #D: a normal run where post-CHECK enumeration is non-empty (the
+  // default gitDiffNumstat returns the same non-empty value on every call)
+  // must still commit and re-request Codex review — the net-zero guard must
+  // not fire here.
   it("commits, pushes, and transitions to waiting_codex on a clean run", async () => {
     const deps = makeDeps({
       found: true,
@@ -1495,6 +1499,119 @@ describe("runPostFix", () => {
     expect.any(Object),
     );
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+  });
+
+  // TY-325: on the no-build path, claude's edits can pass the scope check and
+  // CHECK_COMMAND yet be normalized back to HEAD by a formatter / codegen step
+  // (net-zero diff). Without a guard the flow would fall through with an empty
+  // staging set, post a misleading "no files changed" summary, and re-request
+  // Codex review on unchanged code. These cases assert the symmetric
+  // action_no_op stop and that the build path is unaffected.
+  describe("TY-325: post-CHECK net-zero on the no-build path stops with action_no_op", () => {
+    function makeNetZeroDeps(
+      state: ReviewState,
+      overrides: Partial<PostFixDeps> = {},
+    ): PostFixDeps & DepRecord {
+      // gitDiffNumstat is called twice on the no-build success path: 1st =
+      // pre-CHECK enumeration (non-empty, so the :850 guard passes), 2nd =
+      // post-CHECK re-enumeration (empty, the net-zero condition under test).
+      let numstatCalls = 0;
+      return makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state,
+        },
+        {
+          gitDiffNumstat: () => {
+            numstatCalls += 1;
+            return numstatCalls === 1 ? "5\t2\tsrc/foo.ts\n" : "";
+          },
+          gitListUntracked: () => "",
+          ...overrides,
+        },
+      );
+    }
+
+    it("#A: stops with action_no_op and does not re-request Codex review", async () => {
+      const deps = makeNetZeroDeps(makeState());
+
+      await runPostFix(baseConfig, deps, baseInputs);
+
+      // CHECK_COMMAND ran (pre-CHECK changes were non-empty) but reverted
+      // everything; the run stops instead of committing or re-requesting review.
+      expect(deps.runCheckCommand).toHaveBeenCalled();
+      expect(deps.commitMessages).toEqual([]);
+      expect(deps.postClaudeCodeActionFixSummary).not.toHaveBeenCalled();
+      expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+
+      const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+      const lastState = calls[calls.length - 1][3];
+      expect(lastState).toMatchObject({ status: "stopped", stopReason: "action_no_op" });
+    });
+
+    it("#B: rolls back Phase 3 bookkeeping via failureExit (TY-302 #1)", async () => {
+      const stateAfterPhase3 = makeState({
+        iterationCount: 2,
+        findingsHashHistory: [
+          { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+          { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
+        ],
+        lastFindingsHash: "bbbbbbbbbbbbbbbb",
+        fixingStartedAt: "2026-05-17T00:00:00Z",
+      });
+      const deps = makeNetZeroDeps(stateAfterPhase3);
+
+      await runPostFix(baseConfig, deps, baseInputs);
+
+      const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+      const lastState = calls[calls.length - 1][3];
+      // iteration / history rewound to the pre-Phase-3 baseline so a soft
+      // /restart-review replays the same findings without consuming a slot.
+      expect(lastState).toMatchObject({
+        status: "stopped",
+        stopReason: "action_no_op",
+        iterationCount: 1,
+        lastFindingsHash: "aaaaaaaaaaaaaaaa",
+        fixingStartedAt: null,
+      });
+      expect(lastState.findingsHashHistory).toEqual([
+        { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+      ]);
+    });
+
+    it("#C: build path net-zero still stops with action_failure (no regression)", async () => {
+      // With buildCommand set, the new no-build guard must NOT fire. The
+      // working tree survives CHECK_COMMAND (post-CHECK non-empty) but
+      // BUILD_COMMAND erases it (post-BUILD empty) → existing action_failure.
+      let numstatCalls = 0;
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState(),
+        },
+        {
+          gitDiffNumstat: () => {
+            numstatCalls += 1;
+            // 1st = pre-CHECK, 2nd = post-CHECK (both non-empty), 3rd = post-BUILD (empty)
+            return numstatCalls <= 2 ? "5\t2\tsrc/foo.ts\n" : "";
+          },
+          gitListUntracked: () => "",
+        },
+      );
+
+      await runPostFix({ ...baseConfig, buildCommand: "npm run build" }, deps, baseInputs);
+
+      expect(deps.runBuildCommand).toHaveBeenCalled();
+      const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+      const lastState = calls[calls.length - 1][3];
+      expect(lastState).toMatchObject({ status: "stopped", stopReason: "action_failure" });
+    });
   });
 
   // TY-273 #B5: codex_request_failed downgrade.

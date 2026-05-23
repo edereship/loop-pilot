@@ -1114,6 +1114,37 @@ export async function runPostFix(
   // TY-297 #1 description for the silent-discard failure mode this closes.
   modifiedFiles = postCheckChangedFiles.map((f) => f.path);
 
+  // TY-325: pre-CHECK had non-empty changes (the :850 action_no_op guard
+  // passed), but CHECK_COMMAND (a formatter / codegen / regeneration step)
+  // normalized the working tree back to HEAD. On the no-build path this is the
+  // last enumeration before commit, so without this guard the flow falls
+  // through with an empty staging set: `stagePaths([])` is a no-op,
+  // `hasStagedChanges()` is false, and we would post a misleading
+  // "Auto-fix applied (no files changed)" summary plus a fresh `@codex review`
+  // on unchanged code — wasting a Codex cycle and an iteration slot. Stop with
+  // action_no_op so the behavior is symmetric with the build path, which
+  // already stops on its own net-zero cases (postBuild / preBuild length===0).
+  // failureExit's rollbackFixingClaim (TY-302 #1) rewinds iterationCount /
+  // findingsHashHistory so a soft /restart-review re-evaluates the same
+  // findings as a fresh iteration — the same recovery UX as TY-284.
+  if (config.buildCommand === "" && postCheckChangedFiles.length === 0) {
+    deps.error(
+      "[post-fix] CHECK_COMMAND reverted all of claude-code-action's edits to HEAD (net-zero diff). Stopping (action_no_op).",
+    );
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_no_op",
+      detail:
+        "claude-code-action made edits that passed the scope check, but CHECK_COMMAND normalized the working " +
+        "tree back to HEAD (net-zero diff), so the repair produced no committable change. This typically means " +
+        "CHECK_COMMAND (a formatter / codegen step) is reverting the fix. Use /restart-review to retry, or " +
+        "investigate whether CHECK_COMMAND is undoing claude-code-action's edits.",
+    });
+    return;
+  }
+
   // ─── BUILD_COMMAND (TY-281) ──────────────────────────────────────────────
   // For repos that commit build artifacts (e.g. this repo's `dist/`), run
   // a configurable build step so the auto-fix commit cannot drift out of

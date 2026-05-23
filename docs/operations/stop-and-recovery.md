@@ -94,6 +94,8 @@ TY-300 以降は `/restart-review` 経由でも発火しうる: `handleRestartCo
 
 post-fix が claude-code-action の `outcome=success` を受け取り、`git diff --numstat HEAD` でも untracked enumeration でも変更が 1 件も検出されなかった場合の停止。`stopped/action_no_op` で `postStopComment` 経由の top-level 通知が PR に投稿される。
 
+判定タイミングは 2 箇所ある。**pre-CHECK** (claude-code-action 直後の最初の列挙、TY-284) に加えて、no-build path (`buildCommand === ""`) では **CHECK_COMMAND 後の再列挙** でも net-zero を検知する (TY-325)。後者は claude の編集が scope check と CHECK_COMMAND を通過したものの、CHECK_COMMAND (formatter / codegen 等) が working tree を HEAD と同一に正規化し戻したケースで、放置すると変更の無いコードに `@codex review` を再投稿して iteration を浪費する。build path はこの net-zero を従来から `action_failure` で停止しており (BUILD_COMMAND が修正を消すのは設定不備のシグナル)、no-build path との扱いが対称になった。
+
 TY-273 #B3 で導入していた「Phase 3 bookkeeping を rollback して `@codex review` を再依頼する」自動リトライ経路は TY-284 で廃止した。理由:
 
 - 確率的空振り (Claude の判定揺らぎ等) は `max_turns_exceeded` / `loop_detected` 経由の escalated tier (TY-243 / TY-258) で既にカバー済みで、no-op auto-retry 経路の救済範囲と重複していた
@@ -121,7 +123,7 @@ TY-273 #B3 で導入していた「Phase 3 bookkeeping を rollback して `@cod
 
 iteration history を完全にクリアしたい場合のみ `/restart-review --hard` を使う。`secret_leak_suspected` のような hard 必須 gating は無い (=人間が状況を確認すれば soft で十分)。
 
-検知ロジック: `src/main-post-fix.ts` の `changedFiles.length === 0` 分岐 → `failureExit({ stopReason: "action_no_op" })`。
+検知ロジック: `src/main-post-fix.ts` の pre-CHECK `changedFiles.length === 0` 分岐 (TY-284) と、no-build path の post-CHECK `postCheckChangedFiles.length === 0` 分岐 (TY-325) → いずれも `failureExit({ stopReason: "action_no_op" })`。
 
 ---
 

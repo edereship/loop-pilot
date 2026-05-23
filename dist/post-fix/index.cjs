@@ -21510,6 +21510,17 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     scopeResult = postCheckScopeResult;
   }
   modifiedFiles = postCheckChangedFiles.map((f) => f.path);
+  if (config.buildCommand === "" && postCheckChangedFiles.length === 0) {
+    deps.error("[post-fix] CHECK_COMMAND reverted all of claude-code-action's edits to HEAD (net-zero diff). Stopping (action_no_op).");
+    await failureExit({
+      config,
+      inputs,
+      state,
+      stopReason: "action_no_op",
+      detail: "claude-code-action made edits that passed the scope check, but CHECK_COMMAND normalized the working tree back to HEAD (net-zero diff), so the repair produced no committable change. This typically means CHECK_COMMAND (a formatter / codegen step) is reverting the fix. Use /restart-review to retry, or investigate whether CHECK_COMMAND is undoing claude-code-action's edits."
+    });
+    return;
+  }
   if (config.buildCommand !== "") {
     deps.info(`[post-fix] Running BUILD_COMMAND: ${config.buildCommand}`);
     const buildResult = await deps.runBuildCommand(config.buildCommand);
