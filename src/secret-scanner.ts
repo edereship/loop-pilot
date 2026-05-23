@@ -236,7 +236,18 @@ export function scanForSecrets(
  * still runs against the file's added lines — perfect round-trip is not
  * required.
  */
-function unquoteGitPath(quoted: string): string {
+/**
+ * Decode a git C-quoted path (the inner content, without the surrounding
+ * `"..."`). Git emits this form when a path contains control characters,
+ * embedded quotes, backslashes, or — when `core.quotepath` is unset —
+ * non-ASCII bytes. Recognized escapes: `\n` / `\t` / `\r` / `\"` / `\\` and
+ * `\NNN` octal bytes.
+ *
+ * TY-306 #2: exported so `parseGitNumstat` can share the same decode logic
+ * and keep scope-check and secret-scan reasoning about the same filename
+ * even when paths contain tabs / newlines / embedded quotes.
+ */
+export function unquoteGitPath(quoted: string): string {
   let result = "";
   for (let i = 0; i < quoted.length; i++) {
     const c = quoted[i];

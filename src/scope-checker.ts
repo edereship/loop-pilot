@@ -24,6 +24,8 @@
  *      or removes entries from the defaults via the `!` prefix.
  */
 
+import { unquoteGitPath } from "./secret-scanner.js";
+
 export interface ChangedFile {
   /** Repo-relative path. `git diff --name-only` style — no leading slash. */
   path: string;
@@ -555,8 +557,19 @@ export function parseGitNumstat(output: string): ChangedFile[] {
     const parts = raw.split("\t");
     if (parts.length < 3) continue;
     const [a, d, ...rest] = parts;
-    const path = rest.join("\t");
+    let path = rest.join("\t");
     if (path.length === 0) continue;
+    // TY-306 #2: git emits C-quoted paths (`"src/foo\tbar.ts"`) when a path
+    // contains tabs / newlines / embedded quotes. `-c core.quotepath=false`
+    // (TY-285 #1) only suppresses quoting of non-ASCII bytes — control
+    // characters are always quoted because the numstat separators are tab /
+    // newline themselves. Decode the quoted form so scope-check sees the
+    // same filename `parseDiffHeaderPath` (secret-scanner) does; otherwise
+    // the literal `"..."` slips past block patterns and `stagePaths` fails
+    // with ENOENT.
+    if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) {
+      path = unquoteGitPath(path.slice(1, -1));
+    }
     if (RENAME_NOTATION_RE.test(path)) continue;
     const added = a === "-" ? -1 : Number.parseInt(a, 10);
     const deleted = d === "-" ? -1 : Number.parseInt(d, 10);

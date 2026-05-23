@@ -1562,4 +1562,207 @@ describe("runPreFix", () => {
       );
     });
   });
+
+  // TY-306 #3: when `triggerCommentId === 0` the id falls back to the old
+  // value, so the source's fallback must follow — otherwise the written
+  // pair becomes `(id: old review_id, source: new "comment")`
+  // cross-namespace garbage that defeats the (id, source) dedup TY-301 #2
+  // set up. Verified at both `updatedStateBase` (:561) and the
+  // `codex_usage_limit` branch (:442).
+  describe("TY-306 #3: (id, source) fallback parity when triggerCommentId === 0", () => {
+    it("#A: updatedStateBase keeps lastProcessedTriggerSource on the old value when triggerCommentId === 0 (avoid cross-namespace garbage)", async () => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 3010,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 finding\n\nbody.",
+          path: "src/x.ts",
+          line: 5,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({
+            status: "waiting_codex",
+            lastProcessedReviewId: 555,
+            lastProcessedTriggerSource: "review",
+          }),
+        },
+        findings,
+      );
+
+      // triggerCommentId=0 (e.g. partial workflow_dispatch input) +
+      // triggerEventName="issue_comment" (= "comment"). Without TY-306 #3
+      // the source would silently flip to "comment" while the id stayed
+      // at 555 — a cross-namespace pair.
+      await runPreFix(
+        {
+          ...baseConfig,
+          triggerCommentId: 0,
+          triggerEventName: "issue_comment",
+        },
+        deps,
+      );
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "fixing",
+          lastProcessedReviewId: 555,
+          lastProcessedTriggerSource: "review",
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("#B: updatedStateBase still overwrites lastProcessedTriggerSource when triggerCommentId !== 0 (regression)", async () => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 3020,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 finding\n\nbody.",
+          path: "src/x.ts",
+          line: 5,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({
+            status: "waiting_codex",
+            lastProcessedReviewId: 555,
+            lastProcessedTriggerSource: "review",
+          }),
+        },
+        findings,
+      );
+
+      await runPreFix(
+        {
+          ...baseConfig,
+          triggerCommentId: 67890,
+          triggerEventName: "issue_comment",
+        },
+        deps,
+      );
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "fixing",
+          lastProcessedReviewId: 67890,
+          lastProcessedTriggerSource: "comment",
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("#C: codex_usage_limit branch also keeps lastProcessedTriggerSource on the old value when triggerCommentId === 0", async () => {
+      const usageLimitBody =
+        "You have reached your Codex usage limits for code reviews.";
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({
+          status: "waiting_codex",
+          lastProcessedReviewId: 777,
+          lastProcessedTriggerSource: "review",
+        }),
+      });
+
+      await runPreFix(
+        {
+          ...baseConfig,
+          triggerCommentId: 0,
+          triggerEventName: "issue_comment",
+          triggerCommentBody: usageLimitBody,
+          triggerUserLogin: baseConfig.codexBotLogin,
+        },
+        deps,
+      );
+
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "codex_usage_limit",
+          lastProcessedReviewId: 777,
+          lastProcessedTriggerSource: "review",
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("#D: legacy state (null source) + legacy YAML (no event name) + triggerCommentId === 0 keeps null source (regression)", async () => {
+      const findings: RawReviewComment[] = [
+        {
+          id: 3030,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          body: "P1 finding\n\nbody.",
+          path: "src/x.ts",
+          line: 5,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+          state: makeState({
+            status: "waiting_codex",
+            lastProcessedReviewId: 888,
+            lastProcessedTriggerSource: null,
+          }),
+        },
+        findings,
+      );
+
+      await runPreFix(
+        {
+          ...baseConfig,
+          triggerCommentId: 0,
+          triggerEventName: "",
+        },
+        deps,
+      );
+
+      // Legacy state has null source and triggerCommentId=0 keeps the id
+      // at 888 — source must remain null (no synthetic "comment" / "review"
+      // injected) so the id-only fallback dedup behavior is preserved.
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "test-auto-ai-review",
+        100,
+        expect.objectContaining({
+          status: "fixing",
+          lastProcessedReviewId: 888,
+          lastProcessedTriggerSource: null,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+  });
 });

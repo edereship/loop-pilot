@@ -159,6 +159,7 @@ soft restart:
 - `status` を `waiting_codex` に戻す
 - `stopReason` は **保持する** (TY-258 で挙動変更)。`max_turns_exceeded` で停止していた場合は次 iteration の [モデル選定](../operations/security.md#escalation-条件-いずれかが真で-escalated-tier) で escalated tier を選ぶためのシグナルとして使う。post-fix が次の clean commit (`waiting_codex` 遷移) に到達した時点で `stopReason: null` にクリアされるので、escalation は one-shot
 - `lastProcessedReviewId` を `null` に戻す (TY-301 #2: `lastProcessedTriggerSource` は spread で保持されるが、`lastProcessedReviewId` が `null` の間は dedup 条件 `state.lastProcessedReviewId === triggerCommentId` が成立しないため source 値は dedup 結果に影響しない)
+- TY-306 #3: 通常の trigger 経路でも `lastProcessedTriggerSource` のフォールバックは `lastProcessedReviewId` のフォールバックに歩調を合わせる。`triggerCommentId === 0` の入力 (手動 `workflow_dispatch` で `trigger-comment-id` を空にした、legacy YAML から新 YAML への移行期間など) のとき、id は旧値を保持するので source も旧値を保持する。両者を独立に評価すると `(id: 旧 review_id, source: 新 "comment")` のような cross-namespace garbage が書き込まれ、(id, source) dedup を defeats する
 - `lastCodexReviewReceivedAt` は保持し、過去の Codex inline comment を再処理しない
 - `lastCodexRequestCommentId` を新しい `@codex review` comment ID に更新する
 - `iterationCount`、`findingsHashHistory`、`lastClaudeCommitSha`、`lastFindingsHash` は保持する

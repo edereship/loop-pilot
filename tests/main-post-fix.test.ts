@@ -2130,6 +2130,96 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
   });
+
+  // TY-306 #1: `intentToAdd` must sit inside the try block so a partway
+  // failure (the second of N paths throws) still hits the finally that
+  // calls `resetIntentToAdd`. Previously the call was outside the try, so
+  // a throw skipped cleanup and let stale intent-to-add entries pollute
+  // the index across the `demoteFixingOnCrash` path.
+  describe("TY-306 #1: scanWithIntentToAdd cleans up after intentToAdd partway failure", () => {
+    it("#A: resetIntentToAdd is invoked even when intentToAdd throws synchronously", async () => {
+      const resetCalls: string[][] = [];
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState(),
+        },
+        {
+          gitDiffNumstat: () => "",
+          gitListUntracked: () => "src/new-leak.ts\nsrc/new-other.ts\n",
+          readWorkingTreeFile: () => "",
+          intentToAdd: () => {
+            throw new Error("git add --intent-to-add failed on path 2");
+          },
+          resetIntentToAdd: (paths) => {
+            resetCalls.push([...paths]);
+          },
+        },
+      );
+
+      await expect(runPostFix(baseConfig, deps, baseInputs)).rejects.toThrow(
+        "git add --intent-to-add failed on path 2",
+      );
+
+      // finally must have fired with the full path list so stale index
+      // entries (if any partial intent-to-add succeeded) get cleaned up.
+      expect(resetCalls).toContainEqual([
+        "src/new-leak.ts",
+        "src/new-other.ts",
+      ]);
+    });
+
+    it("#B: re-throws the original intentToAdd error (caller error handling regression)", async () => {
+      const originalError = new Error("intent-to-add hardware error");
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState(),
+        },
+        {
+          gitDiffNumstat: () => "",
+          gitListUntracked: () => "src/new.ts\n",
+          readWorkingTreeFile: () => "",
+          intentToAdd: () => {
+            throw originalError;
+          },
+        },
+      );
+
+      await expect(runPostFix(baseConfig, deps, baseInputs)).rejects.toBe(
+        originalError,
+      );
+    });
+
+    it("#C: happy path still calls intentToAdd then resetIntentToAdd in order (regression)", async () => {
+      const deps = makeDeps(
+        {
+          found: true,
+          corrupted: false,
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T12:00:00Z",
+          state: makeState(),
+        },
+        {
+          gitDiffNumstat: () => "",
+          gitListUntracked: () => "src/new.ts\n",
+          gitDiffHead: () => "",
+          readWorkingTreeFile: () => "",
+        },
+      );
+
+      await runPostFix(baseConfig, deps, baseInputs);
+
+      expect(deps.intentToAddCalls).toContainEqual(["src/new.ts"]);
+      expect(deps.resetIntentToAddCalls).toContainEqual(["src/new.ts"]);
+    });
+  });
 });
 
 function makeWarn(path: string, pattern = "high-entropy-long-string"): SecretScanFinding {

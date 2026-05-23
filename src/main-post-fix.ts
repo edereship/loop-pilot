@@ -300,8 +300,16 @@ function scanWithIntentToAdd(args: {
   };
 }): SecretScanResult {
   const paths = [...args.untrackedPaths];
-  args.deps.intentToAdd(paths);
+  // TY-306 #1: `intentToAdd` is inside the `try` so that a partway failure
+  // (e.g. `git add --intent-to-add` throws on the second of N paths) still
+  // hits the `finally` that calls `resetIntentToAdd`, which leaves no stale
+  // index entries behind. Previously the call sat outside the `try`, so a
+  // throw skipped the cleanup and propagated up to `demoteFixingOnCrash` —
+  // operator saw `workflow_crashed` instead of a `failureExit` carrying the
+  // real reason. `resetIntentToAdd` is a no-op on paths that were never
+  // staged, so feeding it the full list (including ones that failed) is safe.
   try {
+    args.deps.intentToAdd(paths);
     const targets = buildSecretScanTargets({
       diff: args.deps.gitDiffHead(),
       // Intent-to-add promotes the untracked list into the diff, so we

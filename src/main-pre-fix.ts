@@ -446,8 +446,16 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       // just wrote so the next dedup decision sees a coherent (id, source) pair.
       // When the event-name input is absent (legacy workflow YAML), fall back
       // to whatever source the previous trigger recorded.
+      //
+      // TY-306 #3: bind the source's fallback to the id's. When
+      // `triggerCommentId === 0` the id falls back to the old value, so the
+      // source MUST also fall back — otherwise the pair becomes
+      // (id: old review_id, source: new "comment") cross-namespace garbage
+      // that defeats the (id, source) dedup TY-301 #2 set up.
       lastProcessedTriggerSource:
-        currentTriggerSource ?? state.lastProcessedTriggerSource,
+        triggerCommentId !== 0
+          ? (currentTriggerSource ?? state.lastProcessedTriggerSource)
+          : state.lastProcessedTriggerSource,
       status: "stopped",
       stopReason: "codex_usage_limit",
       // TY-301 #1: pre-fix terminal transitions must explicitly clear
@@ -566,8 +574,17 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     // When the workflow YAML does not pass `triggerEventName` (legacy), keep
     // whatever the previous trigger recorded — `null` simply preserves the
     // id-only fallback dedup behaviour.
+    //
+    // TY-306 #3: bind the source's fallback to the id's. When
+    // `triggerCommentId === 0` (manual workflow_dispatch with only some
+    // inputs, legacy YAML, etc.) the id falls back to the old value, so the
+    // source MUST also fall back — otherwise the pair becomes
+    // (id: old review_id, source: new "comment") cross-namespace garbage
+    // that defeats the (id, source) dedup.
     lastProcessedTriggerSource:
-      currentTriggerSource ?? state.lastProcessedTriggerSource,
+      triggerCommentId !== 0
+        ? (currentTriggerSource ?? state.lastProcessedTriggerSource)
+        : state.lastProcessedTriggerSource,
     lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString(),
   };
 

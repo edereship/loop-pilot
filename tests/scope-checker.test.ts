@@ -564,6 +564,48 @@ describe("parseGitNumstat", () => {
       { path: "src/中文/index.ts", added: 1, deleted: 0 },
     ]);
   });
+
+  // TY-306 #2: git emits C-quoted paths (`"src/foo\tbar.ts"`) when a path
+  // contains tabs / newlines / embedded quotes / backslashes. `-c
+  // core.quotepath=false` only suppresses quoting of non-ASCII bytes, not
+  // control characters. parseGitNumstat must decode the quoted form so
+  // scope-check sees the same filename `parseDiffHeaderPath` (secret-scanner)
+  // does — otherwise the literal `"..."` slips past block patterns and
+  // `stagePaths` fails with ENOENT downstream.
+  describe("TY-306 #2: decodes git C-quoted paths", () => {
+    it("#A: decodes a quoted path with an embedded tab (\\t escape)", () => {
+      // Real numstat for `src/foo<TAB>bar.ts`: literal `"src/foo\tbar.ts"`
+      // (quote + s + r + c + ... + backslash + t + ...).
+      const output = '10\t5\t"src/foo\\tbar.ts"';
+      expect(parseGitNumstat(output)).toEqual([
+        { path: "src/foo\tbar.ts", added: 10, deleted: 5 },
+      ]);
+    });
+
+    it("#B: decodes a quoted path with an embedded double-quote (\\\" escape)", () => {
+      const output = '5\t2\t"src/quote\\"name.ts"';
+      expect(parseGitNumstat(output)).toEqual([
+        { path: 'src/quote"name.ts', added: 5, deleted: 2 },
+      ]);
+    });
+
+    it("#C: leaves unquoted paths untouched (regression)", () => {
+      // Today's happy path: no surrounding quotes → no unquoting.
+      const output = "3\t1\tsrc/normal.ts";
+      expect(parseGitNumstat(output)).toEqual([
+        { path: "src/normal.ts", added: 3, deleted: 1 },
+      ]);
+    });
+
+    it("#D: non-ASCII paths emitted as raw UTF-8 are NOT mistaken for quoted (TY-285 #1 regression)", () => {
+      // With `-c core.quotepath=false` non-ASCII bytes flow through raw — no
+      // surrounding quotes — so unquoteGitPath must not run on them.
+      const output = "4\t0\tsrc/テスト.ts";
+      expect(parseGitNumstat(output)).toEqual([
+        { path: "src/テスト.ts", added: 4, deleted: 0 },
+      ]);
+    });
+  });
 });
 
 describe("checkScopeBuildMode (TY-281)", () => {

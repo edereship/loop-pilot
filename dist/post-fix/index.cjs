@@ -21029,9 +21029,12 @@ function parseGitNumstat(output) {
     if (parts.length < 3)
       continue;
     const [a, d, ...rest] = parts;
-    const path = rest.join("	");
+    let path = rest.join("	");
     if (path.length === 0)
       continue;
+    if (path.length >= 2 && path.startsWith('"') && path.endsWith('"')) {
+      path = unquoteGitPath(path.slice(1, -1));
+    }
     if (RENAME_NOTATION_RE.test(path))
       continue;
     const added = a === "-" ? -1 : Number.parseInt(a, 10);
@@ -21121,8 +21124,8 @@ function buildSecretScanTargets(args) {
 }
 function scanWithIntentToAdd(args) {
   const paths = [...args.untrackedPaths];
-  args.deps.intentToAdd(paths);
   try {
+    args.deps.intentToAdd(paths);
     const targets = buildSecretScanTargets({
       diff: args.deps.gitDiffHead(),
       // Intent-to-add promotes the untracked list into the diff, so we
