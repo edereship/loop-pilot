@@ -2,11 +2,11 @@
 # Spec: docs/architecture/event-design.md#workflow-b
 #
 # Usage in other repos:
-#   - uses: your-org/auto-review-action/loop@v1
+#   - uses: team-yubune/loop-pilot/loop@v1
 #     with:
 #       github-token: ${{ secrets.GITHUB_TOKEN }}
 #       codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
-#       auto-review-push-token: ${{ secrets.AUTO_REVIEW_PUSH_TOKEN }}
+#       looppilot-push-token: ${{ secrets.LOOPPILOT_PUSH_TOKEN }}
 #       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}        # or
 #       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 #       pr-number: ${{ github.event.issue.number || github.event.pull_request.number }}
@@ -15,7 +15,7 @@
 #       trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
 #       trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
 #       trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
-name: Auto Review Loop
+name: LoopPilot Loop
 
 on:
   issue_comment:
@@ -31,7 +31,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
-  # actions: read is required by the AUTO_REVIEW_AUTO_MERGE guard (TY-277):
+  # actions: read is required by the LOOPPILOT_AUTO_MERGE guard (TY-277):
   # `mergeIfChecksPass` reads `/repos/.../actions/runs?head_sha=...` to
   # verify every other workflow run on HEAD finished green before calling
   # `gh pr merge --squash`. Without this scope the API returns 403 and
@@ -42,9 +42,9 @@ jobs:
   auto-fix:
     # Default-strict label gate with full-auto opt-out (fast skip; runtime re-check
     # is performed inside loop main):
-    #   - vars.AUTO_REVIEW_FULL_AUTO == 'true' → gate disabled, every non-fork PR proceeds
+    #   - vars.LOOPPILOT_FULL_AUTO == 'true' → gate disabled, every non-fork PR proceeds
     #   - otherwise (default) → PR must carry the gate label
-    #     `vars.AUTO_REVIEW_LABEL || 'auto-review-fix'`.
+    #     `vars.LOOPPILOT_LABEL || 'loop-pilot'`.
     #     `issue_comment.created` exposes labels under github.event.issue.labels;
     #     `pull_request_review.submitted` under github.event.pull_request.labels.
     #
@@ -62,7 +62,7 @@ jobs:
     # workflow simply won't start.
     #
     # PR 作者は `author_association` が `CONTRIBUTOR` / `FIRST_TIME_CONTRIBUTOR`
-    # / `NONE` の場合でも、`auto-review-restart-roles` の default に `author`
+    # / `NONE` の場合でも、`looppilot-restart-roles` の default に `author`
     # が含まれている限り restart 権限を持つ (`canRestart` で許可される)。
     # その経路を残すため、author == commenter の場合は author_association
     # の枠を緩める。これにより外部コントリビューターの PR 作者が `/restart-review`
@@ -84,9 +84,9 @@ jobs:
       ) ||
       (
         (
-          vars.AUTO_REVIEW_FULL_AUTO == 'true' ||
-          contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') ||
-          contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')
+          vars.LOOPPILOT_FULL_AUTO == 'true' ||
+          contains(github.event.issue.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot') ||
+          contains(github.event.pull_request.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot')
         ) &&
         (
           (
@@ -155,7 +155,7 @@ jobs:
       - name: Check fork PR (security guard)
         if: steps.pr.outputs.fork == '' || steps.pr.outputs.fork != github.repository
         run: |
-          echo "::error::Fork PR detected or source repo unknown. Auto-review is disabled for fork PRs."
+          echo "::error::Fork PR detected or source repo unknown. LoopPilot is disabled for fork PRs."
           exit 1
 
       - uses: actions/checkout@v5
@@ -183,7 +183,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
-          auto-review-push-token: ${{ secrets.AUTO_REVIEW_PUSH_TOKEN }}
+          looppilot-push-token: ${{ secrets.LOOPPILOT_PUSH_TOKEN }}
           # TY-260: pass both auth secrets through. Pre-fix fails fast unless
           # exactly one is non-empty, so the deploying repo can pick API key
           # billing or a Pro / Max subscription OAuth token by setting only
@@ -209,22 +209,22 @@ jobs:
           codex-review-marker: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
           stabilize-interval-seconds: ${{ vars.STABILIZE_INTERVAL_SECONDS || '10' }}
           stabilize-count: ${{ vars.STABILIZE_COUNT || '3' }}
-          auto-review-label: ${{ vars.AUTO_REVIEW_LABEL || '' }}
-          auto-review-full-auto: ${{ vars.AUTO_REVIEW_FULL_AUTO || 'false' }}
-          auto-review-restart-roles: ${{ vars.AUTO_REVIEW_RESTART_ROLES || 'author,write,maintain,admin' }}
+          looppilot-label: ${{ vars.LOOPPILOT_LABEL || '' }}
+          looppilot-full-auto: ${{ vars.LOOPPILOT_FULL_AUTO || 'false' }}
+          looppilot-restart-roles: ${{ vars.LOOPPILOT_RESTART_ROLES || 'author,write,maintain,admin' }}
           # Model tiering (TY-241, simplified in TY-242).
           # Set BASE === ESCALATED to operate without tiering.
           claude-code-model-base: ${{ vars.CLAUDE_CODE_MODEL_BASE || 'claude-sonnet-4-6' }}
           claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-7' }}
           claude-code-max-turns: ${{ vars.CLAUDE_CODE_MAX_TURNS || '40' }}
-          auto-merge-on-clean: ${{ vars.AUTO_REVIEW_AUTO_MERGE || 'false' }}
-          auto-merge-poll-seconds: ${{ vars.AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS || '15' }}
-          auto-merge-timeout-minutes: ${{ vars.AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES || '10' }}
-          severity-threshold: ${{ vars.AUTO_REVIEW_SEVERITY_THRESHOLD || 'P3' }}
+          auto-merge-on-clean: ${{ vars.LOOPPILOT_AUTO_MERGE || 'false' }}
+          auto-merge-poll-seconds: ${{ vars.LOOPPILOT_AUTO_MERGE_POLL_SECONDS || '15' }}
+          auto-merge-timeout-minutes: ${{ vars.LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES || '10' }}
+          severity-threshold: ${{ vars.LOOPPILOT_SEVERITY_THRESHOLD || 'P3' }}
           # TY-272 #A: trusted state-comment author override. Empty falls
           # back to `github-actions[bot]`. Set the Repository variable when
           # state comments are authored by a GitHub App / machine user.
-          auto-review-state-comment-authors: ${{ vars.AUTO_REVIEW_STATE_COMMENT_AUTHORS }}
+          looppilot-state-comment-authors: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}
 
       # TY-282 #2B: workflow-level fail-safe. If the composite `./loop` action
       # ends in `failure` or `cancelled` we cannot rely on `postStopComment`
@@ -242,7 +242,7 @@ jobs:
       #   - `failure()` is true when *any* previous step failed, so an
       #     earlier guard (Get PR info, Check fork PR, npm ci) failing
       #     leaves `steps.loop.conclusion == 'skipped'` and would otherwise
-      #     post a misleading "auto-review crashed" comment for events the
+      #     post a misleading "LoopPilot crashed" comment for events the
       #     loop never even saw.
       #   - GitHub Actions exposes cancellation via `cancelled()` separately
       #     from `failure()`. Keying on the conclusion captures both real
@@ -273,7 +273,7 @@ jobs:
           LOOP_CONCLUSION: ${{ steps.loop.conclusion }}
         run: |
           set -euo pipefail
-          # Dedup window: look for any `🛑 **Auto-review stopped**` body
+          # Dedup window: look for any `🛑 **LoopPilot stopped**` body
           # authored by github-actions[bot] in the last 90s. That string
           # is the literal prefix `buildTerminalNotificationBody` emits
           # for every `stopped` terminal notification, so a hit means 2A
@@ -292,13 +292,13 @@ jobs:
           # `-gt 0` numeric test below.
           RECENT_STOP=$(gh api --paginate \
             "repos/${REPO}/issues/${PR_NUM}/comments?since=${SINCE}" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("🛑 **Auto-review stopped**"))) | .id' \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("🛑 **LoopPilot stopped**"))) | .id' \
             2>/dev/null | grep -c . || true)
           if [ "${RECENT_STOP:-0}" -gt 0 ]; then
             echo "::notice::TY-282 2A already posted a top-level stop notification within 90s (${RECENT_STOP} found); skipping 2B fail-safe to avoid duplicate."
             exit 0
           fi
-          BODY=$'🛑 **Auto-review crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post.\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
+          BODY=$'🛑 **LoopPilot crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post.\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
           gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --method POST \
             --raw-field body="$BODY" \
@@ -309,7 +309,7 @@ jobs:
       # earlier step failing (e.g. `Get PR info`, `Check fork PR`,
       # `actions/checkout`, `actions/setup-node`, `npm ci`) leaves
       # `steps.loop.conclusion == 'skipped'` and produces NO PR notification —
-      # the operator cannot tell from the PR alone that auto-review tried to
+      # the operator cannot tell from the PR alone that LoopPilot tried to
       # run and failed. TY-276 PR #97 observed this when a `node-version-file`
       # misconfiguration killed `setup-node` 10 seconds in; the loop never
       # started and the PR went silent for a full Codex iteration.
@@ -321,7 +321,7 @@ jobs:
       # #2A is needed because the Node process for `./loop` never ran, so
       # `postStopComment` could not have fired.
       #
-      # The fail-safe intentionally does NOT touch `auto-review-state`. Early-
+      # The fail-safe intentionally does NOT touch `looppilot-state`. Early-
       # step failures happen before any state mutation, so the existing
       # `waiting_codex` (or `done`/`stopped`) remains accurate; the next valid
       # Codex review trigger will reconcile naturally. The message keeps the
@@ -346,7 +346,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          BODY=$'⚠️ **Auto-review Workflow B failed before the auto-fix loop could start.**\n\nThe failure happened in an early setup step (e.g. `actions/checkout`, `actions/setup-node`, `npm ci`, or the PR info / fork guard step). The auto-review-state was not modified — the next valid Codex review will retry the loop (TY-283).\n\nWorkflow run: '"$RUN_URL"
+          BODY=$'⚠️ **LoopPilot Workflow B failed before the auto-fix loop could start.**\n\nThe failure happened in an early setup step (e.g. `actions/checkout`, `actions/setup-node`, `npm ci`, or the PR info / fork guard step). The looppilot-state was not modified — the next valid Codex review will retry the loop (TY-283).\n\nWorkflow run: '"$RUN_URL"
           gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --method POST \
             --raw-field body="$BODY" \

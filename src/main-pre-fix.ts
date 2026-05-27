@@ -1,7 +1,7 @@
 import * as core from "@actions/core";
 import {
   loadConfig,
-  DEFAULT_AUTO_REVIEW_LABEL,
+  DEFAULT_LOOPPILOT_LABEL,
   type Config,
 } from "./config.js";
 import { runIfNotVitest } from "./entrypoint.js";
@@ -108,7 +108,7 @@ export interface PreFixDeps {
    * misrepresented the implementation). The throw propagates through
    * `runPreFix` and is caught by `runIfNotVitest`'s `onError`, which calls
    * `core.setFailed` + `demoteFixingOnCrash`. That, in turn, lets the
-   * `auto-review-loop.yml` #2B fail-safe post the top-level 🛑 notification.
+   * `looppilot-loop.yml` #2B fail-safe post the top-level 🛑 notification.
    *
    * Must be invoked BEFORE the `fixingState` write (TY-285 #4) so a checkout
    * failure does not consume an iteration slot or append a finding-hash
@@ -163,14 +163,14 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   registerAllSecrets(config, deps.setSecret);
 
   // TY-260: surface a one-line caution when running on a personal Claude
-  // Code subscription. The auto-review loop can fire up to
+  // Code subscription. The LoopPilot loop can fire up to
   // MAX_REVIEW_ITERATIONS (default 20) repairs per PR — with Opus
   // escalation in the mix — which can burn through a Pro / Max quota fast
   // and starve the same account's interactive Claude Code usage.
   if (config.claudeCodeOauthToken !== "") {
     deps.warning(
       "[pre-fix] Running with Claude Code OAuth token (subscription). " +
-        "Your personal account's usage limits apply — auto-review iterations " +
+        "Your personal account's usage limits apply — LoopPilot iterations " +
         "may consume your quota quickly, especially with Opus escalation. " +
         "Consider lowering MAX_REVIEW_ITERATIONS for high-frequency CI use; " +
         "see docs/operations/security.md (認証).",
@@ -195,7 +195,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   // ─── Phase 0: Label gate ──────────────────────────────────────────────────
   const isCommandTrigger = isRestartCommandLike(config.triggerCommentBody);
   if (!config.autoReviewFullAuto && !isCommandTrigger) {
-    const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
+    const effectiveLabel = config.autoReviewLabel || DEFAULT_LOOPPILOT_LABEL;
     const labels = await deps.fetchPrLabels(
       config.repoOwner,
       config.repoName,
@@ -430,7 +430,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   // ─── Codex usage-limit short-circuit (TY-229) ────────────────────────────
   // When Codex hits its quota it replies to the @codex review request with a
   // notice instead of a real review. Without this check we'd debounce, fetch
-  // zero inline comments, and mark the auto-review `done / no_findings` —
+  // zero inline comments, and mark the LoopPilot `done / no_findings` —
   // silently masking a quota-induced stop. Detect it here and stop with a
   // dedicated reason so PR readers and `/restart-review` users understand
   // the loop did not actually succeed.
@@ -602,7 +602,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     if (
       !(await updateStateCommentLocked(
         doneState,
-        "Could not mark auto-review as done.",
+        "Could not mark LoopPilot as done.",
       ))
     )
       return;

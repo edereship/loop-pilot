@@ -51,7 +51,7 @@ const defaultDeps: InitDeps = {
 
 export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps): Promise<void> {
   registerAllSecrets(config, deps.setSecret);
-  deps.info(`Initializing auto-review for PR #${config.prNumber}`);
+  deps.info(`Initializing LoopPilot for PR #${config.prNumber}`);
 
   // Check for existing hidden comment (re-run support)
   const existing = await deps.readState(
@@ -89,7 +89,7 @@ export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps):
       );
       state = { ...existing.state, status: "initialized" };
     } else if (existing.state.status !== "initialized") {
-      deps.info(`Auto-review state is already ${existing.state.status}. Skipping init.`);
+      deps.info(`LoopPilot state is already ${existing.state.status}. Skipping init.`);
       deps.setOutput("comment-id", String(commentId));
       return;
     } else {
@@ -229,7 +229,7 @@ export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps):
     const message = error instanceof Error ? error.message : String(error);
     deps.warning(
       `[init] Failed to persist lastCodexRequestCommentId after @codex review post: ${message}. ` +
-        "Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.",
+        "LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.",
     );
     // For StateUpdateConflictError, Workflow B already advanced the state (e.g. to
     // `fixing`), so a future Workflow A rerun will see a non-null status and hit the

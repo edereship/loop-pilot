@@ -10,7 +10,7 @@ export type FetchPrLabelsFn = (
 /**
  * Fetch the current label names attached to a PR.
  * Uses gh API so that label changes between trigger time and run time
- * (e.g., a maintainer removed the auto-review label) are observed.
+ * (e.g., a maintainer removed the LoopPilot label) are observed.
  */
 export const fetchPrLabels: FetchPrLabelsFn = async (
   owner,
@@ -40,7 +40,7 @@ export const fetchPrLabels: FetchPrLabelsFn = async (
  *
  * Caller responsibilities:
  * - Decide whether the gate applies at all (e.g., skip when full-auto mode is on).
- * - Resolve the effective label name (e.g., apply DEFAULT_AUTO_REVIEW_LABEL when the
+ * - Resolve the effective label name (e.g., apply DEFAULT_LOOPPILOT_LABEL when the
  *   user-configured value is empty) before calling.
  *
  * Matching is case-insensitive to align with the workflow YAML `contains()` check

@@ -14,7 +14,7 @@ function makeArgs(
 ): LockedStateUpdaterArgs {
   return {
     owner: "team-yubune",
-    repo: "test-auto-ai-review",
+    repo: "loop-pilot",
     commentId: 555,
     token: "github-token",
     initialExpectedUpdatedAt: "2026-05-15T00:00:00.000Z",
@@ -48,7 +48,7 @@ describe("createLockedStateUpdater", () => {
     expect(args.updateStateComment).toHaveBeenCalledTimes(1);
     expect(args.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       555,
       next,
       "github-token",
@@ -82,7 +82,7 @@ describe("createLockedStateUpdater", () => {
 
     expect(args.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       555,
       expect.any(Object),
       "github-token",

@@ -22,7 +22,7 @@ const baseConfig: Config = {
   claudeCodeOauthToken: "",
   githubToken: "github-token",
   repoOwner: "team-yubune",
-  repoName: "test-auto-ai-review",
+  repoName: "loop-pilot",
   prNumber: 99,
   triggerCommentId: 1234,
   triggerCommentBody: "Codex Review summary",
@@ -30,7 +30,7 @@ const baseConfig: Config = {
   triggerEventName: "issue_comment",
   prHeadRef: "linear/TY-237",
   prTitle: "TY-237: split main-loop",
-  autoReviewLabel: "auto-review-fix",
+  autoReviewLabel: "loop-pilot",
   autoReviewFullAuto: false,
   autoReviewRestartRoles: "author,write,maintain,admin",
   claudeCodeModelBase: "claude-sonnet-4-6",
@@ -71,7 +71,7 @@ function makeDeps(
     postInitIncompleteComment: vi.fn().mockResolvedValue(3),
     postAutoMergeSkipNotification: vi.fn().mockResolvedValue(undefined),
     mergeIfChecksPass: vi.fn().mockResolvedValue(undefined),
-    fetchPrLabels: vi.fn().mockResolvedValue(["auto-review-fix"]),
+    fetchPrLabels: vi.fn().mockResolvedValue(["loop-pilot"]),
     handleRestartCommand: vi.fn().mockResolvedValue({ handled: false }),
     setSecret: vi.fn(),
     setOutput: (name: PreFixOutputName, value: string) => {
@@ -162,7 +162,7 @@ describe("runPreFix", () => {
     // operator can /restart-review without manual hidden-comment surgery.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -209,7 +209,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -279,7 +279,7 @@ describe("runPreFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "fixing",
@@ -295,7 +295,7 @@ describe("runPreFix", () => {
     expect(deps.postFixingStartComment).toHaveBeenCalledTimes(1);
     expect(deps.postFixingStartComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       2,
       expect.stringMatching(/^(base|escalated)$/),
@@ -340,7 +340,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "done", stopReason: "no_findings" }),
       "github-token",
@@ -350,7 +350,7 @@ describe("runPreFix", () => {
     expect(deps.mergeIfChecksPass).not.toHaveBeenCalled();
   });
 
-  it("enables auto-merge on done/no_findings when AUTO_REVIEW_AUTO_MERGE is true", async () => {
+  it("enables auto-merge on done/no_findings when LOOPPILOT_AUTO_MERGE is true", async () => {
     const deps = makeDeps(
       {
         found: true,
@@ -367,7 +367,7 @@ describe("runPreFix", () => {
     expect(deps.postCompletionComment).toHaveBeenCalled();
     expect(deps.mergeIfChecksPass).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "github-token",
       expect.objectContaining({ info: expect.any(Function), warning: expect.any(Function) }),
@@ -409,7 +409,7 @@ describe("runPreFix", () => {
     expect(deps.postAutoMergeSkipNotification).toHaveBeenCalledTimes(1);
     const notifyCall = vi.mocked(deps.postAutoMergeSkipNotification).mock.calls[0]!;
     expect(notifyCall[0]).toBe("team-yubune");
-    expect(notifyCall[1]).toBe("test-auto-ai-review");
+    expect(notifyCall[1]).toBe("loop-pilot");
     expect(notifyCall[2]).toBe(99);
     expect(notifyCall[3]).toEqual({
       kind: "ci_failed",
@@ -418,7 +418,7 @@ describe("runPreFix", () => {
     // runUrl must point at an Actions URL so the operator can jump straight
     // from the PR notification to the workflow log without grepping.
     expect(notifyCall[4]).toMatch(
-      /^https:\/\/[^/]+\/team-yubune\/test-auto-ai-review\/actions/,
+      /^https:\/\/[^/]+\/team-yubune\/loop-pilot\/actions/,
     );
     expect(notifyCall[5]).toBe("github-token");
   });
@@ -450,7 +450,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "max_iterations" }),
       "github-token",
@@ -601,7 +601,7 @@ describe("runPreFix", () => {
       expect(deps.outputs.pr_head_ref).toBe(goodRef);
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({ status: "fixing" }),
         "github-token",
@@ -657,7 +657,7 @@ describe("runPreFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "fixing", iterationCount: 2 }),
       "github-token",
@@ -839,7 +839,7 @@ describe("runPreFix", () => {
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "fixing",
@@ -897,7 +897,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "loop_detected" }),
       "github-token",
@@ -947,7 +947,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "loop_detected" }),
       "github-token",
@@ -1084,7 +1084,7 @@ describe("runPreFix", () => {
     expect(deps.fetchReviewComments).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -1095,7 +1095,7 @@ describe("runPreFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "codex_usage_limit",
       baseConfig.triggerCommentId,
@@ -1131,7 +1131,7 @@ describe("runPreFix", () => {
     expect(deps.fetchReviewComments).toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "done",
@@ -1263,7 +1263,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "done",
@@ -1305,7 +1305,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1360,7 +1360,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1397,7 +1397,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1550,7 +1550,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "fixing",
@@ -1611,7 +1611,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "fixing",
@@ -1660,7 +1660,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "fixing",
@@ -1700,7 +1700,7 @@ describe("runPreFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1753,7 +1753,7 @@ describe("runPreFix", () => {
       // injected) so the id-only fallback dedup behavior is preserved.
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "fixing",

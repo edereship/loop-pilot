@@ -19276,7 +19276,7 @@ function serializeAllowedBashTools(tools) {
 var DEFAULT_SEVERITY_THRESHOLD = "P3";
 var DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
 var DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-7";
-var DEFAULT_AUTO_REVIEW_LABEL = "auto-review-fix";
+var DEFAULT_LOOPPILOT_LABEL = "loop-pilot";
 function loadConfig() {
   const anthropicApiKey = input("anthropic-api-key", "ANTHROPIC_API_KEY", "");
   const claudeCodeOauthToken = input("claude-code-oauth-token", "CLAUDE_CODE_OAUTH_TOKEN", "");
@@ -19325,7 +19325,7 @@ function loadBaseConfig() {
   if (!isValidModelName(claudeCodeModelEscalated)) {
     throw new Error(`CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`);
   }
-  const autoReviewPushToken = input("auto-review-push-token", "AUTO_REVIEW_PUSH_TOKEN", "");
+  const autoReviewPushToken = input("looppilot-push-token", "LOOPPILOT_PUSH_TOKEN", "");
   const buildCommand = input("build-command", "BUILD_COMMAND", "");
   if (buildCommand !== "") {
     const buildCommandValidation = validateCheckCommand(buildCommand);
@@ -19354,21 +19354,21 @@ function loadBaseConfig() {
     triggerEventName: input("trigger-event-name", "TRIGGER_EVENT_NAME", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
-    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
-    autoReviewRestartRoles: input("auto-review-restart-roles", "AUTO_REVIEW_RESTART_ROLES", "author,write,maintain,admin"),
+    autoReviewLabel: input("looppilot-label", "LOOPPILOT_LABEL", ""),
+    autoReviewFullAuto: boolInput("looppilot-full-auto", "LOOPPILOT_FULL_AUTO", false),
+    autoReviewRestartRoles: input("looppilot-restart-roles", "LOOPPILOT_RESTART_ROLES", "author,write,maintain,admin"),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
-    autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
-    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS", 15, 1),
-    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
-    severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
-    autoReviewBlockPaths: input("auto-review-block-paths", "AUTO_REVIEW_BLOCK_PATHS", ""),
-    scopeMaxFiles: intInput("scope-max-files", "AUTO_REVIEW_SCOPE_MAX_FILES", 0),
-    scopeMaxLines: intInput("scope-max-lines", "AUTO_REVIEW_SCOPE_MAX_LINES", 0),
-    hardBlockOverride: stringListInput("auto-review-hard-block-override", "AUTO_REVIEW_HARD_BLOCK_OVERRIDE"),
-    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES"),
-    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
+    autoMergeOnClean: boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false),
+    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "LOOPPILOT_AUTO_MERGE_POLL_SECONDS", 15, 1),
+    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
+    severityThreshold: severityThresholdInput("severity-threshold", "LOOPPILOT_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
+    autoReviewBlockPaths: input("looppilot-block-paths", "LOOPPILOT_BLOCK_PATHS", ""),
+    scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
+    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0),
+    hardBlockOverride: stringListInput("looppilot-hard-block-override", "LOOPPILOT_HARD_BLOCK_OVERRIDE"),
+    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES"),
+    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
   };
 }
 function stringListInput(inputName, envName) {
@@ -19715,17 +19715,17 @@ ${INSTRUCTION_LINES.join("\n")}`);
 
 // dist/state-manager.js
 var PREVIOUS_CHECK_FAILURE_READ_LIMIT = PREVIOUS_CHECK_FAILURE_MAX_CHARS * 2;
-var STATE_MARKER = "auto-review-state";
+var STATE_MARKER = "looppilot-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
-var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
+var STATE_COMMENT_VISIBLE_TEXT = "LoopPilot state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 20;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
 var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
-var TRUSTED_STATE_AUTHORS_ENV = "AUTO_REVIEW_STATE_COMMENT_AUTHORS";
+var TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 function getTrustedStateCommentAuthors(env = process.env) {
-  const fromInput = getInput("auto-review-state-comment-authors");
+  const fromInput = getInput("looppilot-state-comment-authors");
   const raw = fromInput !== "" ? fromInput : env[TRUSTED_STATE_AUTHORS_ENV] ?? "";
   const parsed = raw.split(",").map((a) => a.trim()).filter((a) => a.length > 0);
   return parsed.length > 0 ? parsed : [DEFAULT_TRUSTED_STATE_AUTHOR];
@@ -19889,7 +19889,7 @@ async function readState(owner, name, pr, token) {
     // Filter to genuine state comments by anchoring on the visible header.
     // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
     // properties:
-    //   1. Comments that merely mention `<!-- auto-review-state` inline
+    //   1. Comments that merely mention `<!-- looppilot-state` inline
     //      (e.g., the Linear linkback that quotes it in backticks) are
     //      excluded — they do not start with the visible header.
     //   2. State comments where the trailing newline after the marker has
@@ -19994,11 +19994,11 @@ function parseCommentSnapshot(stdout, context) {
 }
 
 // dist/status-comment.js
-var STATUS_COMMENT_MARKER = "auto-review-status";
+var STATUS_COMMENT_MARKER = "looppilot-status";
 var STATUS_COMMENT_OPEN = `<!-- ${STATUS_COMMENT_MARKER} -->`;
 var STATUS_COMMENT_DATA_OPEN = `<!-- ${STATUS_COMMENT_MARKER}-data`;
 var STATUS_COMMENT_DATA_CLOSE = "-->";
-var STATUS_COMMENT_VISIBLE_HEADER = "## Auto-review status";
+var STATUS_COMMENT_VISIBLE_HEADER = "## LoopPilot status";
 var MAX_ENTRIES = 30;
 var MAX_ENTRY_BODY_LENGTH = 16e3;
 var ENTRY_BODY_TRUNCATION_MARKER = "\n\n_(output truncated \u2014 exceeded size limit)_";
@@ -20269,7 +20269,7 @@ var STOP_REASON_LABELS = {
   workflow_crashed: "auto-fix workflow crashed \u2014 `/restart-review` to resume",
   action_timeout: "Claude Code Action timed out \u2014 `/restart-review` to retry",
   action_failure: "Claude Code Action exited non-zero \u2014 check the workflow run",
-  scope_violation: "repair touched blocked paths \u2014 adjust `AUTO_REVIEW_BLOCK_PATHS` or revert",
+  scope_violation: "repair touched blocked paths \u2014 adjust `LOOPPILOT_BLOCK_PATHS` or revert",
   max_turns_exceeded: "Claude Code Action hit `--max-turns` \u2014 `/restart-review` escalates tier",
   codex_usage_limit: "Codex quota exhausted \u2014 wait for reset, then `/restart-review`",
   codex_request_failed: "could not re-post `@codex review` \u2014 fix Codex auth, then `/restart-review`",
@@ -20332,7 +20332,7 @@ async function applyStatusUpdate2(owner, name, pr, update, token) {
 function nextActionForStopReason(reason) {
   switch (reason) {
     case "no_findings":
-      return "Auto-review is complete; merge when ready.";
+      return "LoopPilot is complete; merge when ready.";
     case "max_iterations":
       return "Review history, then `/restart-review --hard` to clear the iteration count.";
     case "loop_detected":
@@ -20340,7 +20340,7 @@ function nextActionForStopReason(reason) {
     case "secret_leak_suspected":
       return "Audit the diff for leaked credentials, then `/restart-review --hard` (soft is rejected).";
     case "scope_violation":
-      return "Review the stop detail above for the specific violation; revert if needed, adjust `AUTO_REVIEW_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
+      return "Review the stop detail above for the specific violation; revert if needed, adjust `LOOPPILOT_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
     case "test_failure":
       return "Fix the underlying CHECK_COMMAND failure, push, then `/restart-review`.";
     case "codex_usage_limit":
@@ -20368,7 +20368,7 @@ function buildTerminalNotificationBody(kind, permalink) {
   switch (kind.kind) {
     case "done":
       return [
-        `\u2705 **Auto-review completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
+        `\u2705 **LoopPilot completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
         "",
         `See the [status comment](${permalink}) for the full history.`
       ].join("\n");
@@ -20376,7 +20376,7 @@ function buildTerminalNotificationBody(kind, permalink) {
       const label = STOP_REASON_LABELS[kind.stopReason];
       const actionLine = kind.remainingFindings !== void 0 ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.` : "Manual intervention required.";
       return [
-        `\u{1F6D1} **Auto-review stopped** \u2014 ${label}.`,
+        `\u{1F6D1} **LoopPilot stopped** \u2014 ${label}.`,
         "",
         actionLine,
         `See the [status comment](${permalink}) for the full history.`
@@ -20384,9 +20384,9 @@ function buildTerminalNotificationBody(kind, permalink) {
     }
     case "init_incomplete":
       return [
-        "\u26A0\uFE0F **Auto-review init incomplete** \u2014 the initial `@codex review` was never posted.",
+        "\u26A0\uFE0F **LoopPilot init incomplete** \u2014 the initial `@codex review` was never posted.",
         "",
-        "Auto-review is not active on this PR until init runs successfully. Either:",
+        "LoopPilot is not active on this PR until init runs successfully. Either:",
         "- Re-run the Workflow A run from the Actions tab, or",
         "- Re-trigger init by removing and re-adding the gate label (or closing / reopening the PR in full-auto mode).",
         "",
@@ -20414,7 +20414,7 @@ function buildAutoMergeSkipBody(kind, runUrl) {
         "",
         ...kind.failures.map((f) => `- \`${f.name}\` (\`${f.conclusion}\`)`),
         "",
-        "Auto-review completed cleanly but other CI checks did not pass. Resolve the failing checks and merge manually, or push a fix to re-run.",
+        "LoopPilot completed cleanly but other CI checks did not pass. Resolve the failing checks and merge manually, or push a fix to re-run.",
         "",
         `Workflow run: ${runUrl}`
       ].join("\n");
@@ -20424,7 +20424,7 @@ function buildAutoMergeSkipBody(kind, runUrl) {
         "",
         `${kind.pending.length} CI run(s) still pending: ${kind.pending.map((n) => `\`${n}\``).join(", ")}.`,
         "",
-        "Wait for CI to finish and merge manually, or bump `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` if your CI is consistently slow.",
+        "Wait for CI to finish and merge manually, or bump `LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES` if your CI is consistently slow.",
         "",
         `Workflow run: ${runUrl}`
       ].join("\n");
@@ -20440,7 +20440,7 @@ function buildAutoMergeSkipBody(kind, runUrl) {
       return [
         `${AUTO_MERGE_SKIP_PREFIX} \u2014 PR HEAD changed during CI wait (\`${kind.oldSha}\` \u2192 \`${kind.newSha}\`).`,
         "",
-        "The new commit needs its own review/CI cycle. Use `/restart-review` to resume auto-review on the latest HEAD.",
+        "The new commit needs its own review/CI cycle. Use `/restart-review` to resume LoopPilot on the latest HEAD.",
         "",
         `Workflow run: ${runUrl}`
       ].join("\n");
@@ -20519,7 +20519,7 @@ async function postCompletionComment(owner, name, pr, iterations, token, options
     openFindings: 0,
     nextAction,
     ...progressUpdate(options?.progress),
-    newEntry: entry("completed", `Auto-review completed (${iterations} iterations)`, "All in-scope findings (at or above the configured severity threshold) have been resolved.")
+    newEntry: entry("completed", `LoopPilot completed (${iterations} iterations)`, "All in-scope findings (at or above the configured severity threshold) have been resolved.")
   }, token);
   await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "done", iterations }, token);
   return statusCommentId;
@@ -20558,13 +20558,13 @@ async function postFixingStartComment(owner, name, pr, iteration, modelTier, max
 async function postInitIncompleteComment(owner, name, pr, token) {
   const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     // TY-293 #3 (UX-10): same three operator actions as the YAML fail-safe
-    // in `auto-review-init.yml` and the in-process top-level notification
+    // in `looppilot-init.yml` and the in-process top-level notification
     // (`buildTerminalNotificationBody.init_incomplete`). Keeping the
     // language identical across the three surfaces lets operators recognise
     // the failure mode regardless of which path posted the comment.
     current: "Init incomplete \u2014 initial `@codex review` not posted",
     nextAction: "Re-run Workflow A from the Actions tab, or remove and re-add the gate label.",
-    newEntry: entry("init_incomplete", "Auto-review initialization incomplete", "Workflow A may have failed before posting the initial `@codex review`. Re-run from the Actions tab, or remove and re-add the gate label (or close / reopen the PR in full-auto mode).")
+    newEntry: entry("init_incomplete", "LoopPilot initialization incomplete", "Workflow A may have failed before posting the initial `@codex review`. Re-run from the Actions tab, or remove and re-add the gate label (or close / reopen the PR in full-auto mode).")
   }, token);
   await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "init_incomplete" }, token);
   return statusCommentId;
@@ -21294,7 +21294,7 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   }
   const hasPermission = await canRestart(context, deps);
   if (!hasPermission) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`, context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`, context.githubToken);
     return { handled: true };
   }
   if (command.invalidReason) {
@@ -21303,12 +21303,12 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   }
   if (!context.stateResult.found && context.stateResult.corrupted) {
     const rejection = [
-      "\u274C Restart cannot apply: hidden `auto-review-state` comment is unparseable JSON.",
+      "\u274C Restart cannot apply: hidden `looppilot-state` comment is unparseable JSON.",
       "",
       "**`/restart-review --hard` will return the same rejection** \u2014 state read fails before the `--hard` clear logic runs, so this path requires manual surgery.",
       "",
       "Recovery (operator):",
-      "1. Find the hidden comment whose body contains `<!-- auto-review-state ... -->` on this PR.",
+      "1. Find the hidden comment whose body contains `<!-- looppilot-state ... -->` on this PR.",
       `2. \`gh api -X DELETE /repos/${context.owner}/${context.repo}/issues/comments/<id>\` to delete it.`,
       "3. Remove and re-add the gate label (or, in full-auto mode, close + reopen the PR) so Workflow A re-runs and recreates the state.",
       "4. Leave an audit comment on the PR with the operator and the reason, for the run history.",
@@ -21319,7 +21319,7 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
     return { handled: true };
   }
   if (!context.stateResult.found) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart cannot apply: auto-review state was not found.", context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart cannot apply: LoopPilot state was not found.", context.githubToken);
     return { handled: true };
   }
   const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
@@ -21370,14 +21370,14 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   }
   const secondWriteOk = await updateStateCommentLocked(restartResult.nextState, "[restart] failed to record review-request comment id after posting @codex review", {
     onConflict: async (detail) => {
-      deps.warning(`[restart] ${detail} Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
+      deps.warning(`[restart] ${detail} LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
     }
   });
   if (!secondWriteOk) {
     return { handled: true };
   }
   await deps.postComment(context.owner, context.repo, context.prNumber, [
-    `\u{1F7E2} Auto-review restarted by @${context.triggerUserLogin}.`,
+    `\u{1F7E2} LoopPilot restarted by @${context.triggerUserLogin}.`,
     "",
     `mode: ${command.mode}`,
     `from: ${restartResult.previousStopReason ?? "none"}`,
@@ -21421,7 +21421,7 @@ function parseRoles(raw, warn) {
   const requested = raw.split(",").map((role) => role.trim().toLowerCase()).filter(Boolean);
   const unknown = requested.filter((r) => !KNOWN_RESTART_ROLES.has(r));
   if (unknown.length > 0) {
-    warn(`[restart] Unknown role(s) ignored in AUTO_REVIEW_RESTART_ROLES: ${unknown.join(", ")}. Valid roles: ${[...KNOWN_RESTART_ROLES].join(", ")}.`);
+    warn(`[restart] Unknown role(s) ignored in LOOPPILOT_RESTART_ROLES: ${unknown.join(", ")}. Valid roles: ${[...KNOWN_RESTART_ROLES].join(", ")}.`);
   }
   return new Set(requested.filter((r) => KNOWN_RESTART_ROLES.has(r)));
 }
@@ -21673,7 +21673,7 @@ var defaultDeps3 = {
 async function runPreFix(config, deps = defaultDeps3) {
   registerAllSecrets(config, deps.setSecret);
   if (config.claudeCodeOauthToken !== "") {
-    deps.warning("[pre-fix] Running with Claude Code OAuth token (subscription). Your personal account's usage limits apply \u2014 auto-review iterations may consume your quota quickly, especially with Opus escalation. Consider lowering MAX_REVIEW_ITERATIONS for high-frequency CI use; see docs/operations/security.md (\u8A8D\u8A3C).");
+    deps.warning("[pre-fix] Running with Claude Code OAuth token (subscription). Your personal account's usage limits apply \u2014 LoopPilot iterations may consume your quota quickly, especially with Opus escalation. Consider lowering MAX_REVIEW_ITERATIONS for high-frequency CI use; see docs/operations/security.md (\u8A8D\u8A3C).");
   }
   deps.setOutput("should_run", "false");
   const triggerCommentId = config.triggerCommentId;
@@ -21684,7 +21684,7 @@ async function runPreFix(config, deps = defaultDeps3) {
   deps.info(`[pre-fix] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
   const isCommandTrigger = isRestartCommandLike(config.triggerCommentBody);
   if (!config.autoReviewFullAuto && !isCommandTrigger) {
-    const effectiveLabel = config.autoReviewLabel || DEFAULT_AUTO_REVIEW_LABEL;
+    const effectiveLabel = config.autoReviewLabel || DEFAULT_LOOPPILOT_LABEL;
     const labels = await deps.fetchPrLabels(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
     if (!isAutoReviewAllowed(effectiveLabel, labels)) {
       deps.info(`[pre-fix] Required label '${effectiveLabel}' is not present on PR #${config.prNumber}. Skipping.`);
@@ -21885,7 +21885,7 @@ async function runPreFix(config, deps = defaultDeps3) {
       // cannot leak into a non-`fixing` status.
       fixingStartedAt: null
     };
-    if (!await updateStateCommentLocked(doneState, "Could not mark auto-review as done."))
+    if (!await updateStateCommentLocked(doneState, "Could not mark LoopPilot as done."))
       return;
     await deps.postCompletionComment(config.repoOwner, config.repoName, config.prNumber, doneState.iterationCount, config.githubToken, {
       autoMergeOnClean: config.autoMergeOnClean,

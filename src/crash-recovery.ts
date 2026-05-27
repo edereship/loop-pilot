@@ -87,13 +87,13 @@ export function rollbackFixingClaim(state: ReviewState): Pick<
  * **gated on successful state demotion**. Previously, if `updateStateComment`
  * failed (e.g. 412 conflict from a concurrent writer, or transient 5xx),
  * `postStopComment` would still run and stamp `Stopped — workflow_crashed`
- * onto the visible status comment plus a top-level "🛑 Auto-review stopped"
+ * onto the visible status comment plus a top-level "🛑 LoopPilot stopped"
  * notification — while the hidden state remained `fixing`. That contradicts
  * operator expectations (operator sees "Stopped", tries `/restart-review`,
  * `applyRestartToState` rejects because hidden state is `fixing`) and
  * recreates exactly the silent-unrecoverable-state UX TY-282 was meant to
  * cure. With gating, demotion-failure cases fall through to the workflow
- * YAML 2B fail-safe step, which posts a distinct "🛑 Auto-review crashed"
+ * YAML 2B fail-safe step, which posts a distinct "🛑 LoopPilot crashed"
  * message that does NOT claim the state was demoted.
  *
  * Never throws — recovery failures are logged via `core.error` and swallowed
@@ -153,7 +153,7 @@ export async function demoteFixingOnCrash(
       // top-level 🛑 notification while the hidden state is still `fixing`
       // misleads operators into restart attempts that `applyRestartToState`
       // will reject. The workflow YAML 2B fail-safe step posts a distinct
-      // "Auto-review crashed" notification that does not claim demotion.
+      // "LoopPilot crashed" notification that does not claim demotion.
       core.error(
         `[${label}] Crash recovery state write failed: ${writeError instanceof Error ? writeError.message : String(writeError)}`,
       );
@@ -182,7 +182,7 @@ export async function demoteFixingOnCrash(
     } catch (notifyError) {
       // Best-effort: a missing token / API outage must not prevent the state
       // write that already succeeded above. The workflow-level fail-safe
-      // step (auto-review-loop.yml `if: failure()`) is the durable backstop.
+      // step (looppilot-loop.yml `if: failure()`) is the durable backstop.
       core.error(
         `[${label}] Crash recovery notification failed: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`,
       );

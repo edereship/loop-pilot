@@ -79,19 +79,19 @@ You are **not** auditing for the agent's UX (Claude is not a user here).
   unstated prerequisites (variable defaults, repo settings, label setup)?
 - `init/action.yml` and `loop/action.yml` — every `description:` and every
   `default:`. Are descriptions written for the installer or for the
-  maintainer? Do dangerous defaults (`AUTO_REVIEW_FULL_AUTO=true`,
-  `MAX_REVIEW_ITERATIONS=20`, `AUTO_REVIEW_AUTO_MERGE=true`) get warned
+  maintainer? Do dangerous defaults (`LOOPPILOT_FULL_AUTO=true`,
+  `MAX_REVIEW_ITERATIONS=20`, `LOOPPILOT_AUTO_MERGE=true`) get warned
   about?
 - Are the **error messages on missing required inputs** clear enough that
   the operator can fix them without opening the source code? Run a mental
   `npm run check` with a deliberately misconfigured workflow and trace what
   the operator sees.
-- Compare README quickstart against `.github/workflows/auto-review-init.yml`
-  and `.github/workflows/auto-review-loop.yml` — do they drift?
+- Compare README quickstart against `.github/workflows/looppilot-init.yml`
+  and `.github/workflows/looppilot-loop.yml` — do they drift?
 
 ### 2.2 Steady-state PR timeline (Persona 1)
 Walk a full happy-path PR mentally:
-1. PR opened with the auto-review label.
+1. PR opened with the LoopPilot label.
 2. `init` posts the hidden state comment and the initial `@codex review`.
 3. Codex review arrives.
 4. Loop pre-fix decides to act, posts a "fixing" status entry.
@@ -125,7 +125,7 @@ Now walk the **unhappy paths**:
   operator see a single coherent notification, or two slightly different
   comments fired by different fail-safes?
 
-### 2.3 Status comment (`auto-review-status`)
+### 2.3 Status comment (`looppilot-status`)
 - `src/status-comment.ts` — the `renderStatusCommentBodyUnchecked` output.
 - Field-by-field: `Current`, `Last commit`, `Open findings`, `Next action`.
   Are these the right four headers? Is `Next action` always a real
@@ -169,7 +169,7 @@ Now walk the **unhappy paths**:
 - When a PR has been in the loop for 5 iterations, how many comments are on
   the timeline? Is it overwhelming?
 - Is there a place where adding a single emoji + label upgrade (e.g.
-  `✅ Auto-review completed`, `🛑 Auto-review stopped`, `⚠️ Auto-review init
+  `✅ LoopPilot completed`, `🛑 LoopPilot stopped`, `⚠️ LoopPilot init
   failed`) would make the timeline scannable, and is the existing usage
   consistent?
 
@@ -180,7 +180,7 @@ Now walk the **unhappy paths**:
   key have a recovery section? Are the recovery sections kept in sync
   with the code (`src/restart-command.ts`)?
 - `docs/operations/scope-policy.md` — does it explain the
-  `AUTO_REVIEW_BLOCK_PATHS=!<path>` syntax with an example for every common
+  `LOOPPILOT_BLOCK_PATHS=!<path>` syntax with an example for every common
   case (re-enable `dist/`, lock down `Justfile`, etc.)?
 - Runbooks — are there step-by-step recovery procedures, or only design
   rationale? An operator should be able to recover a stuck PR from the
@@ -190,11 +190,11 @@ Now walk the **unhappy paths**:
   be documented.
 
 ### 2.8 Repository variable / secret naming and defaults
-- Is the set of `AUTO_REVIEW_*` variables internally consistent
-  (`AUTO_REVIEW_LABEL`, `AUTO_REVIEW_FULL_AUTO`, `AUTO_REVIEW_BLOCK_PATHS`,
-  `AUTO_REVIEW_PUSH_TOKEN`, `AUTO_REVIEW_SEVERITY_THRESHOLD`,
-  `AUTO_REVIEW_AUTO_MERGE`, `AUTO_REVIEW_RESTART_ROLES`,
-  `AUTO_REVIEW_STATE_COMMENT_AUTHORS`)?
+- Is the set of `LOOPPILOT_*` variables internally consistent
+  (`LOOPPILOT_LABEL`, `LOOPPILOT_FULL_AUTO`, `LOOPPILOT_BLOCK_PATHS`,
+  `LOOPPILOT_PUSH_TOKEN`, `LOOPPILOT_SEVERITY_THRESHOLD`,
+  `LOOPPILOT_AUTO_MERGE`, `LOOPPILOT_RESTART_ROLES`,
+  `LOOPPILOT_STATE_COMMENT_AUTHORS`)?
 - Are defaults safe-by-default (label gate on, full-auto off, auto-merge
   off, push-token recommended-not-required)? Where the default is unsafe,
   is there a prominent doc warning?
@@ -206,7 +206,7 @@ Now walk the **unhappy paths**:
 - Does the operator see how many iterations have been spent vs the budget
   in the status comment?
 - Does the operator see which model tier was used for each iteration?
-- When `auto-review-fix` label is added to a PR that already has a long
+- When `loop-pilot` label is added to a PR that already has a long
   history, does the operator get a "this will cost ≈ $X" estimate? (If
   the answer is "no and that's intentional", the answer should at least be
   in the docs.)
@@ -218,7 +218,7 @@ Now walk the **unhappy paths**:
 - The docs are primarily in Japanese; the comment templates are in English.
   Operators in mixed-language teams will see both. Is the English in the
   comment templates correct, idiomatic, and unambiguous? (Specifically:
-  past tense vs progressive, "auto-fix" vs "auto-review", "stopped" vs
+  past tense vs progressive, "auto-fix" vs "LoopPilot", "stopped" vs
   "halted" vs "paused".)
 - Check `src/comment-poster.ts` `STOP_REASON_LABELS` and the workflow YAML
   inline `BODY=$'...'` strings.

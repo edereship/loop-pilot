@@ -1,4 +1,4 @@
-name: "Auto Review Loop — post-fix"
+name: "LoopPilot — post-fix"
 description: "Scope check, CHECK_COMMAND, commit/push, state update, and re-review request after claude-code-action."
 
 inputs:
@@ -9,7 +9,7 @@ inputs:
     description: "Optional token from a Codex-connected user for posting @codex review"
     required: false
     default: ""
-  auto-review-push-token:
+  looppilot-push-token:
     description: "Optional token used only for repair commit pushes; defaults to github-token when unset"
     required: false
     default: ""
@@ -38,7 +38,7 @@ inputs:
     required: false
     default: "npm run check"
   build-command:
-    description: "Optional shell command run after CHECK_COMMAND succeeds, before staging (TY-281). Use this to regenerate build artifacts that are committed to the repo (e.g. `dist/`) so the auto-fix commit cannot drift out of sync with `src/`. Empty default skips the step; chain multiple steps with `&&` or wrap in an npm script. Generated files are re-scope-checked against `auto-review-block-paths` / `scope-max-*` before commit."
+    description: "Optional shell command run after CHECK_COMMAND succeeds, before staging (TY-281). Use this to regenerate build artifacts that are committed to the repo (e.g. `dist/`) so the auto-fix commit cannot drift out of sync with `src/`. Empty default skips the step; chain multiple steps with `&&` or wrap in an npm script. Generated files are re-scope-checked against `looppilot-block-paths` / `scope-max-*` before commit."
     required: false
     default: ""
   action-outcome:
@@ -53,20 +53,20 @@ inputs:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false
     default: ""
-  auto-review-block-paths:
+  looppilot-block-paths:
     description: "`.gitignore`-style block-path spec (TY-271). Comma-separated entries: `secrets/` (dir prefix), `Justfile` (exact file), `!Makefile` (un-block a default). `!.github/...` is ignored — `.github/` is locked. Empty default keeps the built-in `DEFAULT_BLOCK_PATTERNS`. See docs/operations/scope-policy.md."
     required: false
     default: ""
   scope-max-files:
-    description: "Max files allowed in a single auto-fix diff. Empty / 0 keeps the default of 20. Leave empty so `AUTO_REVIEW_SCOPE_MAX_FILES` Repository variable can override; `core.getInput` treats `\"0\"` as non-empty and would shadow the env-var fallback."
+    description: "Max files allowed in a single auto-fix diff. Empty / 0 keeps the default of 20. Leave empty so `LOOPPILOT_SCOPE_MAX_FILES` Repository variable can override; `core.getInput` treats `\"0\"` as non-empty and would shadow the env-var fallback."
     required: false
     default: ""
   scope-max-lines:
-    description: "Max total added+deleted lines allowed in a single auto-fix diff. Empty / 0 keeps the default of 1000. Leave empty so `AUTO_REVIEW_SCOPE_MAX_LINES` Repository variable can override."
+    description: "Max total added+deleted lines allowed in a single auto-fix diff. Empty / 0 keeps the default of 1000. Leave empty so `LOOPPILOT_SCOPE_MAX_LINES` Repository variable can override."
     required: false
     default: ""
-  auto-review-hard-block-override:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `auto-review-block-paths` with the `!path` syntax. Existing values are folded into the new spec as removals, but emit a warning."
+  looppilot-hard-block-override:
+    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` with the `!path` syntax. Existing values are folded into the new spec as removals, but emit a warning."
     required: false
     default: ""
   scope-allowed-path-prefixes:
@@ -74,10 +74,10 @@ inputs:
     required: false
     default: ""
   scope-additional-hard-block-prefixes:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `auto-review-block-paths` instead. Existing values are folded into the new spec as additions, but emit a warning."
+    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` instead. Existing values are folded into the new spec as additions, but emit a warning."
     required: false
     default: ""
-  auto-review-state-comment-authors:
+  looppilot-state-comment-authors:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false
     default: ""

@@ -2,7 +2,7 @@
 
 > Paste this whole document as the first user message of a fresh Claude Code
 > session. The goal is to find **functional bugs, edge-case crashes, race
-> conditions, and correctness regressions** in the auto-review loop before
+> conditions, and correctness regressions** in the LoopPilot loop before
 > it is promoted from PoC to production. Quality is prioritised over speed —
 > a thorough pass on this codebase takes hours and is expected to return a
 > small number of high-confidence findings rather than a long list of nits.
@@ -56,9 +56,9 @@ Operating rules:
   `pull_request`), and `loop/pre-fix` + `loop/post-fix` (Workflow B on
   `pull_request_review` and `issue_comment`).
 - Loop state lives in **two** PR comments:
-  - `auto-review-state` — hidden JSON, single source of truth for the state
+  - `looppilot-state` — hidden JSON, single source of truth for the state
     machine (`initialized` → `waiting_codex` → `fixing` → `done` | `stopped`).
-  - `auto-review-status` — visible markdown transcript for operators.
+  - `looppilot-status` — visible markdown transcript for operators.
 - Each iteration: pre-fix loads state, computes findings, may transition to
   `fixing`; `claude-code-action` runs; post-fix validates the diff
   (`scope-checker` + `secret-scanner` + `CHECK_COMMAND` + optional
@@ -82,8 +82,8 @@ Read these files first, in this order:
 7. `docs/specs/severity-parser.md`, `docs/specs/loop-detection.md`,
    `docs/specs/claude-code-repair-request.md`
 8. `src/types.ts`, `src/config.ts`
-9. `.github/workflows/auto-review-init.yml`,
-   `.github/workflows/auto-review-loop.yml`
+9. `.github/workflows/looppilot-init.yml`,
+   `.github/workflows/looppilot-loop.yml`
 
 ## 2. Bug classes to hunt for (mandatory coverage)
 
@@ -104,7 +104,7 @@ search. The labels (`BUG-CLS-X`) are referenced in §5's output contract.
   loop-detector's "oscillation" check — can a hash that lives only in the
   trimmed-out tail still be the oscillation evidence?
 - Crash-recovery paths (`demoteFixingOnCrash`, stale-`fixing` detector,
-  workflow-level fail-safes in `auto-review-loop.yml` TY-282 / TY-283):
+  workflow-level fail-safes in `looppilot-loop.yml` TY-282 / TY-283):
   do they leave a state another iteration can recover from, or do they
   paint the loop into a corner that only `/restart-review --hard` can
   unstick?
@@ -219,7 +219,7 @@ search. The labels (`BUG-CLS-X`) are referenced in §5's output contract.
   normalisation path in `deserializeState` cover every code path that later
   reads the field? Or are there callers that destructure before
   normalisation runs?
-- Old labels / variables (`AUTO_REVIEW_BLOCK_PATHS` vs deprecated
+- Old labels / variables (`LOOPPILOT_BLOCK_PATHS` vs deprecated
   predecessors, `CLAUDE_CODE_MODEL` removal in TY-242, etc.) — are
   deprecation paths still wired to fail cleanly with a useful message?
 
@@ -239,7 +239,7 @@ Work in this sequence. Do not skip phases.
 ### Phase 1 — Orient (≈ 30–60 min)
 1. Read every file listed in §1.
 2. Draw the state-machine diagram from `flow-and-state.md` on paper. Note
-   every read and write of `auto-review-state`. This is your
+   every read and write of `looppilot-state`. This is your
    "where can state get corrupted" worklist.
 3. Map each `StopReason` to the code path that emits it and the recovery
    path operators have. This is your "what does a stuck PR look like"

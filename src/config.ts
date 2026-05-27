@@ -52,7 +52,7 @@ export interface BaseConfig {
   prHeadRef: string;
   prTitle: string;
   // Label-based opt-in (default-strict: PR must carry the label unless full-auto is on).
-  // - autoReviewLabel: required label name. Empty string falls back to DEFAULT_AUTO_REVIEW_LABEL.
+  // - autoReviewLabel: required label name. Empty string falls back to DEFAULT_LOOPPILOT_LABEL.
   // - autoReviewFullAuto: true disables the label gate (every non-fork ready PR triggers).
   autoReviewLabel: string;
   autoReviewFullAuto: boolean;
@@ -90,7 +90,7 @@ export interface BaseConfig {
   // Block-list spec (TY-271). `.gitignore`-style syntax forwarded raw to
   // `parseBlockPathsSpec` in scope-checker.ts. Empty default keeps the
   // built-in `DEFAULT_BLOCK_PATTERNS` intact.
-  //   AUTO_REVIEW_BLOCK_PATHS = "secrets/,infra/,!Makefile,!package.json"
+  //   LOOPPILOT_BLOCK_PATHS = "secrets/,infra/,!Makefile,!package.json"
   //   - trailing `/` → directory prefix block
   //   - no trailing `/` → exact file block
   //   - leading `!`    → remove the matching default
@@ -101,7 +101,7 @@ export interface BaseConfig {
   /**
    * @deprecated TY-271. Folded into the block-list as removals (legacy
    * `!path` shape). Emit a warning when set and migrate the operator to
-   * `AUTO_REVIEW_BLOCK_PATHS`. Removed in the next minor.
+   * `LOOPPILOT_BLOCK_PATHS`. Removed in the next minor.
    */
   hardBlockOverride: readonly string[];
   /**
@@ -143,11 +143,11 @@ const DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
 const DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-7";
 
 /**
- * Fallback label name used when the user has not configured AUTO_REVIEW_LABEL.
- * "auto-review-fix" reflects that the label triggers the full Codex review +
+ * Fallback label name used when the user has not configured LOOPPILOT_LABEL.
+ * "loop-pilot" reflects that the label triggers the full Codex review +
  * Claude auto-fix loop, not just a review.
  */
-export const DEFAULT_AUTO_REVIEW_LABEL = "auto-review-fix";
+export const DEFAULT_LOOPPILOT_LABEL = "loop-pilot";
 
 export function loadConfig(): Config {
   // TY-260: accept either Anthropic API key OR Claude Code OAuth token, but
@@ -265,7 +265,7 @@ function loadBaseConfig(): BaseConfig {
       `CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`,
     );
   }
-  const autoReviewPushToken = input("auto-review-push-token", "AUTO_REVIEW_PUSH_TOKEN", "");
+  const autoReviewPushToken = input("looppilot-push-token", "LOOPPILOT_PUSH_TOKEN", "");
 
   // TY-289 #2: BUILD_COMMAND runs through the same `execAsync` shell path as
   // CHECK_COMMAND (`src/build-runner.ts`), so the same allowlist must gate
@@ -309,51 +309,51 @@ function loadBaseConfig(): BaseConfig {
     triggerEventName: input("trigger-event-name", "TRIGGER_EVENT_NAME", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
-    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
+    autoReviewLabel: input("looppilot-label", "LOOPPILOT_LABEL", ""),
+    autoReviewFullAuto: boolInput("looppilot-full-auto", "LOOPPILOT_FULL_AUTO", false),
     autoReviewRestartRoles: input(
-      "auto-review-restart-roles",
-      "AUTO_REVIEW_RESTART_ROLES",
+      "looppilot-restart-roles",
+      "LOOPPILOT_RESTART_ROLES",
       "author,write,maintain,admin",
     ),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
-    autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
+    autoMergeOnClean: boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false),
     autoMergePollSeconds: intInput(
       "auto-merge-poll-seconds",
-      "AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS",
+      "LOOPPILOT_AUTO_MERGE_POLL_SECONDS",
       15,
       1,
     ),
     autoMergeTimeoutMinutes: intInput(
       "auto-merge-timeout-minutes",
-      "AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES",
+      "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES",
       10,
       1,
     ),
     severityThreshold: severityThresholdInput(
       "severity-threshold",
-      "AUTO_REVIEW_SEVERITY_THRESHOLD",
+      "LOOPPILOT_SEVERITY_THRESHOLD",
       DEFAULT_SEVERITY_THRESHOLD,
     ),
     autoReviewBlockPaths: input(
-      "auto-review-block-paths",
-      "AUTO_REVIEW_BLOCK_PATHS",
+      "looppilot-block-paths",
+      "LOOPPILOT_BLOCK_PATHS",
       "",
     ),
-    scopeMaxFiles: intInput("scope-max-files", "AUTO_REVIEW_SCOPE_MAX_FILES", 0),
-    scopeMaxLines: intInput("scope-max-lines", "AUTO_REVIEW_SCOPE_MAX_LINES", 0),
+    scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
+    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0),
     hardBlockOverride: stringListInput(
-      "auto-review-hard-block-override",
-      "AUTO_REVIEW_HARD_BLOCK_OVERRIDE",
+      "looppilot-hard-block-override",
+      "LOOPPILOT_HARD_BLOCK_OVERRIDE",
     ),
     scopeAllowedPathPrefixes: stringListInput(
       "scope-allowed-path-prefixes",
-      "AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES",
+      "LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES",
     ),
     scopeAdditionalHardBlockPrefixes: stringListInput(
       "scope-additional-hard-block-prefixes",
-      "AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES",
+      "LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES",
     ),
   };
 }

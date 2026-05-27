@@ -31,7 +31,7 @@ const baseConfig: Config = {
   claudeCodeOauthToken: "",
   githubToken: "github-token",
   repoOwner: "team-yubune",
-  repoName: "test-auto-ai-review",
+  repoName: "loop-pilot",
   prNumber: 99,
   triggerCommentId: 1234,
   triggerCommentBody: "",
@@ -39,7 +39,7 @@ const baseConfig: Config = {
   triggerEventName: "",
   prHeadRef: "linear/TY-237",
   prTitle: "TY-237",
-  autoReviewLabel: "auto-review-fix",
+  autoReviewLabel: "loop-pilot",
   autoReviewFullAuto: false,
   autoReviewRestartRoles: "author,write,maintain,admin",
   claudeCodeModelBase: "claude-sonnet-4-6",
@@ -181,7 +181,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         ref: "linear/TY-237",
         token: "",
       },
@@ -190,7 +190,7 @@ describe("runPostFix", () => {
     expect(deps.postCodexReviewRequest).toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "waiting_codex",
@@ -239,7 +239,7 @@ describe("runPostFix", () => {
     expect(deps.demoteFixingOnCrash).not.toHaveBeenCalled();
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "codex_request_failed",
       expect.any(Number),
@@ -282,7 +282,7 @@ describe("runPostFix", () => {
     // posted, so the loop is already healthy. A 412 on the 2nd write (which
     // only records `lastCodexRequestCommentId`) must not surface a top-level
     // stop comment that contradicts the live state — operators would
-    // otherwise see "🛑 Auto-review stopped" while the next Codex review
+    // otherwise see "🛑 LoopPilot stopped" while the next Codex review
     // trigger silently reconciles.
     const deps = makeDeps({
       found: true,
@@ -303,7 +303,7 @@ describe("runPostFix", () => {
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.warning).toHaveBeenCalledWith(
       expect.stringContaining(
-        "Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.",
+        "LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.",
       ),
     );
   });
@@ -325,7 +325,7 @@ describe("runPostFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "waiting_codex",
@@ -346,7 +346,7 @@ describe("runPostFix", () => {
         state: makeState(),
       },
       {
-        gitDiffNumstat: () => "10\t0\t.github/workflows/auto-review-loop.yml\n",
+        gitDiffNumstat: () => "10\t0\t.github/workflows/looppilot-loop.yml\n",
       },
     );
 
@@ -357,7 +357,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -371,12 +371,12 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "scope_violation",
       1234,
       0,
-      expect.stringContaining(".github/workflows/auto-review-loop.yml"),
+      expect.stringContaining(".github/workflows/looppilot-loop.yml"),
       "github-token",
     expect.any(Object),
     );
@@ -422,7 +422,7 @@ describe("runPostFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -433,7 +433,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "secret_leak_suspected",
       1234,
@@ -574,7 +574,7 @@ describe("runPostFix", () => {
     expect(deps.runCheckCommand).not.toHaveBeenCalled();
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "secret_leak_suspected",
       1234,
@@ -634,7 +634,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([]);
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "secret_leak_suspected",
       1234,
@@ -789,7 +789,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "secret_leak_suspected",
       1234,
@@ -826,7 +826,7 @@ describe("runPostFix", () => {
     expect(deps.resetCalls).toBe(1);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -845,7 +845,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postTestFailureComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "tsc error: unexpected token",
       "github-token",
@@ -857,7 +857,7 @@ describe("runPostFix", () => {
     // failures in their inbox / mobile push.
     expect(deps.postTerminalNotification).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       44,
       {
@@ -902,7 +902,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         ref: "linear/TY-237",
         token: "",
       },
@@ -910,7 +910,7 @@ describe("runPostFix", () => {
     // The fix summary surfaces every changed file, not just the tracked subset.
     expect(deps.postClaudeCodeActionFixSummary).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       2,
       ["src/foo.ts", "src/new-helper.ts", "tests/new-helper.test.ts"],
@@ -944,7 +944,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
       "github-token",
@@ -966,7 +966,7 @@ describe("runPostFix", () => {
     expect(deps.resetCalls).toBe(1);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_timeout" }),
       "github-token",
@@ -974,7 +974,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "action_timeout",
       1234,
@@ -1009,7 +1009,7 @@ describe("runPostFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
       "github-token",
@@ -1034,7 +1034,7 @@ describe("runPostFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_failure" }),
       "github-token",
@@ -1072,7 +1072,7 @@ describe("runPostFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
       "github-token",
@@ -1118,7 +1118,7 @@ describe("runPostFix", () => {
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_failure" }),
       "github-token",
@@ -1150,7 +1150,7 @@ describe("runPostFix", () => {
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_no_op" }),
       "github-token",
@@ -1182,7 +1182,7 @@ describe("runPostFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1212,7 +1212,7 @@ describe("runPostFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1234,7 +1234,7 @@ describe("runPostFix", () => {
           state: makeState({ previousCheckFailure: PRIOR_TAIL }),
         },
         {
-          gitDiffNumstat: () => "10\t0\t.github/workflows/auto-review-loop.yml\n",
+          gitDiffNumstat: () => "10\t0\t.github/workflows/looppilot-loop.yml\n",
         },
       );
 
@@ -1242,7 +1242,7 @@ describe("runPostFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1276,7 +1276,7 @@ describe("runPostFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1315,7 +1315,7 @@ describe("runPostFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1350,7 +1350,7 @@ describe("runPostFix", () => {
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         100,
         expect.objectContaining({
           status: "stopped",
@@ -1363,7 +1363,7 @@ describe("runPostFix", () => {
     });
   });
 
-  it("AUTO_REVIEW_BLOCK_PATHS=!package.json lets package.json pass the scope check (TY-271)", async () => {
+  it("LOOPPILOT_BLOCK_PATHS=!package.json lets package.json pass the scope check (TY-271)", async () => {
     // The new block-list lets operators opt specific defaults out via `!path`.
     // After the override, `package.json` is no longer blocked — the diff
     // should reach CHECK_COMMAND and commit normally.
@@ -1387,14 +1387,14 @@ describe("runPostFix", () => {
     );
 
     expect(deps.info).toHaveBeenCalledWith(
-      '[scope-check] AUTO_REVIEW_BLOCK_PATHS: "!package.json"',
+      '[scope-check] LOOPPILOT_BLOCK_PATHS: "!package.json"',
     );
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.commitMessages.length).toBe(1);
   });
 
   it("legacy hardBlockOverride still works with a deprecation warning (TY-271)", async () => {
-    // Backward compat: AUTO_REVIEW_HARD_BLOCK_OVERRIDE values are folded
+    // Backward compat: LOOPPILOT_HARD_BLOCK_OVERRIDE values are folded
     // into the new block-list as removals. Old repos keep working but get a
     // warning telling them to migrate.
     const deps = makeDeps(
@@ -1421,14 +1421,14 @@ describe("runPostFix", () => {
     );
     expect(
       warnCalls.some((m: string) =>
-        m.includes("AUTO_REVIEW_HARD_BLOCK_OVERRIDE") && m.includes("deprecated"),
+        m.includes("LOOPPILOT_HARD_BLOCK_OVERRIDE") && m.includes("deprecated"),
       ),
     ).toBe(true);
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.commitMessages.length).toBe(1);
   });
 
-  it("still hard-blocks .github/ even when AUTO_REVIEW_BLOCK_PATHS=!.github/... is set (TY-271)", async () => {
+  it("still hard-blocks .github/ even when LOOPPILOT_BLOCK_PATHS=!.github/... is set (TY-271)", async () => {
     // .github/ is locked. The `!.github/...` removal is silently dropped,
     // and the scope check refuses the diff with `hard_block_path`.
     const deps = makeDeps(
@@ -1440,14 +1440,14 @@ describe("runPostFix", () => {
         state: makeState(),
       },
       {
-        gitDiffNumstat: () => "1\t0\t.github/workflows/auto-review-loop.yml\n",
+        gitDiffNumstat: () => "1\t0\t.github/workflows/looppilot-loop.yml\n",
       },
     );
 
     await runPostFix(
       {
         ...baseConfig,
-        autoReviewBlockPaths: "!.github/workflows/auto-review-loop.yml",
+        autoReviewBlockPaths: "!.github/workflows/looppilot-loop.yml",
       },
       deps,
       baseInputs,
@@ -1463,18 +1463,18 @@ describe("runPostFix", () => {
     ).toBe(true);
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "scope_violation",
       1234,
       0,
-      expect.stringContaining(".github/workflows/auto-review-loop.yml"),
+      expect.stringContaining(".github/workflows/looppilot-loop.yml"),
       "github-token",
     expect.any(Object),
     );
   });
 
-  it("scope_violation comment includes actionable AUTO_REVIEW_BLOCK_PATHS hint (TY-271)", async () => {
+  it("scope_violation comment includes actionable LOOPPILOT_BLOCK_PATHS hint (TY-271)", async () => {
     const deps = makeDeps(
       {
         found: true,
@@ -1495,7 +1495,7 @@ describe("runPostFix", () => {
     ).mock.calls[0];
     const detail = String(stopCall[6]);
     expect(detail).toContain("dist/post-fix/index.cjs");
-    expect(detail).toContain("AUTO_REVIEW_BLOCK_PATHS");
+    expect(detail).toContain("LOOPPILOT_BLOCK_PATHS");
     expect(detail).toContain("!dist/");
     expect(detail).toContain("docs/operations/scope-policy.md");
   });
@@ -1563,7 +1563,7 @@ describe("runPostFix", () => {
     // Codex review (the auto-retry behavior from TY-273 #B3 was removed).
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "action_no_op",
       1234,
@@ -1716,7 +1716,7 @@ describe("runPostFix", () => {
     // they can fix Codex auth and `/restart-review` once it's reachable.
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "codex_request_failed",
       expect.any(Number),
@@ -1748,7 +1748,7 @@ describe("runPostFix", () => {
   // TY-297 #2: post-fix must surface a top-level failure (not a silent
   // `return`) when the hidden state comment is missing or corrupted at
   // entry. Without `setFailed`, the workflow step ends in `success` and the
-  // auto-review-loop.yml #2B fail-safe never fires, leaving `status: fixing`
+  // looppilot-loop.yml #2B fail-safe never fires, leaving `status: fixing`
   // dangling until pre-fix's 30-min stale-detector eventually recovers — the
   // operator gets no signal in the meantime.
   it("TY-297 #2: marks the step as failed when hidden state is missing (no-comment case)", async () => {
@@ -1806,7 +1806,7 @@ describe("runPostFix", () => {
     expect(deps.setFailed).toHaveBeenCalledTimes(1);
   });
 
-  it("TY-310 #2: setFailed message tells the operator to verify AUTO_REVIEW_STATE_COMMENT_AUTHORS", async () => {
+  it("TY-310 #2: setFailed message tells the operator to verify LOOPPILOT_STATE_COMMENT_AUTHORS", async () => {
     const deps = makeDeps({
       found: false,
       corrupted: false,
@@ -1816,7 +1816,7 @@ describe("runPostFix", () => {
     await runPostFix(baseConfig, deps, baseInputs);
 
     const message = (deps.setFailed as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(message).toContain("AUTO_REVIEW_STATE_COMMENT_AUTHORS");
+    expect(message).toContain("LOOPPILOT_STATE_COMMENT_AUTHORS");
     expect(message).toContain("/restart-review");
   });
 
@@ -1881,7 +1881,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
       "github-token",
@@ -1889,7 +1889,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "scope_violation",
       1234,
@@ -1947,7 +1947,7 @@ describe("runPostFix", () => {
 
     // TY-281: post-build re-check uses `checkScopeBuildMode`, which skips
     // unlocked default block patterns (including `dist/`). The user no
-    // longer needs `AUTO_REVIEW_BLOCK_PATHS=!dist/` just to commit build
+    // longer needs `LOOPPILOT_BLOCK_PATHS=!dist/` just to commit build
     // artifacts under `dist/`.
     const configWithBuild = {
       ...baseConfig,
@@ -2026,7 +2026,7 @@ describe("runPostFix", () => {
     // Stopped with action_failure; failureExit rolls back iteration accounting.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -2042,7 +2042,7 @@ describe("runPostFix", () => {
     // Stop comment posted.
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "action_failure",
       1234,
@@ -2080,7 +2080,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -2096,7 +2096,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "action_failure",
       1234,
@@ -2142,7 +2142,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
       "github-token",
@@ -2150,7 +2150,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "scope_violation",
       1234,
@@ -2197,7 +2197,7 @@ describe("runPostFix", () => {
     // Stopped with action_failure; failureExit rolls back iteration accounting.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -2210,7 +2210,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "action_failure",
       1234,
@@ -2259,7 +2259,7 @@ describe("runPostFix", () => {
     // Stopped with action_failure; failureExit rolls back iteration accounting.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",
@@ -2272,7 +2272,7 @@ describe("runPostFix", () => {
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       99,
       "action_failure",
       1234,
@@ -2430,7 +2430,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       100,
       expect.objectContaining({
         status: "stopped",

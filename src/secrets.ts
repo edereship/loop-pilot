@@ -28,12 +28,12 @@ export const SECRET_ENV_NAMES = [
   "GITHUB_TOKEN",
   "GH_TOKEN",
   "CODEX_REVIEW_REQUEST_TOKEN",
-  "AUTO_REVIEW_PUSH_TOKEN",
+  "LOOPPILOT_PUSH_TOKEN",
   "ANTHROPIC_API_KEY",
   "CLAUDE_CODE_OAUTH_TOKEN",
   "INPUT_GITHUB_TOKEN",
   "INPUT_CODEX_REVIEW_REQUEST_TOKEN",
-  "INPUT_AUTO_REVIEW_PUSH_TOKEN",
+  "INPUT_LOOPPILOT_PUSH_TOKEN",
   "INPUT_ANTHROPIC_API_KEY",
   "INPUT_CLAUDE_CODE_OAUTH_TOKEN",
 ] as const;
@@ -68,7 +68,7 @@ export function registerAllSecrets(
  * 子プロセス向けに secret を除外した env を返す。defense-in-depth:
  *
  * - `SECRET_ENV_NAMES` に列挙された既知の secret 環境変数を delete
- * - `INPUT_*` プレフィックスの環境変数をすべて delete (auto-review action の input が
+ * - `INPUT_*` プレフィックスの環境変数をすべて delete (LoopPilot action の input が
  *   未来に追加されても、CHECK_COMMAND に渡さない安全側に倒す)
  */
 export function stripSecretEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

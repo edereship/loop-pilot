@@ -70,9 +70,9 @@ beforeEach(() => {
 describe("buildStatusCommentPermalink (TY-259)", () => {
   it("formats the comment permalink in the GitHub standard form", () => {
     expect(
-      buildStatusCommentPermalink("team-yubune", "test-auto-ai-review", 65, 999),
+      buildStatusCommentPermalink("team-yubune", "loop-pilot", 65, 999),
     ).toBe(
-      "https://github.com/team-yubune/test-auto-ai-review/pull/65#issuecomment-999",
+      "https://github.com/team-yubune/loop-pilot/pull/65#issuecomment-999",
     );
   });
 });
@@ -86,7 +86,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
       permalink,
     );
     expect(body).toContain("✅");
-    expect(body).toContain("Auto-review completed");
+    expect(body).toContain("LoopPilot completed");
     expect(body).toContain("3 iterations");
     expect(body).toContain(`[status comment](${permalink})`);
   });
@@ -110,7 +110,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
       permalink,
     );
     expect(body).toContain("🛑");
-    expect(body).toContain("Auto-review stopped");
+    expect(body).toContain("LoopPilot stopped");
     expect(body).toContain(STOP_REASON_LABELS.max_turns_exceeded);
     expect(body).toContain("Open in-scope findings remaining: 2");
     expect(body).toContain("Manual intervention required");
@@ -126,7 +126,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
       permalink,
     );
     expect(body).toContain("🛑");
-    expect(body).toContain("Auto-review stopped");
+    expect(body).toContain("LoopPilot stopped");
     expect(body).toContain("Manual intervention required");
     expect(body).not.toContain("Open in-scope findings remaining");
     expect(body).toContain(`[status comment](${permalink})`);
@@ -140,7 +140,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
     expect(body).toContain("⚠️");
     expect(body).toContain("init incomplete");
     // TY-293 #3 (UX-10): wording must match the YAML fail-safe in
-    // `auto-review-init.yml` so the in-process notification and the
+    // `looppilot-init.yml` so the in-process notification and the
     // fail-safe present the same three concrete actions.
     expect(body).toContain("Re-run the Workflow A run from the Actions tab");
     expect(body).toContain("Re-trigger init by removing and re-adding the gate label");
@@ -153,7 +153,7 @@ describe("postTerminalNotification (TY-259)", () => {
   it("posts a top-level comment with the rendered body", async () => {
     await postTerminalNotification(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       STATUS_COMMENT_ID,
       { kind: "done", iterations: 2 },
@@ -162,9 +162,9 @@ describe("postTerminalNotification (TY-259)", () => {
 
     expect(mockedGhApi).toHaveBeenCalledTimes(1);
     const { body } = expectPostCommentInvocation(mockedGhApi.mock.calls[0]);
-    expect(body).toContain("Auto-review completed");
+    expect(body).toContain("LoopPilot completed");
     expect(body).toContain(
-      `https://github.com/team-yubune/test-auto-ai-review/pull/65#issuecomment-${STATUS_COMMENT_ID}`,
+      `https://github.com/team-yubune/loop-pilot/pull/65#issuecomment-${STATUS_COMMENT_ID}`,
     );
   });
 
@@ -174,7 +174,7 @@ describe("postTerminalNotification (TY-259)", () => {
     await expect(
       postTerminalNotification(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         65,
         STATUS_COMMENT_ID,
         { kind: "stopped", stopReason: "max_turns_exceeded", remainingFindings: 0 },
@@ -193,7 +193,7 @@ describe("terminal poster wiring (TY-259)", () => {
   it("postCompletionComment also posts a top-level notification", async () => {
     const result = await postCompletionComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       4,
       "token",
@@ -203,14 +203,14 @@ describe("terminal poster wiring (TY-259)", () => {
     expect(mockedUpsertStatusComment).toHaveBeenCalledTimes(1);
     expect(mockedGhApi).toHaveBeenCalledTimes(1);
     const { body } = expectPostCommentInvocation(mockedGhApi.mock.calls[0]);
-    expect(body).toContain("Auto-review completed");
+    expect(body).toContain("LoopPilot completed");
     expect(body).toContain("4 iterations");
   });
 
   it("postStopComment also posts a top-level notification with the reason label", async () => {
     const result = await postStopComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       "scope_violation",
       4_466_800_630,
@@ -223,7 +223,7 @@ describe("terminal poster wiring (TY-259)", () => {
     expect(mockedUpsertStatusComment).toHaveBeenCalledTimes(1);
     expect(mockedGhApi).toHaveBeenCalledTimes(1);
     const { body } = expectPostCommentInvocation(mockedGhApi.mock.calls[0]);
-    expect(body).toContain("Auto-review stopped");
+    expect(body).toContain("LoopPilot stopped");
     expect(body).toContain(STOP_REASON_LABELS.scope_violation);
     expect(body).toContain("Open in-scope findings remaining: 3");
   });
@@ -231,7 +231,7 @@ describe("terminal poster wiring (TY-259)", () => {
   it("postInitIncompleteComment also posts a top-level notification", async () => {
     const result = await postInitIncompleteComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       "token",
     );
@@ -248,7 +248,7 @@ describe("terminal poster wiring (TY-259)", () => {
   it("postClaudeCodeActionFixSummary does NOT post a top-level notification (iter progress stays aggregated)", async () => {
     const result = await postClaudeCodeActionFixSummary(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       1,
       ["src/foo.ts"],
@@ -264,7 +264,7 @@ describe("terminal poster wiring (TY-259)", () => {
   it("postTestFailureComment does NOT post a top-level notification on its own (post-fix follows with postStopComment)", async () => {
     const result = await postTestFailureComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       "FAIL\nFAIL\n",
       "token",
@@ -292,7 +292,7 @@ describe("terminal poster wiring (TY-259)", () => {
     ].join("\n");
     await postTestFailureComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       payload,
       "token",
@@ -322,7 +322,7 @@ describe("terminal poster wiring (TY-259)", () => {
     const payload = `before\n${longBacktickRun}\nafter`;
     await postTestFailureComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       payload,
       "token",
@@ -346,7 +346,7 @@ describe("terminal poster wiring (TY-259)", () => {
     const longTildeRun = "~".repeat(500);
     await postTestFailureComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       `before\n${longTildeRun}\nafter`,
       "token",
@@ -362,7 +362,7 @@ describe("terminal poster wiring (TY-259)", () => {
 
     const result = await postCompletionComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       2,
       "token",
@@ -404,10 +404,10 @@ describe("nextActionForStopReason (TY-291 #4)", () => {
 
   it("scope_violation points to stop detail and /restart-review without prescribing a single path (Finding 4)", () => {
     const text = nextActionForStopReason("scope_violation");
-    // Must direct operators to the stop detail rather than assuming AUTO_REVIEW_BLOCK_PATHS is the fix.
+    // Must direct operators to the stop detail rather than assuming LOOPPILOT_BLOCK_PATHS is the fix.
     expect(text).toContain("stop detail");
-    // Still mentions AUTO_REVIEW_BLOCK_PATHS as one option.
-    expect(text).toContain("AUTO_REVIEW_BLOCK_PATHS");
+    // Still mentions LOOPPILOT_BLOCK_PATHS as one option.
+    expect(text).toContain("LOOPPILOT_BLOCK_PATHS");
     expect(text).toContain("`/restart-review`");
   });
 });
@@ -452,7 +452,7 @@ describe("postClaudeCodeActionFixSummary (TY-291 #1)", () => {
   it("writes Current=`Fix committed (iteration N) — queuing Codex re-review` (UX-04)", async () => {
     await postClaudeCodeActionFixSummary(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       3,
       ["src/foo.ts"],
@@ -471,7 +471,7 @@ describe("postClaudeCodeActionFixSummary (TY-291 #1)", () => {
   it("forwards iteration progress when provided", async () => {
     await postClaudeCodeActionFixSummary(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       3,
       ["src/foo.ts"],
@@ -494,7 +494,7 @@ describe("postCompletionComment (TY-291 #4)", () => {
   it("uses the auto-merge imperative when autoMergeOnClean=true", async () => {
     await postCompletionComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       2,
       "token",
@@ -511,7 +511,7 @@ describe("postCompletionComment (TY-291 #4)", () => {
   it("uses the manual-merge imperative when autoMergeOnClean=false", async () => {
     await postCompletionComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       2,
       "token",
@@ -528,7 +528,7 @@ describe("postStopComment (TY-291 #4)", () => {
   it("sets nextAction via nextActionForStopReason instead of generic text", async () => {
     await postStopComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       "max_iterations",
       111,
@@ -548,7 +548,7 @@ describe("postInitialStatusComment (TY-291 #2)", () => {
   it("seeds the visible status comment with iteration budget = 0 / N", async () => {
     const result = await postInitialStatusComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       20,
       "token",
@@ -570,7 +570,7 @@ describe("postFixingStartComment (TY-291 #2)", () => {
   it("announces the fixing transition with iteration and tier in the header", async () => {
     await postFixingStartComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       4,
       "escalated",
@@ -593,7 +593,7 @@ describe("postFixingStartComment (TY-291 #2)", () => {
   it("sets openFindings so operators see the finding count during the repair run (Finding 5)", async () => {
     await postFixingStartComment(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       1,
       "base",
@@ -611,7 +611,7 @@ describe("postFixingStartComment (TY-291 #2)", () => {
 
 describe("buildAutoMergeSkipBody (TY-295)", () => {
   const RUN_URL =
-    "https://github.com/team-yubune/test-auto-ai-review/actions/runs/12345";
+    "https://github.com/team-yubune/loop-pilot/actions/runs/12345";
 
   it("starts every body with the AUTO_MERGE_SKIP_PREFIX for operator scannability and dedup", () => {
     // The dedup query in `recentAutoMergeSkipExists` matches on this prefix,
@@ -649,7 +649,7 @@ describe("buildAutoMergeSkipBody (TY-295)", () => {
     expect(body).toContain("2 CI run(s) failed");
     expect(body).toContain("`typecheck` (`failure`)");
     expect(body).toContain("`lint` (`cancelled`)");
-    // The point of this notification: operator must know auto-review is ✅
+    // The point of this notification: operator must know LoopPilot is ✅
     // but another CI is red — the body has to spell out manual action.
     expect(body).toContain("Resolve the failing checks");
   });
@@ -666,7 +666,7 @@ describe("buildAutoMergeSkipBody (TY-295)", () => {
     expect(body).toContain("10 min");
     expect(body).toContain("`slow-e2e`");
     expect(body).toContain("`build`");
-    expect(body).toContain("AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES");
+    expect(body).toContain("LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES");
   });
 
   it("timeout_no_runs explains the no-CI-vs-API-lag ambiguity rather than hiding it", () => {
@@ -718,7 +718,7 @@ describe("buildAutoMergeSkipBody (TY-295)", () => {
 
 describe("postAutoMergeSkipNotification (TY-295)", () => {
   const RUN_URL =
-    "https://github.com/team-yubune/test-auto-ai-review/actions/runs/12345";
+    "https://github.com/team-yubune/loop-pilot/actions/runs/12345";
 
   it("posts when no recent skip notification exists in the dedup window", async () => {
     // First ghApi call: dedup query returns no matching bodies.
@@ -728,7 +728,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     await postAutoMergeSkipNotification(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
       RUN_URL,
@@ -750,7 +750,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     await postAutoMergeSkipNotification(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
       RUN_URL,
@@ -770,7 +770,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     await postAutoMergeSkipNotification(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       { kind: "head_empty" },
       RUN_URL,
@@ -794,7 +794,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     await expect(
       postAutoMergeSkipNotification(
         "team-yubune",
-        "test-auto-ai-review",
+        "loop-pilot",
         65,
         { kind: "head_empty" },
         RUN_URL,
@@ -815,7 +815,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     await postAutoMergeSkipNotification(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       { kind: "head_empty" },
       RUN_URL,
@@ -833,7 +833,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     await postAutoMergeSkipNotification(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       { kind: "head_empty" },
       RUN_URL,
@@ -860,7 +860,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     await postAutoMergeSkipNotification(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       65,
       { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
       RUN_URL,

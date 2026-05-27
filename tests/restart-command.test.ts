@@ -418,7 +418,7 @@ describe("handleRestartCommand", () => {
     const result = await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -435,7 +435,7 @@ describe("handleRestartCommand", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       999,
       {
         ...state,
@@ -452,14 +452,14 @@ describe("handleRestartCommand", () => {
     );
     expect(deps.postCodexReviewRequest).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       18,
       "codex-token",
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       999,
       {
         ...state,
@@ -478,13 +478,13 @@ describe("handleRestartCommand", () => {
     expect(deps.postCodexReviewRequest.mock.invocationCallOrder[0]).toBeLessThan(
       deps.updateStateComment.mock.invocationCallOrder[1],
     );
-    expect(deps.postComment.mock.calls[0][3]).toContain("🟢 Auto-review restarted by @operator.");
+    expect(deps.postComment.mock.calls[0][3]).toContain("🟢 LoopPilot restarted by @operator.");
     expect(deps.postComment.mock.calls[0][3]).toContain("mode: soft");
     expect(deps.postComment.mock.calls[0][3]).toContain("from: no_findings");
     expect(deps.postComment.mock.calls[0][3]).toContain("reviewRequestCommentId: 45678");
     expect(deps.addRestartReaction).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       777,
       "token",
     );
@@ -502,7 +502,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review --hard",
@@ -537,7 +537,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -567,7 +567,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -600,7 +600,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review --hard",
@@ -615,7 +615,7 @@ describe("handleRestartCommand", () => {
 
     expect(deps.postCodexReviewRequest).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       18,
       "codex-token",
     );
@@ -638,7 +638,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -661,7 +661,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -690,7 +690,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -729,7 +729,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -746,7 +746,7 @@ describe("handleRestartCommand", () => {
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.warning).toHaveBeenCalledWith(
       expect.stringContaining(
-        "Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.",
+        "LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.",
       ),
     );
   });
@@ -763,7 +763,7 @@ describe("handleRestartCommand", () => {
     const result = await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -793,7 +793,7 @@ describe("handleRestartCommand", () => {
     // Stop comment must surface the actionable reason + the underlying error.
     expect(deps.postStopComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       18,
       "codex_request_failed",
       777,
@@ -801,11 +801,11 @@ describe("handleRestartCommand", () => {
       expect.stringContaining("403 Forbidden"),
       "token",
     );
-    // The audit comment ("🟢 Auto-review restarted ...") and the eyes
+    // The audit comment ("🟢 LoopPilot restarted ...") and the eyes
     // reaction advertise a successful restart — neither should fire when
     // the restart failed to actually re-trigger Codex.
     const auditPosted = deps.postComment.mock.calls.some((c) =>
-      typeof c[3] === "string" && c[3].startsWith("🟢 Auto-review restarted"),
+      typeof c[3] === "string" && c[3].startsWith("🟢 LoopPilot restarted"),
     );
     expect(auditPosted).toBe(false);
     expect(deps.addRestartReaction).not.toHaveBeenCalled();
@@ -822,7 +822,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review --hard",
@@ -874,7 +874,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -902,7 +902,7 @@ describe("handleRestartCommand", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -943,7 +943,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -979,7 +979,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -1000,7 +1000,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
     expect(body).toContain("`/restart-review --hard` will return the same rejection");
     // Manual surgery is the only recovery; the comment links the exact gh api command.
     expect(body).toContain("gh api -X DELETE");
-    expect(body).toContain("/repos/team-yubune/test-auto-ai-review/issues/comments/");
+    expect(body).toContain("/repos/team-yubune/loop-pilot/issues/comments/");
   });
 
   it("returns the same dead-end rejection on /restart-review --hard against unparseable state (TY-293 #1 regression)", async () => {
@@ -1018,7 +1018,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review --hard",
@@ -1044,7 +1044,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review now",
@@ -1065,7 +1065,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
   });
 });
 
-describe("AUTO_REVIEW_RESTART_ROLES validation (TY-275 #2)", () => {
+describe("LOOPPILOT_RESTART_ROLES validation (TY-275 #2)", () => {
   it("warns and drops unknown role tokens (typical typo: 'admins')", async () => {
     const deps = makeDeps();
     deps.getCollaboratorPermission.mockResolvedValue("admin");
@@ -1077,7 +1077,7 @@ describe("AUTO_REVIEW_RESTART_ROLES validation (TY-275 #2)", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",
@@ -1101,7 +1101,7 @@ describe("AUTO_REVIEW_RESTART_ROLES validation (TY-275 #2)", () => {
     await handleRestartCommand(
       {
         owner: "team-yubune",
-        repo: "test-auto-ai-review",
+        repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
         triggerCommentBody: "/restart-review",

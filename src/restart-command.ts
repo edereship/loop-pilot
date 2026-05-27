@@ -259,7 +259,7 @@ export async function handleRestartCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      `❌ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart auto-review.`,
+      `❌ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`,
       context.githubToken,
     );
     return { handled: true };
@@ -287,12 +287,12 @@ export async function handleRestartCommand(
     // recovery only applies to the *parseable* `state_corrupted` stop reason,
     // not to this unparseable-JSON path).
     const rejection = [
-      "❌ Restart cannot apply: hidden `auto-review-state` comment is unparseable JSON.",
+      "❌ Restart cannot apply: hidden `looppilot-state` comment is unparseable JSON.",
       "",
       "**`/restart-review --hard` will return the same rejection** — state read fails before the `--hard` clear logic runs, so this path requires manual surgery.",
       "",
       "Recovery (operator):",
-      "1. Find the hidden comment whose body contains `<!-- auto-review-state ... -->` on this PR.",
+      "1. Find the hidden comment whose body contains `<!-- looppilot-state ... -->` on this PR.",
       `2. \`gh api -X DELETE /repos/${context.owner}/${context.repo}/issues/comments/<id>\` to delete it.`,
       "3. Remove and re-add the gate label (or, in full-auto mode, close + reopen the PR) so Workflow A re-runs and recreates the state.",
       "4. Leave an audit comment on the PR with the operator and the reason, for the run history.",
@@ -313,7 +313,7 @@ export async function handleRestartCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      "❌ Restart cannot apply: auto-review state was not found.",
+      "❌ Restart cannot apply: LoopPilot state was not found.",
       context.githubToken,
     );
     return { handled: true };
@@ -375,7 +375,7 @@ export async function handleRestartCommand(
   // exits via `runIfNotVitest`'s `onError` → `demoteFixingOnCrash`. The
   // demoter is a no-op for non-`fixing` statuses, so the state stays at
   // `waiting_codex` with `lastCodexRequestCommentId: null` and the workflow
-  // YAML #2B fail-safe posts only a generic "🛑 Auto-review crashed" without
+  // YAML #2B fail-safe posts only a generic "🛑 LoopPilot crashed" without
   // a `codex_request_failed` stop reason. Re-issuing `/restart-review` walks
   // the same path. Mirror post-fix Phase 4 (`src/main-post-fix.ts:1486-1509`)
   // by downgrading the state to `stopped / codex_request_failed` here and
@@ -453,7 +453,7 @@ export async function handleRestartCommand(
     {
       onConflict: async (detail) => {
         deps.warning(
-          `[restart] ${detail} Auto-review state remains waiting_codex; ` +
+          `[restart] ${detail} LoopPilot state remains waiting_codex; ` +
             "the next Codex review trigger will reconcile.",
         );
       },
@@ -468,7 +468,7 @@ export async function handleRestartCommand(
     context.repo,
     context.prNumber,
     [
-      `🟢 Auto-review restarted by @${context.triggerUserLogin}.`,
+      `🟢 LoopPilot restarted by @${context.triggerUserLogin}.`,
       "",
       `mode: ${command.mode}`,
       `from: ${restartResult.previousStopReason ?? "none"}`,
@@ -537,12 +537,12 @@ async function canRestart(
 }
 
 /**
- * Known role tokens accepted by `AUTO_REVIEW_RESTART_ROLES`.
+ * Known role tokens accepted by `LOOPPILOT_RESTART_ROLES`.
  *
  * `"author"` is a synthetic alias resolved against the PR author (not a
  * GitHub permission); the rest mirror `BUILTIN_PERMISSIONS`. Unknown tokens
  * are silently ignored without this validation, so a typo like
- * `AUTO_REVIEW_RESTART_ROLES="admins"` (trailing s) would reject every
+ * `LOOPPILOT_RESTART_ROLES="admins"` (trailing s) would reject every
  * restart command without surfacing the misconfiguration anywhere — TY-275 #2.
  */
 const KNOWN_RESTART_ROLES: ReadonlySet<string> = new Set([
@@ -562,7 +562,7 @@ function parseRoles(raw: string, warn: (msg: string) => void): Set<string> {
   const unknown = requested.filter((r) => !KNOWN_RESTART_ROLES.has(r));
   if (unknown.length > 0) {
     warn(
-      `[restart] Unknown role(s) ignored in AUTO_REVIEW_RESTART_ROLES: ${unknown.join(", ")}. Valid roles: ${[...KNOWN_RESTART_ROLES].join(", ")}.`,
+      `[restart] Unknown role(s) ignored in LOOPPILOT_RESTART_ROLES: ${unknown.join(", ")}. Valid roles: ${[...KNOWN_RESTART_ROLES].join(", ")}.`,
     );
   }
   return new Set(requested.filter((r) => KNOWN_RESTART_ROLES.has(r)));

@@ -1,6 +1,6 @@
 # Hygiene 系の判断ログ
 
-`team-yubune/test-auto-ai-review` のリポジトリ整備に関する判断を 1 箇所にまとめる。「やる / やらない」を選んだ理由を残し、再度議論し直す手間を防ぐ。
+`team-yubune/loop-pilot` のリポジトリ整備に関する判断を 1 箇所にまとめる。「やる / やらない」を選んだ理由を残し、再度議論し直す手間を防ぐ。
 
 ## TY-270: README/LICENSE / 依存整理ほか
 
@@ -12,7 +12,7 @@
 - `pushWithToken` を `git -c http.extraheader='AUTHORIZATION: Basic <base64>' push <pinned-url> HEAD:refs/heads/<ref>` 方式へ (Codex PR #77 のセキュリティ指摘対応)。`.git/config` に token を書かず、push 先 URL と refspec を `Config` の `repoOwner` / `repoName` / `prHeadRef` から組み立てて明示的に渡す。三段の defense:
   1. **Pinned destination**: `git push <destUrl> <refspec>` で URL を明示。`remote.origin.url` が改変されても PAT が外部に流れない。
   2. **Cleared rewrite rules**: push 直前に `git config --local --get-regexp '^url\..*\.(insteadOf|pushInsteadOf)$'` で `.git/config` 上のすべての rewrite ルールを列挙し、`--unset-all` で個別に削除する。`-c url.<base>.insteadOf=` を空文字で上書きする方式は **既存の `url.<attacker>.insteadOf=https://github.com/` を無効化できない** ため、不十分。
-  3. **Stripped checkout extraheader**: `actions/checkout@v5` が残した `http.https://github.com/.extraheader` (GITHUB_TOKEN) を push 前に `--unset-all` で除去し、`AUTO_REVIEW_PUSH_TOKEN` ヘッダと二重送信されないようにする。エラーは exit 5 (key 不在) のみ swallow し、それ以外は再 throw して push を中断 (silent failure で GITHUB_TOKEN ヘッダが残るのを防ぐ)。
+  3. **Stripped checkout extraheader**: `actions/checkout@v5` が残した `http.https://github.com/.extraheader` (GITHUB_TOKEN) を push 前に `--unset-all` で除去し、`LOOPPILOT_PUSH_TOKEN` ヘッダと二重送信されないようにする。エラーは exit 5 (key 不在) のみ swallow し、それ以外は再 throw して push を中断 (silent failure で GITHUB_TOKEN ヘッダが残るのを防ぐ)。
 - `gh api` の body 渡しを `--field` で統一 (TY-269 #13 と同時)。
 
 ### 採用した判断

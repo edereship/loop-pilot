@@ -53,11 +53,11 @@ Operating rules for this review:
 - Workflow B checks out the PR head, invokes `anthropics/claude-code-action@v1`
   to repair Codex findings, runs `CHECK_COMMAND`, scans the diff, then
   commits and pushes using a dedicated push token.
-- Loop state lives in a **hidden comment** on the PR (`auto-review-state`,
-  HTML-comment-wrapped JSON). A second visible comment (`auto-review-status`)
+- Loop state lives in a **hidden comment** on the PR (`looppilot-state`,
+  HTML-comment-wrapped JSON). A second visible comment (`looppilot-status`)
   is the operator-facing transcript.
 - Multiple distinct tokens flow through the action with different scopes:
-  `GITHUB_TOKEN`, `CODEX_REVIEW_REQUEST_TOKEN`, `AUTO_REVIEW_PUSH_TOKEN`,
+  `GITHUB_TOKEN`, `CODEX_REVIEW_REQUEST_TOKEN`, `LOOPPILOT_PUSH_TOKEN`,
   `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`. They are **not**
   interchangeable; each has a documented purpose in
   `docs/operations/security.md`.
@@ -75,8 +75,8 @@ Start by reading these files in order before doing anything else:
 4. `docs/architecture/event-design.md`
 5. `docs/operations/security.md` (entire file)
 6. `docs/operations/scope-policy.md`
-7. `.github/workflows/auto-review-init.yml`
-8. `.github/workflows/auto-review-loop.yml`
+7. `.github/workflows/looppilot-init.yml`
+8. `.github/workflows/looppilot-loop.yml`
 9. `init/action.yml`, `loop/action.yml`
 10. `src/types.ts`, `src/config.ts`, `src/secrets.ts`
 
@@ -87,7 +87,7 @@ Adversaries you must defend against, ordered roughly by realistic impact:
 | # | Adversary | Capability | Goal |
 | - | --------- | ---------- | ---- |
 | A | External fork-PR author | Can create a PR from a fork; cannot read secrets per GitHub defaults | Get the action to check out and execute their code with the repo's write tokens; get the action to push commits to the base repo |
-| B | Drive-by commenter on a public PR | Can post issue / review comments; not a collaborator | Forge a hidden `auto-review-state` to silently stop / restart the loop; spam `/restart-review` to burn quota; inject prompt-payloads via comment bodies |
+| B | Drive-by commenter on a public PR | Can post issue / review comments; not a collaborator | Forge a hidden `looppilot-state` to silently stop / restart the loop; spam `/restart-review` to burn quota; inject prompt-payloads via comment bodies |
 | C | Compromised Codex bot output | Findings text is attacker-controllable (Codex quotes PR diff content) | Indirect prompt injection into the Claude prompt; get the agent to read secrets, write malicious code, exfiltrate via committed paths |
 | D | Compromised Claude agent output | The agent itself produces arbitrary diffs | Write secrets into `src/` or push to a workflow file to disable scope checks on future runs; rewrite git config to redirect pushes; insert exec sinks (`eval`, child_process) into the codebase |
 | E | Collaborator with write but not admin | Can push to branches; can trigger the action; cannot change secrets / variables | Use the loop to bypass branch protection (e.g. push to protected files via the bot); escalate via `/restart-review` after `secret_leak_suspected` |
@@ -104,7 +104,7 @@ reference in code or docs as a previously-shipped fix — confirm the fix is
 still load-bearing and not bypassable by adjacent code paths.
 
 ### 3.1 Workflow trigger and fork-PR guard
-- `.github/workflows/auto-review-init.yml`, `auto-review-loop.yml`
+- `.github/workflows/looppilot-init.yml`, `looppilot-loop.yml`
 - The `if:` clauses on the `auto-fix` job (label gate, Codex bot identity
   gate, restart-command author_association gate)
 - `Check fork PR (security guard)` step
@@ -117,7 +117,7 @@ still load-bearing and not bypassable by adjacent code paths.
 - `src/state-manager.ts` — `getTrustedStateCommentAuthors`,
   `buildTrustedAuthorJqFilter`, the jq filter spliced into `gh api ... --jq`
 - `src/status-comment.ts` — same filter
-- The `AUTO_REVIEW_STATE_COMMENT_AUTHORS` action input / env path
+- The `LOOPPILOT_STATE_COMMENT_AUTHORS` action input / env path
 - Look for: jq injection, ReDoS in `validateState`, parsing of `--paginate`
   output, ordering assumptions (which comment is "latest"), TOCTOU between
   read and patch (`updateStateComment`, `state-comment-locker.ts`)
@@ -133,7 +133,7 @@ still load-bearing and not bypassable by adjacent code paths.
 - Every callsite that runs a child process — does it inherit the parent env
   unfiltered? Are any secrets passed via argv (visible in `ps`)?
 - Check that `CODEX_REVIEW_REQUEST_TOKEN` is never used to push, that
-  `AUTO_REVIEW_PUSH_TOKEN` is never given to the agent, and that
+  `LOOPPILOT_PUSH_TOKEN` is never given to the agent, and that
   `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` cannot both be set.
 
 ### 3.4 Agent execution control (`claude-code-action` invocation)
@@ -312,7 +312,7 @@ findings on a surface are fine, an unread surface is not.
 
 | Surface | Read | Files | Findings |
 | ------- | ---- | ----- | -------- |
-| 3.1 Workflow trigger and fork-PR guard | yes | .github/workflows/auto-review-loop.yml, ... | SEC-01, SEC-04 |
+| 3.1 Workflow trigger and fork-PR guard | yes | .github/workflows/looppilot-loop.yml, ... | SEC-01, SEC-04 |
 | 3.2 Hidden-comment trust boundary       | yes | src/state-manager.ts:1-531, ... | (none) |
 | ...                                     |     |       |          |
 ```
@@ -325,7 +325,7 @@ findings on a surface are fine, an unread surface is not.
 - "Consider rotating tokens" / "consider documenting" without a code defect —
   out of scope.
 - Findings that depend on the operator misconfiguring an explicitly-documented
-  knob (e.g. setting `AUTO_REVIEW_FULL_AUTO=true` on a public repo) — mention
+  knob (e.g. setting `LOOPPILOT_FULL_AUTO=true` on a public repo) — mention
   these as `P3 / hardening` only if the documentation is missing or
   misleading.
 - Restating known TY-2XX fixes as findings — confirm them in the Coverage

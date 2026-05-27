@@ -101,7 +101,7 @@ export interface PostFixDeps {
   /**
    * Marks the workflow step as `failure` (TY-297 #2). `core.error` alone only
    * adds an annotation; the step still ends in `success` so the
-   * `auto-review-loop.yml` #2B fail-safe (which keys on
+   * `looppilot-loop.yml` #2B fail-safe (which keys on
    * `steps.loop.conclusion == 'failure' || 'cancelled'`) does not fire and the
    * PR receives no top-level notification. Use this instead of a silent
    * `return` whenever post-fix cannot proceed and the operator must intervene,
@@ -115,7 +115,7 @@ export interface PostFixDeps {
    * explicitly: that path exits via `setFailed + return` rather than throwing,
    * so `runIfNotVitest`'s `onError` — which is the only other caller — never
    * runs. Without this call a transient `readState` failure (or a misconfigured
-   * `AUTO_REVIEW_STATE_COMMENT_AUTHORS` that makes the real comment invisible)
+   * `LOOPPILOT_STATE_COMMENT_AUTHORS` that makes the real comment invisible)
    * would leave the state `fixing` until pre-fix's 30-min stale detector, during
    * which the operator's `/restart-review` is silently skipped.
    */
@@ -316,8 +316,8 @@ const SCOPE_POLICY_DOC = "docs/operations/scope-policy.md";
  * scope check rejects a diff (TY-271).
  *
  * Each violation reason maps to a different remediation: hard-block paths get
- * a copy-pasteable `AUTO_REVIEW_BLOCK_PATHS=!<path>` snippet; budget overruns
- * point at `AUTO_REVIEW_SCOPE_MAX_*`; binary changes are flagged as outside
+ * a copy-pasteable `LOOPPILOT_BLOCK_PATHS=!<path>` snippet; budget overruns
+ * point at `LOOPPILOT_SCOPE_MAX_*`; binary changes are flagged as outside
  * the auto-fix surface; path traversal is reported as a security refusal with
  * no override path.
  */
@@ -521,9 +521,9 @@ export function formatScopeViolationDetail(
         lines.push(
           "",
           "To let Claude edit these paths, add the matching `!` entries to the",
-          "`AUTO_REVIEW_BLOCK_PATHS` Repository variable:",
+          "`LOOPPILOT_BLOCK_PATHS` Repository variable:",
           "",
-          `  AUTO_REVIEW_BLOCK_PATHS = "${uniqueSnippets.join(",")}"`,
+          `  LOOPPILOT_BLOCK_PATHS = "${uniqueSnippets.join(",")}"`,
           "",
           "(If the variable is already set, append the new entries with a comma.)",
         );
@@ -541,7 +541,7 @@ export function formatScopeViolationDetail(
       return [
         `Auto-fix diff exceeds the file-count budget (${violation.offendingPaths.length} > ${maxFiles}).`,
         "",
-        "To raise the limit, set the `AUTO_REVIEW_SCOPE_MAX_FILES` Repository variable",
+        "To raise the limit, set the `LOOPPILOT_SCOPE_MAX_FILES` Repository variable",
         "(or pass the `scope-max-files` action input) to a higher value.",
         "",
         `See ${SCOPE_POLICY_DOC}.`,
@@ -550,7 +550,7 @@ export function formatScopeViolationDetail(
       return [
         `Auto-fix diff exceeds the line-count budget (limit ${maxLines}).`,
         "",
-        "To raise the limit, set the `AUTO_REVIEW_SCOPE_MAX_LINES` Repository variable",
+        "To raise the limit, set the `LOOPPILOT_SCOPE_MAX_LINES` Repository variable",
         "(or pass the `scope-max-lines` action input) to a higher value.",
         "",
         `See ${SCOPE_POLICY_DOC}.`,
@@ -615,7 +615,7 @@ export async function runPostFix(
     config.githubToken,
   );
   if (!stateResult.found) {
-    // TY-297 #2: end the step in `failure` so the auto-review-loop.yml #2B
+    // TY-297 #2: end the step in `failure` so the looppilot-loop.yml #2B
     // fail-safe posts the top-level 🛑 notification. A silent `return` would
     // leave the workflow step in `success` and the fail-safe would not fire.
     //
@@ -623,7 +623,7 @@ export async function runPostFix(
     // path exits via `setFailed + return` (not a throw), `runIfNotVitest`'s
     // `onError` — the only other place demoteFixingOnCrash runs — never fires.
     // Without this call a transient readState failure, or a misconfigured
-    // `AUTO_REVIEW_STATE_COMMENT_AUTHORS` that hides the real comment, would
+    // `LOOPPILOT_STATE_COMMENT_AUTHORS` that hides the real comment, would
     // strand the state at `fixing` until pre-fix's 30-min stale detector, and
     // the operator's `/restart-review` would be silently skipped by pre-fix's
     // `status === fixing && !stale` branch in the meantime. demoteFixingOnCrash
@@ -633,7 +633,7 @@ export async function runPostFix(
     deps.setFailed(
       "[post-fix] Hidden state comment is missing or corrupted at post-fix entry. " +
         "Demoted hidden state to `stopped/workflow_crashed` if it was still `fixing`. " +
-        "If the state comment exists but is invisible, verify the `AUTO_REVIEW_STATE_COMMENT_AUTHORS` " +
+        "If the state comment exists but is invisible, verify the `LOOPPILOT_STATE_COMMENT_AUTHORS` " +
         "configuration, then use `/restart-review` to resume.",
     );
     return;
@@ -892,24 +892,24 @@ export async function runPostFix(
   // block spec) so existing repos keep working until the next minor.
   if (config.scopeAllowedPathPrefixes.length > 0) {
     deps.warning(
-      "[scope-check] AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES / scope-allowed-path-prefixes is deprecated (TY-271). The allow-list concept has been removed; the value is ignored. The scope check now blocks only paths matching AUTO_REVIEW_BLOCK_PATHS (or the built-in defaults). Remove this variable.",
+      "[scope-check] LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES / scope-allowed-path-prefixes is deprecated (TY-271). The allow-list concept has been removed; the value is ignored. The scope check now blocks only paths matching LOOPPILOT_BLOCK_PATHS (or the built-in defaults). Remove this variable.",
     );
   }
   if (config.scopeAdditionalHardBlockPrefixes.length > 0) {
     deps.warning(
-      `[scope-check] AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES / scope-additional-hard-block-prefixes is deprecated (TY-271). Migrate to AUTO_REVIEW_BLOCK_PATHS, e.g. AUTO_REVIEW_BLOCK_PATHS="${config.scopeAdditionalHardBlockPrefixes.join(",")}".`,
+      `[scope-check] LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES / scope-additional-hard-block-prefixes is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS, e.g. LOOPPILOT_BLOCK_PATHS="${config.scopeAdditionalHardBlockPrefixes.join(",")}".`,
     );
   }
   if (config.hardBlockOverride.length > 0) {
     deps.warning(
-      `[scope-check] AUTO_REVIEW_HARD_BLOCK_OVERRIDE / auto-review-hard-block-override is deprecated (TY-271). Migrate to AUTO_REVIEW_BLOCK_PATHS with the ! prefix, e.g. AUTO_REVIEW_BLOCK_PATHS="${config.hardBlockOverride.map((p) => `!${p}`).join(",")}".`,
+      `[scope-check] LOOPPILOT_HARD_BLOCK_OVERRIDE / looppilot-hard-block-override is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS with the ! prefix, e.g. LOOPPILOT_BLOCK_PATHS="${config.hardBlockOverride.map((p) => `!${p}`).join(",")}".`,
     );
   }
 
   const blockSpec = parseBlockPathsSpec(config.autoReviewBlockPaths);
   for (const ignored of blockSpec.ignoredRemovals) {
     deps.warning(
-      `[scope-check] AUTO_REVIEW_BLOCK_PATHS removal "!${ignored}" was ignored: .github/ is locked and cannot be unblocked.`,
+      `[scope-check] LOOPPILOT_BLOCK_PATHS removal "!${ignored}" was ignored: .github/ is locked and cannot be unblocked.`,
     );
   }
 
@@ -923,7 +923,7 @@ export async function runPostFix(
 
   if (config.autoReviewBlockPaths !== "") {
     deps.info(
-      `[scope-check] AUTO_REVIEW_BLOCK_PATHS: "${config.autoReviewBlockPaths}"`,
+      `[scope-check] LOOPPILOT_BLOCK_PATHS: "${config.autoReviewBlockPaths}"`,
     );
   }
 
@@ -1520,7 +1520,7 @@ export async function runPostFix(
     const commitMessage = [
       `fix: auto-resolve Codex review findings (iteration ${inputs.iteration})`,
       "",
-      "Generated by anthropics/claude-code-action@v1 (auto-review-loop).",
+      "Generated by anthropics/claude-code-action@v1 (loop-pilot).",
       `Files: ${modifiedFiles.length}, lines: ${scopeResult.totalLines}.`,
     ].join("\n");
     try {
@@ -1671,7 +1671,7 @@ export async function runPostFix(
     // by the 1st write and the `@codex review` comment has been posted, so
     // the loop is healthy regardless of this write's outcome. Surfacing a
     // `state_conflict` 🛑 stop here would falsely tell operators the
-    // auto-review halted while it is actually still waiting for the next
+    // LoopPilot halted while it is actually still waiting for the next
     // Codex review trigger.
     if (
       !(await updateStateCommentLocked(
@@ -1680,7 +1680,7 @@ export async function runPostFix(
         {
           onConflict: async (detail) => {
             deps.warning(
-              `[post-fix] ${detail} Auto-review state remains waiting_codex; ` +
+              `[post-fix] ${detail} LoopPilot state remains waiting_codex; ` +
                 "the next Codex review trigger will reconcile.",
             );
           },

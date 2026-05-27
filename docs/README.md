@@ -14,7 +14,7 @@ PoC の主要 E2E は PR #7 / TY-11 で確認済み。
 - 再 `@codex review`
 - 閾値以上 (default `P3`) の finding が解消された `done` 終了
 
-現在の実装では P0/P1/P2/P3 をすべて自動修正対象とし（default `P3`、`AUTO_REVIEW_SEVERITY_THRESHOLD` で変更可能）、停止後・完了後は `/restart-review` または `/restart-review --hard` で再度レビュー・修正ループにかけられる。詳細は [推奨フローと状態管理](architecture/flow-and-state.md) と [停止条件とリカバリ](operations/stop-and-recovery.md) を参照する。
+現在の実装では P0/P1/P2/P3 をすべて自動修正対象とし（default `P3`、`LOOPPILOT_SEVERITY_THRESHOLD` で変更可能）、停止後・完了後は `/restart-review` または `/restart-review --hard` で再度レビュー・修正ループにかけられる。詳細は [推奨フローと状態管理](architecture/flow-and-state.md) と [停止条件とリカバリ](operations/stop-and-recovery.md) を参照する。
 
 本番移植前の残課題は [本番移植チェックリスト](checklists/production-migration.md) に集約する。次に読むべき資料は、現状確認なら [PoC チェックリスト](checklists/poc-checklist.md)、移植判断なら [本番移植チェックリスト](checklists/production-migration.md)、停止後の復旧手順なら [停止条件とリカバリ](operations/stop-and-recovery.md)。
 
@@ -41,7 +41,7 @@ PoC の主要 E2E は PR #7 / TY-11 で確認済み。
 | ドキュメント | 内容 |
 |-------------|------|
 | [セキュリティ](operations/security.md) | Fork PR 防止・Bot Token スコープ・API キー管理 |
-| [Scope Policy](operations/scope-policy.md) | post-fix の変更スコープ検査仕様・`AUTO_REVIEW_BLOCK_PATHS` syntax・旧変数 deprecation マイグレーション (TY-271) |
+| [Scope Policy](operations/scope-policy.md) | post-fix の変更スコープ検査仕様・`LOOPPILOT_BLOCK_PATHS` syntax・旧変数 deprecation マイグレーション (TY-271) |
 | [検証コマンドとロールバック](operations/check-and-rollback.md) | CHECK_COMMAND・失敗時ロールバック・出力サニタイズ |
 | [停止条件とリカバリ](operations/stop-and-recovery.md) | 正常/強制/異常停止・停止コメント・`/restart-review` による再実行手順 |
 | [Production E2E Validation Notes](operations/production-e2e-validation.md) | TY-145 の本番移植前 E2E 検証結果・本番 repo で必要な人間確認手順 |
@@ -68,11 +68,11 @@ PoC の主要 E2E は PR #7 / TY-11 で確認済み。
 | ドキュメント | 内容 |
 |-------------|------|
 | [`_archive/specs/claude-fix-engine.md`](_archive/specs/claude-fix-engine.md) | 旧 `src/claude-fix-engine.ts` (Anthropic SDK + `edit_file` ツール直接適用) の仕様。TY-236 で `claude-code-action` に置き換え |
-| [`_archive/plans/2026-03-22-auto-review-loop.md`](_archive/plans/2026-03-22-auto-review-loop.md) | PoC 初期の実装計画。PR #69 まで取り込み済みで現状の実装と乖離があるため history 用 |
+| [`_archive/plans/2026-03-22-loop-pilot.md`](_archive/plans/2026-03-22-loop-pilot.md) | PoC 初期の実装計画。PR #69 まで取り込み済みで現状の実装と乖離があるため history 用 |
 
 ## 読み方ガイド
 
 1. **初めて読む場合:** [システム概要](architecture/system-overview.md) → [推奨フローと状態管理](architecture/flow-and-state.md) の順で全体像を掴む
 2. **実装を始める場合:** [PoC チェックリスト](checklists/poc-checklist.md) を起点に、各仕様ドキュメントを参照する
 3. **特定コンポーネントを実装する場合:** Specs 配下の該当ドキュメントを直接参照する
-4. **停止後・完了後に再実行する場合:** [停止条件とリカバリ](operations/stop-and-recovery.md) の `/restart-review` 手順と `AUTO_REVIEW_RESTART_ROLES` を確認する
+4. **停止後・完了後に再実行する場合:** [停止条件とリカバリ](operations/stop-and-recovery.md) の `/restart-review` 手順と `LOOPPILOT_RESTART_ROLES` を確認する

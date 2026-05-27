@@ -78,13 +78,13 @@ export interface MergerDeps {
   /** Wall-clock source for the timeout budget. */
   now: () => number;
   /**
-   * `GITHUB_RUN_ID` of the auto-review-loop run invoking this. The matching
+   * `GITHUB_RUN_ID` of the loop-pilot run invoking this. The matching
    * workflow run is excluded from the pending / failure check so the loop
    * does not wait for itself. Empty string disables self-exclusion.
    */
   selfRunId: string;
   /**
-   * `GITHUB_WORKFLOW` name of the auto-review-loop workflow. Used to exclude
+   * `GITHUB_WORKFLOW` name of the loop-pilot workflow. Used to exclude
    * all previous loop runs when the current run is not found by its run ID
    * (e.g. issue_comment triggers set GITHUB_SHA to the default-branch commit,
    * so the current run is absent from PR head/merge-sha run queries). Empty
@@ -93,7 +93,7 @@ export interface MergerDeps {
   selfWorkflowName: string;
   /**
    * Workflow file path extracted from `GITHUB_WORKFLOW_REF`
-   * (e.g. `.github/workflows/auto-review-loop.yml`). When non-empty, used
+   * (e.g. `.github/workflows/looppilot-loop.yml`). When non-empty, used
    * together with `selfWorkflowName` in the name-based fallback to
    * disambiguate workflows that share the same display name but live in
    * different files.  Empty string falls back to name-only matching.
@@ -410,7 +410,7 @@ export async function mergeIfChecksPass(
       }
     }
 
-    // Exclude the auto-review-loop workflow entirely (not just the current run)
+    // Exclude the loop-pilot workflow entirely (not just the current run)
     // so that previous loop attempts on the same commit (e.g. transient infra
     // failures that left a `failure`/`cancelled` conclusion) do not permanently
     // block auto-merge. We identify the loop's workflow by the workflow_id of
@@ -527,7 +527,7 @@ export async function mergeIfChecksPass(
         // TY-328: no non-self CI run ever appeared within the full timeout
         // budget. The fast-path no-CI merge below only fires once
         // `elapsedMs >= noCiConfiguredDelayMs` (default 60s); when the operator
-        // configures `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` at or below that
+        // configures `LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES` at or below that
         // delay (the input minimum is 1 min == 60s), this timeout gate is
         // reached first and the fast path is never evaluated — so a genuinely
         // CI-less repo would skip auto-merge forever. Treat "waited the whole

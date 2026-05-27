@@ -266,7 +266,7 @@ export function push(): void {
  * `actions/checkout@v5` writes for `GITHUB_TOKEN`. Git's `http.extraHeader`
  * is multi-value, so if we leave that key in place and add our own via
  * `-c http.extraheader=...`, both headers are sent and the server may pick
- * the wrong one — defeating `AUTO_REVIEW_PUSH_TOKEN`.
+ * the wrong one — defeating `LOOPPILOT_PUSH_TOKEN`.
  *
  * `git config --unset-all <key>` exits 5 when the key is not present (the
  * expected case outside Actions). Any other failure (corrupt config etc.)
@@ -379,7 +379,7 @@ function clearUrlRewriteRules(): void {
  * meaning the rule still matches narrower paths like
  * `https://github.com/<owner>/`). Self-hosted runners with org-wide GitLab
  * rewrites (`url.https://gitlab.com/.insteadOf = https://gitlab.com/`) must
- * not have their `AUTO_REVIEW_PUSH_TOKEN` pushes blocked by an over-broad
+ * not have their `LOOPPILOT_PUSH_TOKEN` pushes blocked by an over-broad
  * check.
  *
  * Codex P1 (PR #85): include only the matching rule **key** in the error
@@ -462,7 +462,7 @@ function assertNoGlobalUrlRewriteRules(destinationUrl: string): void {
   // only a count and tell the operator how to enumerate locally.
   throw new Error(
     `Refusing to push: global git config carries ${offendingCount} url rewrite rule(s) that can redirect the push to ${destinationUrl}.\n` +
-      `Inspect with \`git config --global --get-regexp '^url\\..*\\.(insteadOf|pushInsteadOf)$'\` and remove the offending entries with \`git config --global --unset-all <key>\` before re-running auto-review.`,
+      `Inspect with \`git config --global --get-regexp '^url\\..*\\.(insteadOf|pushInsteadOf)$'\` and remove the offending entries with \`git config --global --unset-all <key>\` before re-running LoopPilot.`,
   );
 }
 

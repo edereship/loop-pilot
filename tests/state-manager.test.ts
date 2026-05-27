@@ -19,7 +19,7 @@ vi.mock("node:child_process", () => ({
 
 const mockedExecFile = vi.mocked(execFile);
 
-const STATE_MARKER = "auto-review-state";
+const STATE_MARKER = "looppilot-state";
 
 function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
@@ -64,7 +64,7 @@ describe("serializeState", () => {
     const state = makeState();
     const serialized = serializeState(state);
 
-    expect(serialized.startsWith("Auto-review state is stored in this comment.")).toBe(true);
+    expect(serialized.startsWith("LoopPilot state is stored in this comment.")).toBe(true);
   });
 
   it("serializes to hidden comment format (contains marker + JSON + closing)", () => {
@@ -75,7 +75,7 @@ describe("serializeState", () => {
     expect(serialized).toContain("-->");
     // The JSON content should be parseable
     const jsonMatch = serialized.match(
-      /<!-- auto-review-state\n([\s\S]*?)\n-->/,
+      /<!-- looppilot-state\n([\s\S]*?)\n-->/,
     );
     expect(jsonMatch).not.toBeNull();
     const parsed = JSON.parse(jsonMatch![1]);
@@ -220,7 +220,7 @@ describe("deserializeState", () => {
   });
 
   it("returns null for a comment body with corrupted JSON", () => {
-    const corruptedBody = `<!-- auto-review-state\n{not valid json\n-->`;
+    const corruptedBody = `<!-- looppilot-state\n{not valid json\n-->`;
     expect(deserializeState(corruptedBody)).toBeNull();
   });
 
@@ -423,9 +423,9 @@ describe("lastProcessedTriggerSource round-trip (TY-301 #2)", () => {
     // surface `null` so the dedup check in pre-fix falls back to id-only
     // comparison, preserving the pre-TY-301 behaviour for in-flight PRs.
     const legacyBody = [
-      "Auto-review state is stored in this comment.",
+      "LoopPilot state is stored in this comment.",
       "",
-      "<!-- auto-review-state",
+      "<!-- looppilot-state",
       JSON.stringify(
         {
           iterationCount: 0,
@@ -455,9 +455,9 @@ describe("lastProcessedTriggerSource round-trip (TY-301 #2)", () => {
 
   it("rejects state with an out-of-range lastProcessedTriggerSource so a forged value cannot smuggle in arbitrary strings", () => {
     const tamperedBody = [
-      "Auto-review state is stored in this comment.",
+      "LoopPilot state is stored in this comment.",
       "",
-      "<!-- auto-review-state",
+      "<!-- looppilot-state",
       JSON.stringify(
         {
           iterationCount: 0,
@@ -497,9 +497,9 @@ describe("fixingStartedAt round-trip (TY-273 #B4)", () => {
 
   it("normalizes legacy state without fixingStartedAt to null", () => {
     const legacyBody = [
-      "Auto-review state is stored in this comment.",
+      "LoopPilot state is stored in this comment.",
       "",
-      "<!-- auto-review-state",
+      "<!-- looppilot-state",
       JSON.stringify(
         {
           iterationCount: 0,
@@ -528,9 +528,9 @@ describe("deserializeState (forward compatibility)", () => {
     // Hand-crafted body shaped like a pre-extension state comment to verify
     // existing PRs still deserialize cleanly after the field is added.
     const legacyBody = [
-      "Auto-review state is stored in this comment.",
+      "LoopPilot state is stored in this comment.",
       "",
-      "<!-- auto-review-state",
+      "<!-- looppilot-state",
       JSON.stringify(
         {
           iterationCount: 1,
@@ -564,7 +564,7 @@ describe("getTrustedStateCommentAuthors (TY-272 #A)", () => {
   it("parses a comma-separated list, trimming whitespace and ignoring empties", () => {
     expect(
       getTrustedStateCommentAuthors({
-        AUTO_REVIEW_STATE_COMMENT_AUTHORS: "github-actions[bot], my-app[bot], ,foo",
+        LOOPPILOT_STATE_COMMENT_AUTHORS: "github-actions[bot], my-app[bot], ,foo",
       }),
     ).toEqual(["github-actions[bot]", "my-app[bot]", "foo"]);
   });
@@ -572,7 +572,7 @@ describe("getTrustedStateCommentAuthors (TY-272 #A)", () => {
   it("falls back to the default when the env var is whitespace-only or all-empty", () => {
     expect(
       getTrustedStateCommentAuthors({
-        AUTO_REVIEW_STATE_COMMENT_AUTHORS: " , , ",
+        LOOPPILOT_STATE_COMMENT_AUTHORS: " , , ",
       }),
     ).toEqual(["github-actions[bot]"]);
   });

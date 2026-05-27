@@ -20,7 +20,7 @@ const baseConfig: Config = {
   claudeCodeOauthToken: "",
   githubToken: "github-token",
   repoOwner: "team-yubune",
-  repoName: "test-auto-ai-review",
+  repoName: "loop-pilot",
   prNumber: 227,
   triggerCommentId: 0,
   triggerCommentBody: "",
@@ -104,7 +104,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({
         status: "waiting_codex",
@@ -116,7 +116,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({
         status: "waiting_codex",
@@ -154,7 +154,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({
         status: "waiting_codex",
@@ -166,7 +166,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({
         status: "waiting_codex",
@@ -193,7 +193,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       12345,
       expect.objectContaining({ status: "waiting_codex" }),
       "github-token",
@@ -201,7 +201,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       12345,
       expect.objectContaining({ status: "initialized" }),
       "github-token",
@@ -220,7 +220,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       12345,
       expect.objectContaining({
         status: "waiting_codex",
@@ -231,7 +231,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       12345,
       expect.objectContaining({
         status: "waiting_codex",
@@ -255,7 +255,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({ status: "initialized" }),
       "github-token",
@@ -263,7 +263,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({
         status: "waiting_codex",
@@ -274,7 +274,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       3,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({
         status: "waiting_codex",
@@ -314,7 +314,7 @@ describe("runInit", () => {
     expect(deps.postInitialStatusComment).toHaveBeenCalledTimes(1);
     expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       227,
       20,
       "github-token",
@@ -328,7 +328,7 @@ describe("runInit", () => {
 
     expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       227,
       15,
       "github-token",
@@ -347,7 +347,7 @@ describe("runInit", () => {
 
     expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       227,
       50,
       "github-token",
@@ -387,7 +387,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({ status: "waiting_codex", lastCodexRequestCommentId: null }),
       "github-token",
@@ -396,7 +396,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({ status: "waiting_codex", lastCodexRequestCommentId: 67890 }),
       "github-token",
@@ -422,7 +422,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       111,
       expect.objectContaining({ status: "initialized" }),
       "github-token",
@@ -447,7 +447,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       3,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       12345,
       expect.objectContaining({ status: "stopped", stopReason: "codex_request_failed" }),
       "github-token",
@@ -500,7 +500,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       3,
       "team-yubune",
-      "test-auto-ai-review",
+      "loop-pilot",
       12345,
       expect.objectContaining({ status: "waiting_codex", lastCodexRequestCommentId: 67890 }),
       "github-token",

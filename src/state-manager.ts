@@ -17,10 +17,10 @@ import type { ReviewState } from "./types.js";
  */
 const PREVIOUS_CHECK_FAILURE_READ_LIMIT = PREVIOUS_CHECK_FAILURE_MAX_CHARS * 2;
 
-const STATE_MARKER = "auto-review-state";
+const STATE_MARKER = "looppilot-state";
 const STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 const STATE_COMMENT_CLOSE = "-->";
-const STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
+const STATE_COMMENT_VISIBLE_TEXT = "LoopPilot state is stored in this comment.";
 // TY-296: keep the per-write history cap aligned with the default
 // `MAX_REVIEW_ITERATIONS` (config.ts → 20) so `isLoop` can detect oscillations
 // whose cycle length exceeds 3. With the old cap of 3, an A→B→C→D→A pattern
@@ -37,24 +37,24 @@ const VALID_STATUSES = new Set(["initialized", "waiting_codex", "fixing", "done"
 // Public PRs let any commenter post a body that contains our hidden state
 // marker. The body-only jq filter would happily pick the attacker's comment as
 // the "latest" state (gh paginate is ascending, the last match wins) and an
-// adversary could stuff `{"status":"done"}` to silently stop auto-review.
+// adversary could stuff `{"status":"done"}` to silently stop LoopPilot.
 //
 // State comments are always created by the workflow's `GITHUB_TOKEN` /
-// `secrets.AUTO_REVIEW_PUSH_TOKEN`-equivalent identity, so the author is
+// `secrets.LOOPPILOT_PUSH_TOKEN`-equivalent identity, so the author is
 // `github-actions[bot]` (or whatever bot the deployment runs as). Deployments
 // using a GitHub App / machine user may add their own author via the env var
 // below; the default still covers the standard `GITHUB_TOKEN` flow.
 const DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
-const TRUSTED_STATE_AUTHORS_ENV = "AUTO_REVIEW_STATE_COMMENT_AUTHORS";
+const TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 
 export function getTrustedStateCommentAuthors(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   // Check the action input first (highest priority) so operators can set the
   // value via a repository variable mapped through the action's
-  // `auto-review-state-comment-authors` input without also needing to inject
+  // `looppilot-state-comment-authors` input without also needing to inject
   // the env var directly. Outside GitHub Actions, core.getInput returns "".
-  const fromInput = core.getInput("auto-review-state-comment-authors");
+  const fromInput = core.getInput("looppilot-state-comment-authors");
   const raw = fromInput !== "" ? fromInput : (env[TRUSTED_STATE_AUTHORS_ENV] ?? "");
   const parsed = raw
     .split(",")
@@ -386,7 +386,7 @@ export async function readState(
       // Filter to genuine state comments by anchoring on the visible header.
       // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
       // properties:
-      //   1. Comments that merely mention `<!-- auto-review-state` inline
+      //   1. Comments that merely mention `<!-- looppilot-state` inline
       //      (e.g., the Linear linkback that quotes it in backticks) are
       //      excluded — they do not start with the visible header.
       //   2. State comments where the trailing newline after the marker has

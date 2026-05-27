@@ -5,13 +5,13 @@
 確認した記録。
 
 検証日: 2026-05-17
-検証 PR: <https://github.com/team-yubune/test-auto-ai-review/pull/79>
+検証 PR: <https://github.com/team-yubune/loop-pilot/pull/79>
 ブランチ: `linear/TY-233-thorough-review-e2e`（merge せずクローズ）
 
 ## 前提
 
 - TY-235 / TY-236 / TY-232 / TY-140: すべて Done を確認
-- `AUTO_REVIEW_FULL_AUTO=true`、`CHECK_COMMAND=npm run check`
+- `LOOPPILOT_FULL_AUTO=true`、`CHECK_COMMAND=npm run check`
 - Codex 設定: チケット冒頭で「Codex 側の設定は終わっている」旨を確認
 
 ## 実施手順
@@ -142,7 +142,7 @@ restart 時に `/restart-review --hard` 自身、ack コメント、再投稿の
 - Workflow B fix run: 25980252087（success, 3m11s）
 - Claude repair commit: `fccbf75`
 - Codex 再レビュー（修復後）: 4469162427 → `Bravo` / no findings
-- 完了ステータス: 4469175086（`Auto-review completed — 1 iteration`）
+- 完了ステータス: 4469175086（`LoopPilot completed — 1 iteration`）
 
 ## 関連
 

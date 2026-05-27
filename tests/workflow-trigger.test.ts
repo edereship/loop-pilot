@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const initWorkflow = readFileSync(".github/workflows/auto-review-init.yml", "utf8");
-const loopWorkflow = readFileSync(".github/workflows/auto-review-loop.yml", "utf8");
+const initWorkflow = readFileSync(".github/workflows/looppilot-init.yml", "utf8");
+const loopWorkflow = readFileSync(".github/workflows/looppilot-loop.yml", "utf8");
 const loopAction = readFileSync("loop/action.yml", "utf8");
 const postFixAction = readFileSync("loop/post-fix/action.yml", "utf8");
 
 describe("Workflow A trigger guard", () => {
-  it("does not start auto-review for fork PRs", () => {
+  it("does not start LoopPilot for fork PRs", () => {
     expect(initWorkflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
   });
 
@@ -20,7 +20,7 @@ describe("Workflow A trigger guard", () => {
     // Without this the init step falls back to the default 20 and the first
     // status comment shows a cap that diverges from vars.MAX_REVIEW_ITERATIONS
     // until the first post-fix iteration overwrites it. Must use the same
-    // expression as auto-review-loop.yml so both workflows agree on the cap.
+    // expression as looppilot-loop.yml so both workflows agree on the cap.
     expect(initWorkflow).toContain(
       "max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}",
     );
@@ -29,30 +29,30 @@ describe("Workflow A trigger guard", () => {
     );
   });
 
-  it("listens for the labeled event so adding the gate label can start auto-review", () => {
+  it("listens for the labeled event so adding the gate label can start LoopPilot", () => {
     expect(initWorkflow).toContain("types: [opened, ready_for_review, labeled]");
   });
 
-  it("requires the gate label by default and falls back to 'auto-review-fix'", () => {
+  it("requires the gate label by default and falls back to 'loop-pilot'", () => {
     expect(initWorkflow).toContain(
-      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
+      "contains(github.event.pull_request.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot')",
     );
   });
 
-  it("opts out of the label gate only when AUTO_REVIEW_FULL_AUTO is exactly 'true'", () => {
-    expect(initWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO == 'true'");
-    expect(initWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO != 'true'");
+  it("opts out of the label gate only when LOOPPILOT_FULL_AUTO is exactly 'true'", () => {
+    expect(initWorkflow).toContain("vars.LOOPPILOT_FULL_AUTO == 'true'");
+    expect(initWorkflow).toContain("vars.LOOPPILOT_FULL_AUTO != 'true'");
   });
 
   it("ignores labeled events under full-auto mode (no double-init on label edits)", () => {
     expect(initWorkflow).toContain(
-      "vars.AUTO_REVIEW_FULL_AUTO == 'true' && github.event.action != 'labeled'",
+      "vars.LOOPPILOT_FULL_AUTO == 'true' && github.event.action != 'labeled'",
     );
   });
 
   it("ignores `labeled` events for unrelated labels when the gate is enabled", () => {
     expect(initWorkflow).toContain(
-      "github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
+      "github.event.label.name == (vars.LOOPPILOT_LABEL || 'loop-pilot')",
     );
   });
 
@@ -60,7 +60,7 @@ describe("Workflow A trigger guard", () => {
     expect(initWorkflow).toContain("concurrency:");
     expect(initWorkflow).toContain("  init:\n    concurrency:");
     expect(initWorkflow).toContain(
-      "group: auto-review-init-${{ github.repository }}-${{ github.event.pull_request.number }}",
+      "group: looppilot-init-${{ github.repository }}-${{ github.event.pull_request.number }}",
     );
     expect(initWorkflow).toContain("cancel-in-progress: false");
   });
@@ -84,12 +84,12 @@ describe("Workflow B trigger guard", () => {
     expect(loopWorkflow).toContain("secrets.CODEX_REVIEW_REQUEST_TOKEN");
   });
 
-  it("passes the optional auto-review push token to loop", () => {
-    expect(loopWorkflow).toContain("auto-review-push-token:");
-    expect(loopWorkflow).toContain("secrets.AUTO_REVIEW_PUSH_TOKEN");
-    expect(loopAction).toContain("auto-review-push-token:");
-    expect(loopAction).toContain("auto-review-push-token: ${{ inputs.auto-review-push-token }}");
-    expect(postFixAction).toContain("auto-review-push-token:");
+  it("passes the optional LoopPilot push token to loop", () => {
+    expect(loopWorkflow).toContain("looppilot-push-token:");
+    expect(loopWorkflow).toContain("secrets.LOOPPILOT_PUSH_TOKEN");
+    expect(loopAction).toContain("looppilot-push-token:");
+    expect(loopAction).toContain("looppilot-push-token: ${{ inputs.looppilot-push-token }}");
+    expect(postFixAction).toContain("looppilot-push-token:");
   });
 
   it("TY-281: wires build-command from vars.BUILD_COMMAND through loop → post-fix", () => {
@@ -120,30 +120,30 @@ describe("Workflow B trigger guard", () => {
     expect(loopWorkflow).toContain("contains(github.event.comment.body, 'Codex Review')");
   });
 
-  it("requires the gate label by default with 'auto-review-fix' fallback for both event types", () => {
+  it("requires the gate label by default with 'loop-pilot' fallback for both event types", () => {
     expect(loopWorkflow).toContain(
-      "contains(github.event.issue.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
+      "contains(github.event.issue.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot')",
     );
     expect(loopWorkflow).toContain(
-      "contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix')",
+      "contains(github.event.pull_request.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot')",
     );
   });
 
-  it("opts out of the label gate via AUTO_REVIEW_FULL_AUTO=true", () => {
-    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO == 'true'");
+  it("opts out of the label gate via LOOPPILOT_FULL_AUTO=true", () => {
+    expect(loopWorkflow).toContain("vars.LOOPPILOT_FULL_AUTO == 'true'");
   });
 
-  it("forwards both AUTO_REVIEW_LABEL and AUTO_REVIEW_FULL_AUTO to the loop action", () => {
-    expect(loopWorkflow).toContain("auto-review-label:");
-    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_LABEL || ''");
-    expect(loopWorkflow).toContain("auto-review-full-auto:");
-    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_FULL_AUTO || 'false'");
+  it("forwards both LOOPPILOT_LABEL and LOOPPILOT_FULL_AUTO to the loop action", () => {
+    expect(loopWorkflow).toContain("looppilot-label:");
+    expect(loopWorkflow).toContain("vars.LOOPPILOT_LABEL || ''");
+    expect(loopWorkflow).toContain("looppilot-full-auto:");
+    expect(loopWorkflow).toContain("vars.LOOPPILOT_FULL_AUTO || 'false'");
   });
 
   it("starts from human recovery issue comments without requiring Codex bot markers", () => {
     const removedCommand = "/reset" + "-review";
-    const removedInput = "auto-review-reset" + "-roles:";
-    const removedEnv = "AUTO_REVIEW_RESET" + "_ROLES";
+    const removedInput = "looppilot-reset" + "-roles:";
+    const removedEnv = "LOOPPILOT_RESET" + "_ROLES";
 
     expect(loopWorkflow).toContain("github.event.comment.body == '/restart-review'");
     expect(loopWorkflow).toContain("startsWith(github.event.comment.body, '/restart-review ')");
@@ -151,8 +151,8 @@ describe("Workflow B trigger guard", () => {
     expect(loopWorkflow).not.toContain(`startsWith(github.event.comment.body, '${removedCommand} ')`);
     expect(loopWorkflow).toContain("trigger-user-login:");
     expect(loopWorkflow).toContain("github.event.comment.user.login || github.event.review.user.login");
-    expect(loopWorkflow).toContain("auto-review-restart-roles:");
-    expect(loopWorkflow).toContain("vars.AUTO_REVIEW_RESTART_ROLES || 'author,write,maintain,admin'");
+    expect(loopWorkflow).toContain("looppilot-restart-roles:");
+    expect(loopWorkflow).toContain("vars.LOOPPILOT_RESTART_ROLES || 'author,write,maintain,admin'");
     expect(loopWorkflow).not.toContain(removedInput);
     expect(loopWorkflow).not.toContain(removedEnv);
   });
@@ -168,7 +168,7 @@ describe("Workflow B trigger guard", () => {
       "startsWith(github.event.comment.body, '/restart-review ')",
       ifStart,
     );
-    const labelGateIdx = loopWorkflow.indexOf("vars.AUTO_REVIEW_FULL_AUTO == 'true'", ifStart);
+    const labelGateIdx = loopWorkflow.indexOf("vars.LOOPPILOT_FULL_AUTO == 'true'", ifStart);
     expect(commandTriggerIdx).toBeGreaterThan(ifStart);
     expect(labelGateIdx).toBeGreaterThan(commandTriggerIdx);
   });

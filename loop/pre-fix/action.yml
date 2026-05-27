@@ -1,4 +1,4 @@
-name: "Auto Review Loop — pre-fix"
+name: "LoopPilot — pre-fix"
 description: "Phase 0–3 (label gate, state guards, debounce, findings, judge) and prompt assembly for claude-code-action."
 
 inputs:
@@ -75,15 +75,15 @@ inputs:
     description: "Number of consecutive stable polls before considering comments settled"
     required: false
     default: "3"
-  auto-review-label:
-    description: "Label name required to run auto-review-fix loop. Empty falls back to 'auto-review-fix'."
+  looppilot-label:
+    description: "Label name required to run loop-pilot loop. Empty falls back to 'loop-pilot'."
     required: false
     default: ""
-  auto-review-full-auto:
-    description: "Set to 'true' to disable the label gate and run auto-review on every non-fork ready PR."
+  looppilot-full-auto:
+    description: "Set to 'true' to disable the label gate and run LoopPilot on every non-fork ready PR."
     required: false
     default: "false"
-  auto-review-restart-roles:
+  looppilot-restart-roles:
     description: "Comma-separated roles allowed to run /restart-review."
     required: false
     default: "author,write,maintain,admin"
@@ -115,7 +115,7 @@ inputs:
     description: "Severity threshold for the auto-fix pipeline. One of P0|P1|P2|P3. Default 'P3' includes every severity (P0/P1/P2/P3); 'P2' preserves the historical scope (P0/P1/P2 only, skip P3); 'P1'/'P0' narrow further. Invalid values fall back to P3 with a warning (TY-256). NOTE (TY-268 #23): the parser fallback only catches P0 / P1 keywords without an explicit badge — P2/P3 findings without a badge are counted as `unparseable` and skipped, which matters at the default P3 threshold."
     required: false
     default: "P3"
-  auto-review-state-comment-authors:
+  looppilot-state-comment-authors:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false
     default: ""

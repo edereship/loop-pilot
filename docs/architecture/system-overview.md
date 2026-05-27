@@ -34,7 +34,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 - **Claude は修正専任**
 - 再レビューは push 自動連動ではなく、**明示的に `@codex review` を起動**
 - Claude に渡す単位は **1 コメント単位ではなく「最新の Codex review 一式」**
-- 修正対象は **`AUTO_REVIEW_SEVERITY_THRESHOLD` 以上の severity**（デフォルト `P3` → P0/P1/P2/P3 すべて、`P2` で従来挙動 (P3 を skip) に戻す選択あり。TY-256）
+- 修正対象は **`LOOPPILOT_SEVERITY_THRESHOLD` 以上の severity**（デフォルト `P3` → P0/P1/P2/P3 すべて、`P2` で従来挙動 (P3 を skip) に戻す選択あり。TY-256）
 - **最大往復回数は環境変数 `MAX_REVIEW_ITERATIONS` で制御**（デフォルト: 20）
 - **Codex レビュー受信後、一定時間待機してから Claude に渡す**
 
@@ -52,13 +52,13 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 | `STABILIZE_COUNT` | コメント数安定と判定する連続一致回数 | `3` | `3` |
 | `CODEX_REVIEW_MARKER` | Codex 総評レビュー/コメントの検知文言 | `Codex Review` | `Codex Review` |
 | `CODEX_REVIEW_REQUEST_TOKEN` | `@codex review` 投稿専用の接続済みユーザー PAT。未設定時は `GITHUB_TOKEN` に fallback | なし | 接続済みユーザーの Fine-grained PAT |
-| `AUTO_REVIEW_PUSH_TOKEN` | repair commit の `git push` 専用 token。required checks を修復コミット上で発火させたい本番 repo では machine user PAT または GitHub App token を設定する。未設定時は従来通り `GITHUB_TOKEN` 相当の push 経路を使う | なし | 未設定 |
-| `AUTO_REVIEW_LABEL` | 起動ラベル名（カスタマイズ用）。デフォルトのラベル必須モードでこのラベルが付いた PR のみ Workflow A/B が起動する。未設定/空文字なら `auto-review-fix` をフォールバック使用（レビュー＋自動修正までを行うため命名は `auto-review-fix`） | `auto-review-fix` | 未設定（フォールバックで `auto-review-fix` を要求） |
-| `AUTO_REVIEW_FULL_AUTO` | `true` を設定すると label gate を無効化し、すべての非 fork ready PR で起動する（完全自動化、PoC 互換挙動） | `false`（ラベル必須） | 未設定（ラベル必須） |
-| `AUTO_REVIEW_AUTO_MERGE` | `true` を設定すると `done / no_findings` 到達時に GitHub native auto-merge (squash) を有効化する（TY-245）。他の停止理由ではマージしない。skip 時は warning ログに加えて **PR コメントで理由と次のアクションを通知** する (TY-295) — 詳細は [stop-and-recovery.md](../operations/stop-and-recovery.md#skip-時の-pr-通知-ty-295) | `false`（人手マージ） | 未設定（人手マージ） |
-| `AUTO_REVIEW_SEVERITY_THRESHOLD` | auto-fix 対象とする最低 severity。値は `P0` / `P1` / `P2` / `P3` のいずれか。デフォルト `P3` は P0/P1/P2/P3 すべてを修正対象に含む。`P2` で従来挙動 (P0/P1/P2 を修正、P3 は skip)、`P1` / `P0` でさらに対象を狭める。Codex finding の severity badge が読めなかった場合は warning ログを出して件数を記録、threshold 未達 finding は info ログで件数を記録する（TY-256） | `P3` | 未設定（`P3`） |
+| `LOOPPILOT_PUSH_TOKEN` | repair commit の `git push` 専用 token。required checks を修復コミット上で発火させたい本番 repo では machine user PAT または GitHub App token を設定する。未設定時は従来通り `GITHUB_TOKEN` 相当の push 経路を使う | なし | 未設定 |
+| `LOOPPILOT_LABEL` | 起動ラベル名（カスタマイズ用）。デフォルトのラベル必須モードでこのラベルが付いた PR のみ Workflow A/B が起動する。未設定/空文字なら `loop-pilot` をフォールバック使用（レビュー＋自動修正までを行うため命名は `loop-pilot`） | `loop-pilot` | 未設定（フォールバックで `loop-pilot` を要求） |
+| `LOOPPILOT_FULL_AUTO` | `true` を設定すると label gate を無効化し、すべての非 fork ready PR で起動する（完全自動化、PoC 互換挙動） | `false`（ラベル必須） | 未設定（ラベル必須） |
+| `LOOPPILOT_AUTO_MERGE` | `true` を設定すると `done / no_findings` 到達時に GitHub native auto-merge (squash) を有効化する（TY-245）。他の停止理由ではマージしない。skip 時は warning ログに加えて **PR コメントで理由と次のアクションを通知** する (TY-295) — 詳細は [stop-and-recovery.md](../operations/stop-and-recovery.md#skip-時の-pr-通知-ty-295) | `false`（人手マージ） | 未設定（人手マージ） |
+| `LOOPPILOT_SEVERITY_THRESHOLD` | auto-fix 対象とする最低 severity。値は `P0` / `P1` / `P2` / `P3` のいずれか。デフォルト `P3` は P0/P1/P2/P3 すべてを修正対象に含む。`P2` で従来挙動 (P0/P1/P2 を修正、P3 は skip)、`P1` / `P0` でさらに対象を狭める。Codex finding の severity badge が読めなかった場合は warning ログを出して件数を記録、threshold 未達 finding は info ログで件数を記録する（TY-256） | `P3` | 未設定（`P3`） |
 
-> 運用注意: `AUTO_REVIEW_FULL_AUTO=true` 時はラベルの付け外しで開始/停止を制御できない。停止したい場合は `AUTO_REVIEW_FULL_AUTO=false` に戻すか、workflow を無効化する。
+> 運用注意: `LOOPPILOT_FULL_AUTO=true` 時はラベルの付け外しで開始/停止を制御できない。停止したい場合は `LOOPPILOT_FULL_AUTO=false` に戻すか、workflow を無効化する。
 
 GitHub Actions workflow の `env` または Repository variables で設定する。
 
@@ -71,12 +71,12 @@ env:
   STABILIZE_INTERVAL_SECONDS: ${{ vars.STABILIZE_INTERVAL_SECONDS || '10' }}
   STABILIZE_COUNT: ${{ vars.STABILIZE_COUNT || '3' }}
   CODEX_REVIEW_MARKER: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
-  AUTO_REVIEW_SEVERITY_THRESHOLD: ${{ vars.AUTO_REVIEW_SEVERITY_THRESHOLD || 'P3' }}
+  LOOPPILOT_SEVERITY_THRESHOLD: ${{ vars.LOOPPILOT_SEVERITY_THRESHOLD || 'P3' }}
 ```
 
 `CODEX_REVIEW_REQUEST_TOKEN` は GitHub Actions の Repository secrets に設定し、Workflow A/B の action input `codex-review-request-token` として渡す。この token は `@codex review` の投稿だけに使い、hidden comment の状態管理、Artifact 収集など既存の GitHub 操作は `GITHUB_TOKEN` を使い続ける。
 
-`AUTO_REVIEW_PUSH_TOKEN` は repair commit の push だけに使う。branch protection の required checks がある本番 repo では、`GITHUB_TOKEN` push だと修復コミット上の CI が発火しない場合があるため、machine user PAT または GitHub App token を Repository secret として設定する。
+`LOOPPILOT_PUSH_TOKEN` は repair commit の push だけに使う。branch protection の required checks がある本番 repo では、`GITHUB_TOKEN` push だと修復コミット上の CI が発火しない場合があるため、machine user PAT または GitHub App token を Repository secret として設定する。
 
 ---
 
@@ -104,7 +104,7 @@ env:
 - **Codex はレビュー専任（bot: `chatgpt-codex-connector[bot]`）**
 - **Claude は修正専任（Claude API Opus を GitHub Actions 内で tool use 呼び出し）**
 - **Codex の総評レビュー（`pull_request_review`）を主トリガーに Workflow B を起動し、互換用に `issue_comment` も許可**
-- **インラインコメント（`pull_request_review_comment`）を GitHub API で一括取得し、`AUTO_REVIEW_SEVERITY_THRESHOLD` 以上の severity を抽出（TY-256）**
+- **インラインコメント（`pull_request_review_comment`）を GitHub API で一括取得し、`LOOPPILOT_SEVERITY_THRESHOLD` 以上の severity を抽出（TY-256）**
 - **修正は `anthropics/claude-code-action@v1` (repo-level repair) に委譲し、post-fix で scope check + `CHECK_COMMAND` を回す（TY-236）**
 - **レビュー受信後に `DEBOUNCE_SECONDS` 秒待機してから集約する（PR #7 ではデフォルト値で安定動作を確認。0秒化は未検証）**
 - **Claude 修正後に `@codex review` を再実行（`CODEX_REVIEW_REQUEST_TOKEN` 設定時は接続済みユーザー PAT で投稿）**

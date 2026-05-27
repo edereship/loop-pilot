@@ -1,5 +1,5 @@
-name: "Auto Review Loop"
-description: "Run one Codex review → Claude-Code repair → re-review iteration via anthropics/claude-code-action@v1."
+name: "LoopPilot Action"
+description: "AI review-fix loop for GitHub pull requests"
 
 # Composite action wiring the three-step Workflow B repair pipeline:
 #   1. pre-fix         — label gate, state guards, debounce, judge, prompt build
@@ -19,7 +19,7 @@ inputs:
     description: "Optional token from a Codex-connected user for posting @codex review"
     required: false
     default: ""
-  auto-review-push-token:
+  looppilot-push-token:
     description: "Optional token used only for repair commit pushes; use a machine-user PAT or GitHub App token when required checks must run on repair commits"
     required: false
     default: ""
@@ -89,15 +89,15 @@ inputs:
     description: "Number of consecutive stable polls before considering comments settled"
     required: false
     default: "3"
-  auto-review-label:
-    description: "Label name required to run auto-review-fix loop. Empty falls back to 'auto-review-fix'. Note: the label must exist on the repository and be applied to the PR (TY-293 #2) — otherwise the workflow `if:` evaluates to false and no run is generated."
+  looppilot-label:
+    description: "Label name required to run loop-pilot loop. Empty falls back to 'loop-pilot'. Note: the label must exist on the repository and be applied to the PR (TY-293 #2) — otherwise the workflow `if:` evaluates to false and no run is generated."
     required: false
     default: ""
-  auto-review-full-auto:
-    description: "Set to 'true' to disable the label gate and run auto-review on every non-fork ready PR."
+  looppilot-full-auto:
+    description: "Set to 'true' to disable the label gate and run LoopPilot on every non-fork ready PR."
     required: false
     default: "false"
-  auto-review-restart-roles:
+  looppilot-restart-roles:
     description: "Comma-separated roles allowed to run /restart-review."
     required: false
     default: "author,write,maintain,admin"
@@ -133,20 +133,20 @@ inputs:
     description: "Severity threshold for the auto-fix pipeline. One of P0|P1|P2|P3. Default 'P3' includes every severity (P0/P1/P2/P3); 'P2' preserves the historical scope (P0/P1/P2 only, skip P3); 'P1'/'P0' narrow further. Invalid values fall back to P3 with a warning (TY-256). NOTE (TY-268 #23): the parser fallback only catches P0 / P1 keywords without an explicit badge — P2/P3 findings without a badge are counted as `unparseable` and skipped, which matters at the default P3 threshold."
     required: false
     default: "P3"
-  auto-review-block-paths:
+  looppilot-block-paths:
     description: "`.gitignore`-style block-path spec (TY-271). Comma-separated entries: `secrets/` (dir prefix), `Justfile` (exact file), `!Makefile` (un-block a default). `!.github/...` is ignored — `.github/` is locked. Empty default keeps the built-in `DEFAULT_BLOCK_PATTERNS`. See docs/operations/scope-policy.md."
     required: false
     default: ""
   scope-max-files:
-    description: "Max files allowed in a single auto-fix diff. Empty / 0 keeps the default of 20. Leave empty so `AUTO_REVIEW_SCOPE_MAX_FILES` Repository variable can override; `core.getInput` treats `\"0\"` as non-empty and would shadow the env-var fallback."
+    description: "Max files allowed in a single auto-fix diff. Empty / 0 keeps the default of 20. Leave empty so `LOOPPILOT_SCOPE_MAX_FILES` Repository variable can override; `core.getInput` treats `\"0\"` as non-empty and would shadow the env-var fallback."
     required: false
     default: ""
   scope-max-lines:
-    description: "Max total added+deleted lines allowed in a single auto-fix diff. Empty / 0 keeps the default of 1000. Leave empty so `AUTO_REVIEW_SCOPE_MAX_LINES` Repository variable can override."
+    description: "Max total added+deleted lines allowed in a single auto-fix diff. Empty / 0 keeps the default of 1000. Leave empty so `LOOPPILOT_SCOPE_MAX_LINES` Repository variable can override."
     required: false
     default: ""
-  auto-review-hard-block-override:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `auto-review-block-paths` with the `!path` syntax. Existing values are folded into the new spec as removals, but emit a warning."
+  looppilot-hard-block-override:
+    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` with the `!path` syntax. Existing values are folded into the new spec as removals, but emit a warning."
     required: false
     default: ""
   scope-allowed-path-prefixes:
@@ -154,10 +154,10 @@ inputs:
     required: false
     default: ""
   scope-additional-hard-block-prefixes:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `auto-review-block-paths` instead. Existing values are folded into the new spec as additions, but emit a warning."
+    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` instead. Existing values are folded into the new spec as additions, but emit a warning."
     required: false
     default: ""
-  auto-review-state-comment-authors:
+  looppilot-state-comment-authors:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false
     default: ""
@@ -188,9 +188,9 @@ runs:
         codex-review-marker: ${{ inputs.codex-review-marker }}
         stabilize-interval-seconds: ${{ inputs.stabilize-interval-seconds }}
         stabilize-count: ${{ inputs.stabilize-count }}
-        auto-review-label: ${{ inputs.auto-review-label }}
-        auto-review-full-auto: ${{ inputs.auto-review-full-auto }}
-        auto-review-restart-roles: ${{ inputs.auto-review-restart-roles }}
+        looppilot-label: ${{ inputs.looppilot-label }}
+        looppilot-full-auto: ${{ inputs.looppilot-full-auto }}
+        looppilot-restart-roles: ${{ inputs.looppilot-restart-roles }}
         github-repository: ${{ inputs.github-repository }}
         claude-code-model-base: ${{ inputs.claude-code-model-base }}
         claude-code-model-escalated: ${{ inputs.claude-code-model-escalated }}
@@ -198,7 +198,7 @@ runs:
         auto-merge-poll-seconds: ${{ inputs.auto-merge-poll-seconds }}
         auto-merge-timeout-minutes: ${{ inputs.auto-merge-timeout-minutes }}
         severity-threshold: ${{ inputs.severity-threshold }}
-        auto-review-state-comment-authors: ${{ inputs.auto-review-state-comment-authors }}
+        looppilot-state-comment-authors: ${{ inputs.looppilot-state-comment-authors }}
 
     - name: Claude Code Action (repo-level repair)
       id: claude
@@ -253,7 +253,7 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         codex-review-request-token: ${{ inputs.codex-review-request-token }}
-        auto-review-push-token: ${{ inputs.auto-review-push-token }}
+        looppilot-push-token: ${{ inputs.looppilot-push-token }}
         pr-number: ${{ inputs.pr-number }}
         pr-head-ref: ${{ steps.pre.outputs.pr_head_ref }}
         pr-title: ${{ inputs.pr-title }}
@@ -265,10 +265,10 @@ runs:
         action-outcome: ${{ steps.claude.outcome }}
         action-execution-file: ${{ steps.claude.outputs.execution_file }}
         github-repository: ${{ inputs.github-repository }}
-        auto-review-block-paths: ${{ inputs.auto-review-block-paths }}
+        looppilot-block-paths: ${{ inputs.looppilot-block-paths }}
         scope-max-files: ${{ inputs.scope-max-files }}
         scope-max-lines: ${{ inputs.scope-max-lines }}
-        auto-review-hard-block-override: ${{ inputs.auto-review-hard-block-override }}
+        looppilot-hard-block-override: ${{ inputs.looppilot-hard-block-override }}
         scope-allowed-path-prefixes: ${{ inputs.scope-allowed-path-prefixes }}
         scope-additional-hard-block-prefixes: ${{ inputs.scope-additional-hard-block-prefixes }}
-        auto-review-state-comment-authors: ${{ inputs.auto-review-state-comment-authors }}
+        looppilot-state-comment-authors: ${{ inputs.looppilot-state-comment-authors }}

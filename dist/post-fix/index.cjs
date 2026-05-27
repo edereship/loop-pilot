@@ -19191,7 +19191,7 @@ function loadBaseConfig() {
   if (!isValidModelName(claudeCodeModelEscalated)) {
     throw new Error(`CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`);
   }
-  const autoReviewPushToken = input("auto-review-push-token", "AUTO_REVIEW_PUSH_TOKEN", "");
+  const autoReviewPushToken = input("looppilot-push-token", "LOOPPILOT_PUSH_TOKEN", "");
   const buildCommand = input("build-command", "BUILD_COMMAND", "");
   if (buildCommand !== "") {
     const buildCommandValidation = validateCheckCommand(buildCommand);
@@ -19220,21 +19220,21 @@ function loadBaseConfig() {
     triggerEventName: input("trigger-event-name", "TRIGGER_EVENT_NAME", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
-    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
-    autoReviewRestartRoles: input("auto-review-restart-roles", "AUTO_REVIEW_RESTART_ROLES", "author,write,maintain,admin"),
+    autoReviewLabel: input("looppilot-label", "LOOPPILOT_LABEL", ""),
+    autoReviewFullAuto: boolInput("looppilot-full-auto", "LOOPPILOT_FULL_AUTO", false),
+    autoReviewRestartRoles: input("looppilot-restart-roles", "LOOPPILOT_RESTART_ROLES", "author,write,maintain,admin"),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
-    autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
-    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS", 15, 1),
-    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
-    severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
-    autoReviewBlockPaths: input("auto-review-block-paths", "AUTO_REVIEW_BLOCK_PATHS", ""),
-    scopeMaxFiles: intInput("scope-max-files", "AUTO_REVIEW_SCOPE_MAX_FILES", 0),
-    scopeMaxLines: intInput("scope-max-lines", "AUTO_REVIEW_SCOPE_MAX_LINES", 0),
-    hardBlockOverride: stringListInput("auto-review-hard-block-override", "AUTO_REVIEW_HARD_BLOCK_OVERRIDE"),
-    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES"),
-    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
+    autoMergeOnClean: boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false),
+    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "LOOPPILOT_AUTO_MERGE_POLL_SECONDS", 15, 1),
+    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
+    severityThreshold: severityThresholdInput("severity-threshold", "LOOPPILOT_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
+    autoReviewBlockPaths: input("looppilot-block-paths", "LOOPPILOT_BLOCK_PATHS", ""),
+    scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
+    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0),
+    hardBlockOverride: stringListInput("looppilot-hard-block-override", "LOOPPILOT_HARD_BLOCK_OVERRIDE"),
+    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES"),
+    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
   };
 }
 function stringListInput(inputName, envName) {
@@ -19382,17 +19382,17 @@ function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_
 
 // dist/state-manager.js
 var PREVIOUS_CHECK_FAILURE_READ_LIMIT = PREVIOUS_CHECK_FAILURE_MAX_CHARS * 2;
-var STATE_MARKER = "auto-review-state";
+var STATE_MARKER = "looppilot-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
-var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
+var STATE_COMMENT_VISIBLE_TEXT = "LoopPilot state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 20;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
 var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
-var TRUSTED_STATE_AUTHORS_ENV = "AUTO_REVIEW_STATE_COMMENT_AUTHORS";
+var TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 function getTrustedStateCommentAuthors(env = process.env) {
-  const fromInput = getInput("auto-review-state-comment-authors");
+  const fromInput = getInput("looppilot-state-comment-authors");
   const raw = fromInput !== "" ? fromInput : env[TRUSTED_STATE_AUTHORS_ENV] ?? "";
   const parsed = raw.split(",").map((a) => a.trim()).filter((a) => a.length > 0);
   return parsed.length > 0 ? parsed : [DEFAULT_TRUSTED_STATE_AUTHOR];
@@ -19540,7 +19540,7 @@ async function readState(owner, name, pr, token) {
     // Filter to genuine state comments by anchoring on the visible header.
     // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
     // properties:
-    //   1. Comments that merely mention `<!-- auto-review-state` inline
+    //   1. Comments that merely mention `<!-- looppilot-state` inline
     //      (e.g., the Linear linkback that quotes it in backticks) are
     //      excluded — they do not start with the visible header.
     //   2. State comments where the trailing newline after the marker has
@@ -19645,11 +19645,11 @@ function parseCommentSnapshot(stdout, context) {
 }
 
 // dist/status-comment.js
-var STATUS_COMMENT_MARKER = "auto-review-status";
+var STATUS_COMMENT_MARKER = "looppilot-status";
 var STATUS_COMMENT_OPEN = `<!-- ${STATUS_COMMENT_MARKER} -->`;
 var STATUS_COMMENT_DATA_OPEN = `<!-- ${STATUS_COMMENT_MARKER}-data`;
 var STATUS_COMMENT_DATA_CLOSE = "-->";
-var STATUS_COMMENT_VISIBLE_HEADER = "## Auto-review status";
+var STATUS_COMMENT_VISIBLE_HEADER = "## LoopPilot status";
 var MAX_ENTRIES = 30;
 var MAX_ENTRY_BODY_LENGTH = 16e3;
 var ENTRY_BODY_TRUNCATION_MARKER = "\n\n_(output truncated \u2014 exceeded size limit)_";
@@ -19920,7 +19920,7 @@ var STOP_REASON_LABELS = {
   workflow_crashed: "auto-fix workflow crashed \u2014 `/restart-review` to resume",
   action_timeout: "Claude Code Action timed out \u2014 `/restart-review` to retry",
   action_failure: "Claude Code Action exited non-zero \u2014 check the workflow run",
-  scope_violation: "repair touched blocked paths \u2014 adjust `AUTO_REVIEW_BLOCK_PATHS` or revert",
+  scope_violation: "repair touched blocked paths \u2014 adjust `LOOPPILOT_BLOCK_PATHS` or revert",
   max_turns_exceeded: "Claude Code Action hit `--max-turns` \u2014 `/restart-review` escalates tier",
   codex_usage_limit: "Codex quota exhausted \u2014 wait for reset, then `/restart-review`",
   codex_request_failed: "could not re-post `@codex review` \u2014 fix Codex auth, then `/restart-review`",
@@ -19983,7 +19983,7 @@ async function applyStatusUpdate2(owner, name, pr, update, token) {
 function nextActionForStopReason(reason) {
   switch (reason) {
     case "no_findings":
-      return "Auto-review is complete; merge when ready.";
+      return "LoopPilot is complete; merge when ready.";
     case "max_iterations":
       return "Review history, then `/restart-review --hard` to clear the iteration count.";
     case "loop_detected":
@@ -19991,7 +19991,7 @@ function nextActionForStopReason(reason) {
     case "secret_leak_suspected":
       return "Audit the diff for leaked credentials, then `/restart-review --hard` (soft is rejected).";
     case "scope_violation":
-      return "Review the stop detail above for the specific violation; revert if needed, adjust `AUTO_REVIEW_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
+      return "Review the stop detail above for the specific violation; revert if needed, adjust `LOOPPILOT_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
     case "test_failure":
       return "Fix the underlying CHECK_COMMAND failure, push, then `/restart-review`.";
     case "codex_usage_limit":
@@ -20019,7 +20019,7 @@ function buildTerminalNotificationBody(kind, permalink) {
   switch (kind.kind) {
     case "done":
       return [
-        `\u2705 **Auto-review completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
+        `\u2705 **LoopPilot completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
         "",
         `See the [status comment](${permalink}) for the full history.`
       ].join("\n");
@@ -20027,7 +20027,7 @@ function buildTerminalNotificationBody(kind, permalink) {
       const label = STOP_REASON_LABELS[kind.stopReason];
       const actionLine = kind.remainingFindings !== void 0 ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.` : "Manual intervention required.";
       return [
-        `\u{1F6D1} **Auto-review stopped** \u2014 ${label}.`,
+        `\u{1F6D1} **LoopPilot stopped** \u2014 ${label}.`,
         "",
         actionLine,
         `See the [status comment](${permalink}) for the full history.`
@@ -20035,9 +20035,9 @@ function buildTerminalNotificationBody(kind, permalink) {
     }
     case "init_incomplete":
       return [
-        "\u26A0\uFE0F **Auto-review init incomplete** \u2014 the initial `@codex review` was never posted.",
+        "\u26A0\uFE0F **LoopPilot init incomplete** \u2014 the initial `@codex review` was never posted.",
         "",
-        "Auto-review is not active on this PR until init runs successfully. Either:",
+        "LoopPilot is not active on this PR until init runs successfully. Either:",
         "- Re-run the Workflow A run from the Actions tab, or",
         "- Re-trigger init by removing and re-adding the gate label (or closing / reopening the PR in full-auto mode).",
         "",
@@ -20396,7 +20396,7 @@ function assertNoGlobalUrlRewriteRules(destinationUrl) {
   if (offendingCount === 0)
     return;
   throw new Error(`Refusing to push: global git config carries ${offendingCount} url rewrite rule(s) that can redirect the push to ${destinationUrl}.
-Inspect with \`git config --global --get-regexp '^url\\..*\\.(insteadOf|pushInsteadOf)$'\` and remove the offending entries with \`git config --global --unset-all <key>\` before re-running auto-review.`);
+Inspect with \`git config --global --get-regexp '^url\\..*\\.(insteadOf|pushInsteadOf)$'\` and remove the offending entries with \`git config --global --unset-all <key>\` before re-running LoopPilot.`);
 }
 function pushWithToken(owner, repo, ref, token) {
   if (token === "") {
@@ -20434,12 +20434,12 @@ var SECRET_ENV_NAMES = [
   "GITHUB_TOKEN",
   "GH_TOKEN",
   "CODEX_REVIEW_REQUEST_TOKEN",
-  "AUTO_REVIEW_PUSH_TOKEN",
+  "LOOPPILOT_PUSH_TOKEN",
   "ANTHROPIC_API_KEY",
   "CLAUDE_CODE_OAUTH_TOKEN",
   "INPUT_GITHUB_TOKEN",
   "INPUT_CODEX_REVIEW_REQUEST_TOKEN",
-  "INPUT_AUTO_REVIEW_PUSH_TOKEN",
+  "INPUT_LOOPPILOT_PUSH_TOKEN",
   "INPUT_ANTHROPIC_API_KEY",
   "INPUT_CLAUDE_CODE_OAUTH_TOKEN"
 ];
@@ -21207,7 +21207,7 @@ function formatScopeViolationDetail(violation, maxFiles, maxLines) {
         ...violation.offendingPaths.map((p) => `  - ${p}`)
       ];
       if (uniqueSnippets.length > 0) {
-        lines.push("", "To let Claude edit these paths, add the matching `!` entries to the", "`AUTO_REVIEW_BLOCK_PATHS` Repository variable:", "", `  AUTO_REVIEW_BLOCK_PATHS = "${uniqueSnippets.join(",")}"`, "", "(If the variable is already set, append the new entries with a comma.)");
+        lines.push("", "To let Claude edit these paths, add the matching `!` entries to the", "`LOOPPILOT_BLOCK_PATHS` Repository variable:", "", `  LOOPPILOT_BLOCK_PATHS = "${uniqueSnippets.join(",")}"`, "", "(If the variable is already set, append the new entries with a comma.)");
       }
       if (lockedPaths.length > 0) {
         lines.push("", `Note: \`.github/\` is locked and cannot be unblocked \u2014 ${lockedPaths.join(", ")} must be edited manually.`);
@@ -21219,7 +21219,7 @@ function formatScopeViolationDetail(violation, maxFiles, maxLines) {
       return [
         `Auto-fix diff exceeds the file-count budget (${violation.offendingPaths.length} > ${maxFiles}).`,
         "",
-        "To raise the limit, set the `AUTO_REVIEW_SCOPE_MAX_FILES` Repository variable",
+        "To raise the limit, set the `LOOPPILOT_SCOPE_MAX_FILES` Repository variable",
         "(or pass the `scope-max-files` action input) to a higher value.",
         "",
         `See ${SCOPE_POLICY_DOC}.`
@@ -21228,7 +21228,7 @@ function formatScopeViolationDetail(violation, maxFiles, maxLines) {
       return [
         `Auto-fix diff exceeds the line-count budget (limit ${maxLines}).`,
         "",
-        "To raise the limit, set the `AUTO_REVIEW_SCOPE_MAX_LINES` Repository variable",
+        "To raise the limit, set the `LOOPPILOT_SCOPE_MAX_LINES` Repository variable",
         "(or pass the `scope-max-lines` action input) to a higher value.",
         "",
         `See ${SCOPE_POLICY_DOC}.`
@@ -21261,7 +21261,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   const stateResult = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   if (!stateResult.found) {
     await deps.demoteFixingOnCrash("post-fix");
-    deps.setFailed("[post-fix] Hidden state comment is missing or corrupted at post-fix entry. Demoted hidden state to `stopped/workflow_crashed` if it was still `fixing`. If the state comment exists but is invisible, verify the `AUTO_REVIEW_STATE_COMMENT_AUTHORS` configuration, then use `/restart-review` to resume.");
+    deps.setFailed("[post-fix] Hidden state comment is missing or corrupted at post-fix entry. Demoted hidden state to `stopped/workflow_crashed` if it was still `fixing`. If the state comment exists but is invisible, verify the `LOOPPILOT_STATE_COMMENT_AUTHORS` configuration, then use `/restart-review` to resume.");
     return;
   }
   if (stateResult.commentId !== inputs.commentId) {
@@ -21380,17 +21380,17 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   if (config.scopeAllowedPathPrefixes.length > 0) {
-    deps.warning("[scope-check] AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES / scope-allowed-path-prefixes is deprecated (TY-271). The allow-list concept has been removed; the value is ignored. The scope check now blocks only paths matching AUTO_REVIEW_BLOCK_PATHS (or the built-in defaults). Remove this variable.");
+    deps.warning("[scope-check] LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES / scope-allowed-path-prefixes is deprecated (TY-271). The allow-list concept has been removed; the value is ignored. The scope check now blocks only paths matching LOOPPILOT_BLOCK_PATHS (or the built-in defaults). Remove this variable.");
   }
   if (config.scopeAdditionalHardBlockPrefixes.length > 0) {
-    deps.warning(`[scope-check] AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES / scope-additional-hard-block-prefixes is deprecated (TY-271). Migrate to AUTO_REVIEW_BLOCK_PATHS, e.g. AUTO_REVIEW_BLOCK_PATHS="${config.scopeAdditionalHardBlockPrefixes.join(",")}".`);
+    deps.warning(`[scope-check] LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES / scope-additional-hard-block-prefixes is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS, e.g. LOOPPILOT_BLOCK_PATHS="${config.scopeAdditionalHardBlockPrefixes.join(",")}".`);
   }
   if (config.hardBlockOverride.length > 0) {
-    deps.warning(`[scope-check] AUTO_REVIEW_HARD_BLOCK_OVERRIDE / auto-review-hard-block-override is deprecated (TY-271). Migrate to AUTO_REVIEW_BLOCK_PATHS with the ! prefix, e.g. AUTO_REVIEW_BLOCK_PATHS="${config.hardBlockOverride.map((p) => `!${p}`).join(",")}".`);
+    deps.warning(`[scope-check] LOOPPILOT_HARD_BLOCK_OVERRIDE / looppilot-hard-block-override is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS with the ! prefix, e.g. LOOPPILOT_BLOCK_PATHS="${config.hardBlockOverride.map((p) => `!${p}`).join(",")}".`);
   }
   const blockSpec = parseBlockPathsSpec(config.autoReviewBlockPaths);
   for (const ignored of blockSpec.ignoredRemovals) {
-    deps.warning(`[scope-check] AUTO_REVIEW_BLOCK_PATHS removal "!${ignored}" was ignored: .github/ is locked and cannot be unblocked.`);
+    deps.warning(`[scope-check] LOOPPILOT_BLOCK_PATHS removal "!${ignored}" was ignored: .github/ is locked and cannot be unblocked.`);
   }
   const scopePolicy = buildScopePolicy({
     blockPathsSpec: config.autoReviewBlockPaths,
@@ -21400,7 +21400,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     hardBlockOverride: config.hardBlockOverride
   });
   if (config.autoReviewBlockPaths !== "") {
-    deps.info(`[scope-check] AUTO_REVIEW_BLOCK_PATHS: "${config.autoReviewBlockPaths}"`);
+    deps.info(`[scope-check] LOOPPILOT_BLOCK_PATHS: "${config.autoReviewBlockPaths}"`);
   }
   let scopeResult = checkScope(changedFiles, scopePolicy);
   if (!scopeResult.ok) {
@@ -21762,7 +21762,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     const commitMessage = [
       `fix: auto-resolve Codex review findings (iteration ${inputs.iteration})`,
       "",
-      "Generated by anthropics/claude-code-action@v1 (auto-review-loop).",
+      "Generated by anthropics/claude-code-action@v1 (loop-pilot).",
       `Files: ${modifiedFiles.length}, lines: ${scopeResult.totalLines}.`
     ].join("\n");
     try {
@@ -21839,7 +21839,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     };
     if (!await updateStateCommentLocked(updatedWaitingState, "Could not persist the Codex review request comment id.", {
       onConflict: async (detail) => {
-        deps.warning(`[post-fix] ${detail} Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
+        deps.warning(`[post-fix] ${detail} LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
       }
     })) {
       return;

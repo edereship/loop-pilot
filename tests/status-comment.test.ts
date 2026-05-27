@@ -45,8 +45,8 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
 describe("renderStatusCommentBody / parseStatusCommentBody round-trip", () => {
   it("renders the visible header and embeds the JSON data block", () => {
     const body = renderStatusCommentBody(snapshot());
-    expect(body).toContain("<!-- auto-review-status -->");
-    expect(body).toContain("## Auto-review status");
+    expect(body).toContain("<!-- looppilot-status -->");
+    expect(body).toContain("## LoopPilot status");
     expect(body).toContain("**Current**: Fixing — iteration 1 applied");
     expect(body).toContain("**Last commit**: abc1234");
     expect(body).toContain("**Open findings**: 0");
@@ -54,7 +54,7 @@ describe("renderStatusCommentBody / parseStatusCommentBody round-trip", () => {
     expect(body).toContain("<details>");
     expect(body).toContain("History (1 entry)");
     expect(body).toContain("Iteration 1 — Auto-fix applied");
-    expect(body).toContain("<!-- auto-review-status-data");
+    expect(body).toContain("<!-- looppilot-status-data");
   });
 
   it("renders dashes for null lastCommit and openFindings", () => {
@@ -114,7 +114,7 @@ describe("renderStatusCommentBody / parseStatusCommentBody round-trip", () => {
     const body = renderStatusCommentBody(original);
     // The raw comment body must not contain --> inside the data block (it
     // would close the HTML comment prematurely).
-    const dataStart = body.indexOf("<!-- auto-review-status-data");
+    const dataStart = body.indexOf("<!-- looppilot-status-data");
     const closingIdx = body.indexOf("-->", dataStart + 1);
     // Confirm the --> that closes the block is the real delimiter, not an
     // escaped one embedded in the JSON.
@@ -128,7 +128,7 @@ describe("renderStatusCommentBody / parseStatusCommentBody round-trip", () => {
     // section and produce garbage JSON instead of the hidden data block.
     const original = snapshot({
       entries: [
-        entry({ body: "output contained <!-- auto-review-status-data verbatim" }),
+        entry({ body: "output contained <!-- looppilot-status-data verbatim" }),
       ],
     });
     const body = renderStatusCommentBody(original);
@@ -156,12 +156,12 @@ describe("renderStatusCommentBody / parseStatusCommentBody round-trip", () => {
   });
 
   it("returns null when the data block is malformed JSON", () => {
-    const body = `<!-- auto-review-status -->\n<!-- auto-review-status-data\nnot json\n-->`;
+    const body = `<!-- looppilot-status -->\n<!-- looppilot-status-data\nnot json\n-->`;
     expect(parseStatusCommentBody(body)).toBeNull();
   });
 
   it("returns null when the JSON shape is wrong", () => {
-    const body = `<!-- auto-review-status -->\n<!-- auto-review-status-data\n${JSON.stringify(
+    const body = `<!-- looppilot-status -->\n<!-- looppilot-status-data\n${JSON.stringify(
       { current: 1, lastCommit: null, openFindings: null, nextAction: "x", entries: [] },
     )}\n-->`;
     expect(parseStatusCommentBody(body)).toBeNull();
@@ -177,7 +177,7 @@ describe("renderStatusCommentBody / parseStatusCommentBody round-trip", () => {
         { timestamp: "t", title: "T", body: "B", kind: "evil_kind" },
       ],
     };
-    const body = `<!-- auto-review-status -->\n<!-- auto-review-status-data\n${JSON.stringify(bad)}\n-->`;
+    const body = `<!-- looppilot-status -->\n<!-- looppilot-status-data\n${JSON.stringify(bad)}\n-->`;
     expect(parseStatusCommentBody(body)).toBeNull();
   });
 });
@@ -305,7 +305,7 @@ describe("upsertStatusComment", () => {
     expect(owner).toBe("o");
     expect(name).toBe("r");
     expect(pr).toBe(42);
-    expect(body).toContain("<!-- auto-review-status -->");
+    expect(body).toContain("<!-- looppilot-status -->");
     expect(body).toContain("Iteration 1 — Auto-fix applied");
   });
 
@@ -348,7 +348,7 @@ describe("upsertStatusComment", () => {
   });
 
   it("recovers gracefully if the existing comment body is corrupted", async () => {
-    findSpy.mockResolvedValue({ id: 555, body: "<!-- auto-review-status -->\nNo data block" });
+    findSpy.mockResolvedValue({ id: 555, body: "<!-- looppilot-status -->\nNo data block" });
     updateSpy.mockResolvedValue(undefined);
 
     const id = await upsertStatusComment(
@@ -383,7 +383,7 @@ describe("findStatusComment", () => {
   });
 
   it("parses a plain JSON object line (raw object, not @json-encoded)", async () => {
-    const record = { id: 42, body: "<!-- auto-review-status -->\nhello" };
+    const record = { id: 42, body: "<!-- looppilot-status -->\nhello" };
     mockedGhApi.mockResolvedValueOnce(JSON.stringify(record));
     const result = await findStatusComment("owner", "repo", 1, "token");
     expect(result).toEqual(record);
@@ -392,7 +392,7 @@ describe("findStatusComment", () => {
   it("decodes @json-encoded output where each line is a JSON-encoded string", async () => {
     // `@json` in jq wraps each object as a JSON string literal.
     // JSON.parse on such a line returns a string, not an object.
-    const record = { id: 42, body: "<!-- auto-review-status -->\nhello" };
+    const record = { id: 42, body: "<!-- looppilot-status -->\nhello" };
     const atJsonLine = JSON.stringify(JSON.stringify(record));
     mockedGhApi.mockResolvedValueOnce(atJsonLine);
     const result = await findStatusComment("owner", "repo", 1, "token");
@@ -400,8 +400,8 @@ describe("findStatusComment", () => {
   });
 
   it("returns the last (newest) record when multiple @json-encoded lines are present", async () => {
-    const first = { id: 1, body: "<!-- auto-review-status -->\nfirst" };
-    const last = { id: 2, body: "<!-- auto-review-status -->\nlast" };
+    const first = { id: 1, body: "<!-- looppilot-status -->\nfirst" };
+    const last = { id: 2, body: "<!-- looppilot-status -->\nlast" };
     const output = [
       JSON.stringify(JSON.stringify(first)),
       JSON.stringify(JSON.stringify(last)),
@@ -412,7 +412,7 @@ describe("findStatusComment", () => {
   });
 
   it("skips lines that are not valid JSON and continues to the next", async () => {
-    const valid = { id: 7, body: "<!-- auto-review-status -->\nok" };
+    const valid = { id: 7, body: "<!-- looppilot-status -->\nok" };
     const output = ["not-json", JSON.stringify(JSON.stringify(valid))].join(
       "\n",
     );
@@ -451,7 +451,7 @@ describe("status-comment delimiter robustness (TY-269 #14)", () => {
     const original = snapshot({
       entries: [
         entry({
-          body: "raw output with --> and <!-- auto-review-status-data inline",
+          body: "raw output with --> and <!-- looppilot-status-data inline",
         }),
       ],
     });
@@ -459,8 +459,8 @@ describe("status-comment delimiter robustness (TY-269 #14)", () => {
     // Slice out the data block content (between the open marker and the
     // closing `-->`) to verify the encoded payload is collision-free.
     const dataStart =
-      body.indexOf("<!-- auto-review-status-data") +
-      "<!-- auto-review-status-data".length;
+      body.indexOf("<!-- looppilot-status-data") +
+      "<!-- looppilot-status-data".length;
     const dataEnd = body.indexOf("-->", dataStart);
     const dataBlock = body.slice(dataStart, dataEnd);
     expect(dataBlock).not.toContain("-->");
@@ -479,10 +479,10 @@ describe("status-comment delimiter robustness (TY-269 #14)", () => {
     });
     const json = JSON.stringify(original).replace(/-->/g, "--\\>");
     const legacyBody = [
-      "<!-- auto-review-status -->",
-      "## Auto-review status",
+      "<!-- looppilot-status -->",
+      "## LoopPilot status",
       "",
-      "<!-- auto-review-status-data",
+      "<!-- looppilot-status-data",
       json,
       "-->",
       "",
@@ -493,8 +493,8 @@ describe("status-comment delimiter robustness (TY-269 #14)", () => {
 
   it("returns null on a body whose payload is neither base64 nor valid JSON", () => {
     const corruptBody = [
-      "<!-- auto-review-status -->",
-      "<!-- auto-review-status-data",
+      "<!-- looppilot-status -->",
+      "<!-- looppilot-status-data",
       "{not valid json and not base64",
       "-->",
     ].join("\n");

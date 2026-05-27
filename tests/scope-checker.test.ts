@@ -41,13 +41,13 @@ describe("checkScope (default policy)", () => {
   it("rejects a change to .github/workflows", () => {
     const result = checkScope([
       file("src/main-loop.ts", 1, 0),
-      file(".github/workflows/auto-review-loop.yml", 4, 0),
+      file(".github/workflows/looppilot-loop.yml", 4, 0),
     ]);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe("hard_block_path");
       expect(result.offendingPaths).toEqual([
-        ".github/workflows/auto-review-loop.yml",
+        ".github/workflows/looppilot-loop.yml",
       ]);
     }
   });
@@ -432,7 +432,7 @@ describe("buildScopePolicy (TY-271)", () => {
     const policy = buildScopePolicy({
       hardBlockOverride: ["package.json", "tsconfig.json"],
     });
-    // package.json / tsconfig.json now pass — equivalent to AUTO_REVIEW_BLOCK_PATHS=!package.json,!tsconfig.json.
+    // package.json / tsconfig.json now pass — equivalent to LOOPPILOT_BLOCK_PATHS=!package.json,!tsconfig.json.
     expect(checkScope([file("package.json", 1, 0)], policy).ok).toBe(true);
     expect(checkScope([file("tsconfig.json", 1, 0)], policy).ok).toBe(true);
     // package-lock.json (not overridden) still blocked.
@@ -456,7 +456,7 @@ describe("buildScopePolicy (TY-271)", () => {
 
 describe("real-world PR scenarios (TY-271 fixtures)", () => {
   // The four PRs the ticket cites as motivation. Each row asserts whether
-  // the new default block-list + (optional) `AUTO_REVIEW_BLOCK_PATHS`
+  // the new default block-list + (optional) `LOOPPILOT_BLOCK_PATHS`
   // override clears the path or not.
   it("PR #71: .github/workflows/ci.yml stays blocked under defaults (locked)", () => {
     const result = checkScope([file(".github/workflows/ci.yml", 1, 0)]);
@@ -662,7 +662,7 @@ describe("checkScopeBuildMode (TY-281)", () => {
   });
 
   it("still rejects writes to operator-added custom block paths (unlocked)", () => {
-    // AUTO_REVIEW_BLOCK_PATHS=secrets/ adds a non-default, non-locked pattern.
+    // LOOPPILOT_BLOCK_PATHS=secrets/ adds a non-default, non-locked pattern.
     // Build mode must enforce it even though it is unlocked — only the built-in
     // defaults (dist/, package.json, …) are relaxed.
     const policy = buildScopePolicy({ blockPathsSpec: "secrets/" });
@@ -690,7 +690,7 @@ describe("checkScopeBuildMode (TY-281)", () => {
 
   it("enforces a custom block nested inside a relaxed default prefix", () => {
     // dist/ is a default-unlocked path in build mode, but if an operator adds
-    // dist/secrets/ to AUTO_REVIEW_BLOCK_PATHS, that sub-path must still be
+    // dist/secrets/ to LOOPPILOT_BLOCK_PATHS, that sub-path must still be
     // blocked even though the parent prefix (dist/) is relaxed.
     const policy = buildScopePolicy({ blockPathsSpec: "dist/secrets/" });
     const result = checkScopeBuildMode(
@@ -709,7 +709,7 @@ describe("checkScopeBuildMode (TY-281)", () => {
   });
 
   it("blocks an explicitly re-added default path in build mode", () => {
-    // AUTO_REVIEW_BLOCK_PATHS=dist/ re-blocks a default-unlocked path. Build
+    // LOOPPILOT_BLOCK_PATHS=dist/ re-blocks a default-unlocked path. Build
     // mode must honour the operator's explicit policy and reject writes to dist/,
     // even though dist/ is normally relaxed by build-mode.
     const policy = buildScopePolicy({ blockPathsSpec: "dist/" });
@@ -722,7 +722,7 @@ describe("checkScopeBuildMode (TY-281)", () => {
   });
 
   it("blocks an explicitly re-added default file (package.json) in build mode", () => {
-    // AUTO_REVIEW_BLOCK_PATHS=package.json re-blocks a default-unlocked exact
+    // LOOPPILOT_BLOCK_PATHS=package.json re-blocks a default-unlocked exact
     // file. Build mode must honour the operator's explicit policy.
     const policy = buildScopePolicy({ blockPathsSpec: "package.json" });
     const result = checkScopeBuildMode([file("package.json", 3, 1)], policy);

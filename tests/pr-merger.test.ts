@@ -152,7 +152,7 @@ describe("mergeIfChecksPass — green path", () => {
     // is currently inside, which can never complete.
     const fake = makeDeps({
       workflowRunPages: [[
-        run(999, "auto-review-loop", "in_progress", null), // self
+        run(999, "loop-pilot", "in_progress", null), // self
         run(1, "ci", "completed", "success"),
       ]],
       selfRunId: "999",
@@ -489,9 +489,9 @@ describe("mergeIfChecksPass — no other runs", () => {
     const fake = makeDeps({
       workflowRunPages: [
         // First poll: only the self run is visible.
-        [run(999, "auto-review-loop", "in_progress", null)],
+        [run(999, "loop-pilot", "in_progress", null)],
         // Second poll: a non-self CI run appears and has completed.
-        [run(999, "auto-review-loop", "in_progress", null), run(1, "ci", "completed", "success")],
+        [run(999, "loop-pilot", "in_progress", null), run(1, "ci", "completed", "success")],
       ],
       selfRunId: "999",
       pollIntervalMs: 100,
@@ -511,7 +511,7 @@ describe("mergeIfChecksPass — no other runs", () => {
     // its threshold was met — confirming the new gate is opt-out and otherwise
     // behaviour-preserving.
     const fake = makeDeps({
-      workflowRunPages: [[run(999, "auto-review-loop", "in_progress", null)]],
+      workflowRunPages: [[run(999, "loop-pilot", "in_progress", null)]],
       selfRunId: "999",
       pollIntervalMs: 100,
     });
@@ -534,7 +534,7 @@ describe("mergeIfChecksPass — no other runs", () => {
     // budget, still zero non-self runs (and the merge sha is resolved)" merges,
     // treating the repo as having no CI configured.
     const fake = makeDeps({
-      workflowRunPages: [[run(999, "auto-review-loop", "in_progress", null)]],
+      workflowRunPages: [[run(999, "loop-pilot", "in_progress", null)]],
       selfRunId: "999",
       pollIntervalMs: 40_000,
       timeoutMs: 60_000,
@@ -563,7 +563,7 @@ describe("mergeIfChecksPass — no-CI delay (TY-308)", () => {
     await mergeIfChecksPass("o", "r", 42, "tok", log, {
       getPrHeadSha: async () => "abc123",
       getPrMergeSha: undefined,
-      listWorkflowRuns: async () => [run(999, "auto-review-loop", "in_progress", null)],
+      listWorkflowRuns: async () => [run(999, "loop-pilot", "in_progress", null)],
       mergeSquash: async (_o, _n, _pr, sha) => { mergeCalls += 1; mergeShas.push(sha); },
       sleep: async () => { clock.t += 10_000; },
       now: () => clock.t,
@@ -587,7 +587,7 @@ describe("mergeIfChecksPass — no-CI delay (TY-308)", () => {
     await mergeIfChecksPass("o", "r", 42, "tok", log, {
       getPrHeadSha: async () => "abc123",
       getPrMergeSha: undefined,
-      listWorkflowRuns: async () => [run(999, "auto-review-loop", "in_progress", null)],
+      listWorkflowRuns: async () => [run(999, "loop-pilot", "in_progress", null)],
       mergeSquash: async (_o, _n, _pr, sha) => { mergeCalls += 1; mergeShas.push(sha); },
       sleep: async () => { clock.t += 60_000; },
       now: () => clock.t,
@@ -763,7 +763,7 @@ describe("mergeIfChecksPass — merge sha pending (Finding 2)", () => {
     // disabled here (0 ms) to isolate the mergeShaLookupNull gating: with no
     // getPrMergeSha the shortcut is not gated and merges on the first poll.
     const fake = makeDeps({
-      workflowRunPages: [[run(999, "auto-review-loop", "in_progress", null)]],
+      workflowRunPages: [[run(999, "loop-pilot", "in_progress", null)]],
       selfRunId: "999",
       pollIntervalMs: 100,
     });
@@ -787,11 +787,11 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
     // stale failure from a prior trigger does not block the merge.
     const fake = makeDeps({
       workflowRunPages: [[
-        run(100, "auto-review-loop", "completed", "failure"),  // stale loop run, not current
+        run(100, "loop-pilot", "completed", "failure"),  // stale loop run, not current
         run(1, "ci", "completed", "success"),                   // real CI run
       ]],
       selfRunId: "999",         // current run is NOT in the list
-      selfWorkflowName: "auto-review-loop",
+      selfWorkflowName: "loop-pilot",
     });
     const { log } = captureLog();
 
@@ -803,11 +803,11 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
   it("blocks merge when a non-loop run fails even with the workflow-name fallback active", async () => {
     const fake = makeDeps({
       workflowRunPages: [[
-        run(100, "auto-review-loop", "completed", "failure"),  // stale loop, should be excluded
+        run(100, "loop-pilot", "completed", "failure"),  // stale loop, should be excluded
         run(1, "ci", "completed", "failure"),                   // real CI failure
       ]],
       selfRunId: "999",
-      selfWorkflowName: "auto-review-loop",
+      selfWorkflowName: "loop-pilot",
     });
     const { log, calls } = captureLog();
 
@@ -818,7 +818,7 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
   });
 
   it("uses path to disambiguate when two workflow files share the same display name", async () => {
-    // A different CI workflow happens to have the same display name "auto-review-loop"
+    // A different CI workflow happens to have the same display name "loop-pilot"
     // but lives at a different file path and has a different workflow_id. Without
     // path-based disambiguation the wrong workflow would be excluded, letting a
     // real CI failure through. With selfWorkflowPath set, only runs whose path
@@ -826,8 +826,8 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
     const loopRun: WorkflowRunSummary = {
       id: 100,
       workflow_id: 10,
-      name: "auto-review-loop",
-      path: ".github/workflows/auto-review-loop.yml",
+      name: "loop-pilot",
+      path: ".github/workflows/looppilot-loop.yml",
       status: "completed",
       conclusion: "failure",
       head_sha: "abc123",
@@ -836,7 +836,7 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
     const impostor: WorkflowRunSummary = {
       id: 200,
       workflow_id: 20,  // different workflow file, same display name
-      name: "auto-review-loop",
+      name: "loop-pilot",
       path: ".github/workflows/other-ci.yml",
       status: "completed",
       conclusion: "failure",  // this failure must NOT be excluded
@@ -846,8 +846,8 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
     const fake = makeDeps({
       workflowRunPages: [[loopRun, impostor]],
       selfRunId: "999",              // current run is NOT in the list
-      selfWorkflowName: "auto-review-loop",
-      selfWorkflowPath: ".github/workflows/auto-review-loop.yml",
+      selfWorkflowName: "loop-pilot",
+      selfWorkflowPath: ".github/workflows/looppilot-loop.yml",
     });
     const { log, calls } = captureLog();
 
@@ -860,15 +860,15 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
 
   it("strips @ref suffix from workflow run path before comparing to selfWorkflowPath", async () => {
     // The GitHub Actions API returns workflow_runs[].path with a @ref suffix
-    // (e.g. ".github/workflows/auto-review-loop.yml@refs/heads/main"), whereas
+    // (e.g. ".github/workflows/looppilot-loop.yml@refs/heads/main"), whereas
     // selfWorkflowPath is derived from GITHUB_WORKFLOW_REF with the @ref part
     // stripped. Without normalisation the equality check always fails and the
     // loop workflow is not excluded, causing stale loop failures to block merge.
     const loopRun: WorkflowRunSummary = {
       id: 100,
       workflow_id: 10,
-      name: "auto-review-loop",
-      path: ".github/workflows/auto-review-loop.yml@refs/heads/main",
+      name: "loop-pilot",
+      path: ".github/workflows/looppilot-loop.yml@refs/heads/main",
       status: "completed",
       conclusion: "failure",
       head_sha: "abc123",
@@ -887,8 +887,8 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
     const fake = makeDeps({
       workflowRunPages: [[loopRun, ciRun]],
       selfRunId: "999",              // current run is NOT in the list
-      selfWorkflowName: "auto-review-loop",
-      selfWorkflowPath: ".github/workflows/auto-review-loop.yml",
+      selfWorkflowName: "loop-pilot",
+      selfWorkflowPath: ".github/workflows/looppilot-loop.yml",
     });
     const { log, calls } = captureLog();
 
@@ -1149,7 +1149,7 @@ describe("mergeIfChecksPass — postSkipNotification on every skip path (TY-295)
     // must not merge. Timing: pollIntervalMs=40s, timeoutMs=60s, clockTickMs=40s
     // → elapsed 80s exceeds the timeout, landing in the timeout branch.
     const fake = makeDeps({
-      workflowRunPages: [[run(999, "auto-review-loop", "in_progress", null)]],
+      workflowRunPages: [[run(999, "loop-pilot", "in_progress", null)]],
       selfRunId: "999",
       pollIntervalMs: 40_000,
       timeoutMs: 60_000,

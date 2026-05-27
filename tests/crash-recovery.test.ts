@@ -29,7 +29,7 @@ const crashConfig: Config = {
   claudeCodeOauthToken: "",
   githubToken: "github-token",
   repoOwner: "team-yubune",
-  repoName: "test-auto-ai-review",
+  repoName: "loop-pilot",
   prNumber: 999,
   triggerCommentId: 0,
   triggerCommentBody: "",
@@ -95,7 +95,7 @@ describe("demoteFixingOnCrash", () => {
       deps.updateStateComment as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(owner).toBe("team-yubune");
-    expect(name).toBe("test-auto-ai-review");
+    expect(name).toBe("loop-pilot");
     expect(commentId).toBe(12345);
     expect(token).toBe("github-token");
     expect(options).toEqual({ expectedUpdatedAt: "2026-05-15T00:00:00.000Z" });
@@ -115,7 +115,7 @@ describe("demoteFixingOnCrash", () => {
       deps.postStopComment as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(psOwner).toBe("team-yubune");
-    expect(psName).toBe("test-auto-ai-review");
+    expect(psName).toBe("loop-pilot");
     expect(psPr).toBe(999);
     expect(psReason).toBe("workflow_crashed");
     expect(psDetail).toContain("Auto-fix workflow crashed during pre-fix");
@@ -178,12 +178,12 @@ describe("demoteFixingOnCrash", () => {
     // `updateStateComment` fails (412 conflict from a concurrent writer,
     // transient 5xx, etc.) the hidden state remains `fixing`. Calling
     // `postStopComment` in that branch would publish a "Stopped" entry on
-    // the visible status comment and a top-level "🛑 Auto-review stopped"
+    // the visible status comment and a top-level "🛑 LoopPilot stopped"
     // notification, while the hidden state still claims `fixing`. The
     // operator sees the "Stopped" signal, tries `/restart-review`,
     // `applyRestartToState` rejects it — exactly the silent-unrecoverable
     // UX TY-282 set out to fix. The workflow YAML 2B fail-safe step posts
-    // a distinct "🛑 Auto-review crashed" message in this case, which does
+    // a distinct "🛑 LoopPilot crashed" message in this case, which does
     // NOT claim demotion happened.
     const deps = makeDeps({
       updateStateComment: vi.fn().mockRejectedValue(new Error("412 conflict")),

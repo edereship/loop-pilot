@@ -94,7 +94,7 @@ export interface ClaudeCodeBlockedPath {
   /** Repo-relative path or directory prefix (trailing slash for directories). */
   path: string;
   /**
-   * True iff the entry cannot be unblocked via `AUTO_REVIEW_BLOCK_PATHS=!path`.
+   * True iff the entry cannot be unblocked via `LOOPPILOT_BLOCK_PATHS=!path`.
    * Currently only `.github/` is locked.
    */
   locked: boolean;

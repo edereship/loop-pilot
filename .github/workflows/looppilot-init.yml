@@ -1,13 +1,13 @@
-# Workflow A: PR creation → initialize auto-review
+# Workflow A: PR creation → initialize LoopPilot
 # Spec: docs/architecture/event-design.md#workflow-a
 #
 # Usage in other repos:
-#   - uses: your-org/auto-review-action/init@v1
+#   - uses: team-yubune/loop-pilot/init@v1
 #     with:
 #       github-token: ${{ secrets.GITHUB_TOKEN }}
 #       codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 #       pr-number: ${{ github.event.pull_request.number }}
-name: Auto Review Init
+name: LoopPilot Init
 
 on:
   pull_request:
@@ -21,24 +21,24 @@ permissions:
 jobs:
   init:
     concurrency:
-      group: auto-review-init-${{ github.repository }}-${{ github.event.pull_request.number }}
+      group: looppilot-init-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     # Default-strict label gate with full-auto opt-out:
-    #   - vars.AUTO_REVIEW_FULL_AUTO == 'true' → gate disabled, every non-fork ready PR
+    #   - vars.LOOPPILOT_FULL_AUTO == 'true' → gate disabled, every non-fork ready PR
     #     triggers init. `labeled` events are ignored so adding any label does NOT reset
     #     state and re-post `@codex review`.
     #   - otherwise (default) → PR must carry the gate label
-    #     `vars.AUTO_REVIEW_LABEL || 'auto-review-fix'`. For `labeled` events, the added
+    #     `vars.LOOPPILOT_LABEL || 'loop-pilot'`. For `labeled` events, the added
     #     label itself must match the gate label (adding an unrelated label is a no-op).
     if: >
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (
-        (vars.AUTO_REVIEW_FULL_AUTO == 'true' && github.event.action != 'labeled') ||
+        (vars.LOOPPILOT_FULL_AUTO == 'true' && github.event.action != 'labeled') ||
         (
-          vars.AUTO_REVIEW_FULL_AUTO != 'true' &&
-          contains(github.event.pull_request.labels.*.name, vars.AUTO_REVIEW_LABEL || 'auto-review-fix') &&
-          (github.event.action != 'labeled' || github.event.label.name == (vars.AUTO_REVIEW_LABEL || 'auto-review-fix'))
+          vars.LOOPPILOT_FULL_AUTO != 'true' &&
+          contains(github.event.pull_request.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot') &&
+          (github.event.action != 'labeled' || github.event.label.name == (vars.LOOPPILOT_LABEL || 'loop-pilot'))
         )
       )
     runs-on: ubuntu-latest
@@ -50,7 +50,7 @@ jobs:
       - name: Check fork PR (security guard)
         if: github.event.pull_request.head.repo.full_name != github.repository
         run: |
-          echo "::error::Fork PR detected. Auto-review is disabled for fork PRs."
+          echo "::error::Fork PR detected. LoopPilot is disabled for fork PRs."
           exit 1
 
       - name: Run init
@@ -61,29 +61,29 @@ jobs:
           pr-number: ${{ github.event.pull_request.number }}
           # TY-291 #3 / TY-309: reflect the operator-configured cap in the
           # initial status comment's **Iterations** header. Use the same
-          # expression as auto-review-loop.yml so both workflows agree on the cap
+          # expression as looppilot-loop.yml so both workflows agree on the cap
           # (without this, the initial comment shows the default 20 until the
           # first post-fix iteration overwrites it with the real value).
           max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
           # TY-272 #A: trusted state-comment author override; empty falls
           # back to `github-actions[bot]`.
-          auto-review-state-comment-authors: ${{ vars.AUTO_REVIEW_STATE_COMMENT_AUTHORS }}
+          looppilot-state-comment-authors: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}
 
       # TY-283: Workflow A fail-safe (symmetric with the Workflow B fail-safe
-      # set in `auto-review-loop.yml`). Workflow A has only three steps —
+      # set in `looppilot-loop.yml`). Workflow A has only three steps —
       # `checkout`, `Check fork PR`, `Run init` — and the Node `Run init` step
       # has no crash-recovery hook (`main-init.ts` calls
       # `runIfNotVitest(run)` without an `onError` argument, unlike pre-fix /
       # post-fix). Any failure here — early-step (checkout failure, fork
       # rejection) OR a `Run init` Node crash — would otherwise leave the PR
       # completely silent: no hidden state, no `@codex review`, no notification.
-      # Operators only notice when they wonder "why didn't auto-review fire?"
+      # Operators only notice when they wonder "why didn't LoopPilot fire?"
       #
       # Init's state mutations are simpler than the auto-fix loop, so the
-      # complement-style partition that auto-review-loop.yml uses
+      # complement-style partition that looppilot-loop.yml uses
       # (`failure`/`cancelled` vs `skipped`) is unnecessary — a single
       # `failure()` guard covers every failure mode. We deliberately do NOT
-      # mutate `auto-review-state` here: a successful `createStateComment`
+      # mutate `looppilot-state` here: a successful `createStateComment`
       # leaves status `initialized`, which pre-fix already detects and
       # surfaces via `postInitIncompleteComment` on the next valid trigger.
       # If the failure was before `createStateComment` even ran, there is no
@@ -101,7 +101,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          BODY=$'⚠️ **Auto-review init failed.**\n\nThe init workflow that prepares auto-review state and posts the initial `@codex review` failed before completing. Auto-review may not be active on this PR until init runs successfully. Re-run this workflow from the Actions tab, or re-trigger init by removing and re-adding the gate label (or closing/reopening the PR in full-auto mode).\n\nWorkflow run: '"$RUN_URL"
+          BODY=$'⚠️ **LoopPilot init failed.**\n\nThe init workflow that prepares LoopPilot state and posts the initial `@codex review` failed before completing. LoopPilot may not be active on this PR until init runs successfully. Re-run this workflow from the Actions tab, or re-trigger init by removing and re-adding the gate label (or closing/reopening the PR in full-auto mode).\n\nWorkflow run: '"$RUN_URL"
           gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --method POST \
             --raw-field body="$BODY" \

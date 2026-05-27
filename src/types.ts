@@ -108,7 +108,7 @@ export const STOP_REASON_LABELS = {
   action_failure:
     "Claude Code Action exited non-zero — check the workflow run",
   scope_violation:
-    "repair touched blocked paths — adjust `AUTO_REVIEW_BLOCK_PATHS` or revert",
+    "repair touched blocked paths — adjust `LOOPPILOT_BLOCK_PATHS` or revert",
   max_turns_exceeded:
     "Claude Code Action hit `--max-turns` — `/restart-review` escalates tier",
   codex_usage_limit:

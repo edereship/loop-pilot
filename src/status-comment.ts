@@ -4,11 +4,11 @@ import {
   getTrustedStateCommentAuthors,
 } from "./state-manager.js";
 
-export const STATUS_COMMENT_MARKER = "auto-review-status";
+export const STATUS_COMMENT_MARKER = "looppilot-status";
 const STATUS_COMMENT_OPEN = `<!-- ${STATUS_COMMENT_MARKER} -->`;
 const STATUS_COMMENT_DATA_OPEN = `<!-- ${STATUS_COMMENT_MARKER}-data`;
 const STATUS_COMMENT_DATA_CLOSE = "-->";
-const STATUS_COMMENT_VISIBLE_HEADER = "## Auto-review status";
+const STATUS_COMMENT_VISIBLE_HEADER = "## LoopPilot status";
 const MAX_ENTRIES = 30;
 // GitHub issue-comment body limit is 65 536 bytes. Each entry body appears
 // twice in the rendered comment (visible history + hidden JSON data block), so
@@ -122,7 +122,7 @@ function renderStatusCommentBodyUnchecked(snapshot: StatusSnapshot): string {
   // TY-269 #14: base64-encode the JSON payload so that arbitrary entry bodies
   // (CHECK_COMMAND tail, stack traces, etc.) can never collide with the HTML
   // comment delimiter or the data-block marker. Base64 output is ASCII without
-  // `-`, `<`, or `>`, so neither `-->` nor `<!-- auto-review-status-data` can
+  // `-`, `<`, or `>`, so neither `-->` nor `<!-- looppilot-status-data` can
   // appear in the encoded payload. Visible history above stays as raw markdown
   // for human readability.
   const data = [
@@ -476,7 +476,7 @@ const defaultDeps: UpsertStatusCommentDeps = {
 };
 
 /**
- * Find-or-create the auto-review status comment and apply `update`. When the
+ * Find-or-create the LoopPilot status comment and apply `update`. When the
  * comment already exists, the previous snapshot is parsed from its hidden
  * JSON block and merged with `update` before rewriting the body. Returns the
  * comment ID so callers can correlate logs / tests.

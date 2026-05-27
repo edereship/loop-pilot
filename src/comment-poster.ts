@@ -138,7 +138,7 @@ async function applyStatusUpdate(
 export function nextActionForStopReason(reason: StopReason): string {
   switch (reason) {
     case "no_findings":
-      return "Auto-review is complete; merge when ready.";
+      return "LoopPilot is complete; merge when ready.";
     case "max_iterations":
       return "Review history, then `/restart-review --hard` to clear the iteration count.";
     case "loop_detected":
@@ -146,7 +146,7 @@ export function nextActionForStopReason(reason: StopReason): string {
     case "secret_leak_suspected":
       return "Audit the diff for leaked credentials, then `/restart-review --hard` (soft is rejected).";
     case "scope_violation":
-      return "Review the stop detail above for the specific violation; revert if needed, adjust `AUTO_REVIEW_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
+      return "Review the stop detail above for the specific violation; revert if needed, adjust `LOOPPILOT_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
     case "test_failure":
       return "Fix the underlying CHECK_COMMAND failure, push, then `/restart-review`.";
     case "codex_usage_limit":
@@ -169,7 +169,7 @@ export function nextActionForStopReason(reason: StopReason): string {
 }
 
 /**
- * Terminal auto-review events (`done` / `stopped` / `init_incomplete`) for
+ * Terminal LoopPilot events (`done` / `stopped` / `init_incomplete`) for
  * which we post an additional top-level PR comment alongside the status
  * comment upsert. Iteration progress events are intentionally excluded — they
  * stay aggregated in the status comment (TY-228 / TY-259).
@@ -204,7 +204,7 @@ export function buildTerminalNotificationBody(
   switch (kind.kind) {
     case "done":
       return [
-        `✅ **Auto-review completed** — no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
+        `✅ **LoopPilot completed** — no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
         "",
         `See the [status comment](${permalink}) for the full history.`,
       ].join("\n");
@@ -215,7 +215,7 @@ export function buildTerminalNotificationBody(
           ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.`
           : "Manual intervention required.";
       return [
-        `🛑 **Auto-review stopped** — ${label}.`,
+        `🛑 **LoopPilot stopped** — ${label}.`,
         "",
         actionLine,
         `See the [status comment](${permalink}) for the full history.`,
@@ -223,15 +223,15 @@ export function buildTerminalNotificationBody(
     }
     case "init_incomplete":
       // TY-293 #3 (UX-10): align the in-process notification with the YAML
-      // fail-safe in `auto-review-init.yml` so operators see the same three
+      // fail-safe in `looppilot-init.yml` so operators see the same three
       // concrete recovery steps regardless of which path caught the failure.
       // The old single-line text ("Re-run Workflow A or manually post
       // `@codex review`") was abstract enough that operators had to leave
       // GitHub to figure out how to act on it.
       return [
-        "⚠️ **Auto-review init incomplete** — the initial `@codex review` was never posted.",
+        "⚠️ **LoopPilot init incomplete** — the initial `@codex review` was never posted.",
         "",
-        "Auto-review is not active on this PR until init runs successfully. Either:",
+        "LoopPilot is not active on this PR until init runs successfully. Either:",
         "- Re-run the Workflow A run from the Actions tab, or",
         "- Re-trigger init by removing and re-adding the gate label (or closing / reopening the PR in full-auto mode).",
         "",
@@ -242,7 +242,7 @@ export function buildTerminalNotificationBody(
 
 /**
  * Best-effort: post a new top-level PR comment summarizing a terminal
- * auto-review event. The status comment remains the single source of truth;
+ * LoopPilot event. The status comment remains the single source of truth;
  * this helper exists solely to restore GitHub notifications, which `edit`
  * operations on the status comment do not trigger (TY-259).
  *
@@ -326,7 +326,7 @@ export function buildAutoMergeSkipBody(
         "",
         ...kind.failures.map((f) => `- \`${f.name}\` (\`${f.conclusion}\`)`),
         "",
-        "Auto-review completed cleanly but other CI checks did not pass. Resolve the failing checks and merge manually, or push a fix to re-run.",
+        "LoopPilot completed cleanly but other CI checks did not pass. Resolve the failing checks and merge manually, or push a fix to re-run.",
         "",
         `Workflow run: ${runUrl}`,
       ].join("\n");
@@ -336,7 +336,7 @@ export function buildAutoMergeSkipBody(
         "",
         `${kind.pending.length} CI run(s) still pending: ${kind.pending.map((n) => `\`${n}\``).join(", ")}.`,
         "",
-        "Wait for CI to finish and merge manually, or bump `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` if your CI is consistently slow.",
+        "Wait for CI to finish and merge manually, or bump `LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES` if your CI is consistently slow.",
         "",
         `Workflow run: ${runUrl}`,
       ].join("\n");
@@ -352,7 +352,7 @@ export function buildAutoMergeSkipBody(
       return [
         `${AUTO_MERGE_SKIP_PREFIX} — PR HEAD changed during CI wait (\`${kind.oldSha}\` → \`${kind.newSha}\`).`,
         "",
-        "The new commit needs its own review/CI cycle. Use `/restart-review` to resume auto-review on the latest HEAD.",
+        "The new commit needs its own review/CI cycle. Use `/restart-review` to resume LoopPilot on the latest HEAD.",
         "",
         `Workflow run: ${runUrl}`,
       ].join("\n");
@@ -464,7 +464,7 @@ export async function postAutoMergeSkipNotification(
 
 /**
  * Records a successful claude-code-action repair iteration in the PR's
- * auto-review status comment (creating it if missing). Returns the status
+ * LoopPilot status comment (creating it if missing). Returns the status
  * comment's ID.
  *
  * TY-291 #1 (UX-04): post-fix calls this after committing + pushing the repair
@@ -512,12 +512,12 @@ export async function postClaudeCodeActionFixSummary(
 }
 
 /**
- * Marks the auto-review as completed in the PR's status comment. Returns the
+ * Marks the LoopPilot as completed in the PR's status comment. Returns the
  * status comment's ID.
  *
  * TY-291 #4 (UX-11): `nextAction` branches on `autoMergeOnClean` so the row
  * carries an imperative the operator can act on (merge / wait for auto-merge)
- * instead of restating that auto-review is done.
+ * instead of restating that LoopPilot is done.
  */
 export async function postCompletionComment(
   owner: string,
@@ -542,7 +542,7 @@ export async function postCompletionComment(
       ...progressUpdate(options?.progress),
       newEntry: entry(
         "completed",
-        `Auto-review completed (${iterations} iterations)`,
+        `LoopPilot completed (${iterations} iterations)`,
         "All in-scope findings (at or above the configured severity threshold) have been resolved.",
       ),
     },
@@ -682,7 +682,7 @@ export async function postTestFailureComment(
 }
 
 /**
- * Creates the initial auto-review status comment when Workflow A completes
+ * Creates the initial LoopPilot status comment when Workflow A completes
  * successfully (TY-291 #2, UX-05). Without this hook the PR has no visible
  * status comment until the first post-fix iteration commits — operators can
  * not tell from the PR alone whether the loop is running, especially during
@@ -765,7 +765,7 @@ export async function postInitIncompleteComment(
     pr,
     {
       // TY-293 #3 (UX-10): same three operator actions as the YAML fail-safe
-      // in `auto-review-init.yml` and the in-process top-level notification
+      // in `looppilot-init.yml` and the in-process top-level notification
       // (`buildTerminalNotificationBody.init_incomplete`). Keeping the
       // language identical across the three surfaces lets operators recognise
       // the failure mode regardless of which path posted the comment.
@@ -774,7 +774,7 @@ export async function postInitIncompleteComment(
         "Re-run Workflow A from the Actions tab, or remove and re-add the gate label.",
       newEntry: entry(
         "init_incomplete",
-        "Auto-review initialization incomplete",
+        "LoopPilot initialization incomplete",
         "Workflow A may have failed before posting the initial `@codex review`. Re-run from the Actions tab, or remove and re-add the gate label (or close / reopen the PR in full-auto mode).",
       ),
     },

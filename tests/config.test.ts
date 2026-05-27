@@ -9,7 +9,7 @@ import { loadConfig, loadInitConfig } from "../src/config.js";
  */
 
 const REQUIRED_ENV: Record<string, string> = {
-  GITHUB_REPOSITORY: "team-yubune/test-auto-ai-review",
+  GITHUB_REPOSITORY: "team-yubune/loop-pilot",
   GITHUB_TOKEN: "github-token",
   PR_NUMBER: "99",
 };
@@ -101,7 +101,7 @@ describe("loadInitConfig — hard-block override (TY-255)", () => {
   beforeEach(() => {
     restore = withEnv({
       ...REQUIRED_ENV,
-      AUTO_REVIEW_HARD_BLOCK_OVERRIDE: undefined,
+      LOOPPILOT_HARD_BLOCK_OVERRIDE: undefined,
     });
   });
 
@@ -115,12 +115,12 @@ describe("loadInitConfig — hard-block override (TY-255)", () => {
   });
 
   it("treats an empty string as no override (variable defined but blank)", () => {
-    process.env.AUTO_REVIEW_HARD_BLOCK_OVERRIDE = "";
+    process.env.LOOPPILOT_HARD_BLOCK_OVERRIDE = "";
     expect(loadInitConfig().hardBlockOverride).toEqual([]);
   });
 
   it("parses comma-separated paths and trims surrounding whitespace", () => {
-    process.env.AUTO_REVIEW_HARD_BLOCK_OVERRIDE = " package.json , tsconfig.json ";
+    process.env.LOOPPILOT_HARD_BLOCK_OVERRIDE = " package.json , tsconfig.json ";
     expect(loadInitConfig().hardBlockOverride).toEqual([
       "package.json",
       "tsconfig.json",
@@ -128,7 +128,7 @@ describe("loadInitConfig — hard-block override (TY-255)", () => {
   });
 
   it("discards empty entries from stray separators", () => {
-    process.env.AUTO_REVIEW_HARD_BLOCK_OVERRIDE = "package.json,,tsconfig.json,";
+    process.env.LOOPPILOT_HARD_BLOCK_OVERRIDE = "package.json,,tsconfig.json,";
     expect(loadInitConfig().hardBlockOverride).toEqual([
       "package.json",
       "tsconfig.json",
@@ -198,17 +198,17 @@ describe("loadBaseConfig — severityThreshold (TY-256 / TY-326 #1)", () => {
   });
 
   it("defaults to P3 when unset (pins the doc-comment to the implementation)", () => {
-    restore = withEnv({ ...REQUIRED_ENV, AUTO_REVIEW_SEVERITY_THRESHOLD: undefined });
+    restore = withEnv({ ...REQUIRED_ENV, LOOPPILOT_SEVERITY_THRESHOLD: undefined });
     expect(loadInitConfig().severityThreshold).toBe("P3");
   });
 
   it("falls back to P3 on an invalid value", () => {
-    restore = withEnv({ ...REQUIRED_ENV, AUTO_REVIEW_SEVERITY_THRESHOLD: "P9" });
+    restore = withEnv({ ...REQUIRED_ENV, LOOPPILOT_SEVERITY_THRESHOLD: "P9" });
     expect(loadInitConfig().severityThreshold).toBe("P3");
   });
 
   it("honours an explicit valid threshold", () => {
-    restore = withEnv({ ...REQUIRED_ENV, AUTO_REVIEW_SEVERITY_THRESHOLD: "P1" });
+    restore = withEnv({ ...REQUIRED_ENV, LOOPPILOT_SEVERITY_THRESHOLD: "P1" });
     expect(loadInitConfig().severityThreshold).toBe("P1");
   });
 });
@@ -247,11 +247,11 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
   beforeEach(() => {
     restore = withEnv({
       ...REQUIRED_ENV,
-      AUTO_REVIEW_BLOCK_PATHS: undefined,
-      AUTO_REVIEW_SCOPE_MAX_FILES: undefined,
-      AUTO_REVIEW_SCOPE_MAX_LINES: undefined,
-      AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES: undefined,
-      AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES: undefined,
+      LOOPPILOT_BLOCK_PATHS: undefined,
+      LOOPPILOT_SCOPE_MAX_FILES: undefined,
+      LOOPPILOT_SCOPE_MAX_LINES: undefined,
+      LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES: undefined,
+      LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES: undefined,
     });
   });
 
@@ -269,9 +269,9 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
     expect(config.scopeAdditionalHardBlockPrefixes).toEqual([]);
   });
 
-  it("reads AUTO_REVIEW_SCOPE_MAX_FILES / _MAX_LINES from env when input is empty", () => {
-    process.env.AUTO_REVIEW_SCOPE_MAX_FILES = "5";
-    process.env.AUTO_REVIEW_SCOPE_MAX_LINES = "250";
+  it("reads LOOPPILOT_SCOPE_MAX_FILES / _MAX_LINES from env when input is empty", () => {
+    process.env.LOOPPILOT_SCOPE_MAX_FILES = "5";
+    process.env.LOOPPILOT_SCOPE_MAX_LINES = "250";
 
     const config = loadInitConfig();
 
@@ -282,8 +282,8 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
     expect(config.scopeMaxLines).toBe(250);
   });
 
-  it("reads the AUTO_REVIEW_BLOCK_PATHS spec verbatim (TY-271)", () => {
-    process.env.AUTO_REVIEW_BLOCK_PATHS = "secrets/,!Makefile,Justfile";
+  it("reads the LOOPPILOT_BLOCK_PATHS spec verbatim (TY-271)", () => {
+    process.env.LOOPPILOT_BLOCK_PATHS = "secrets/,!Makefile,Justfile";
 
     const config = loadInitConfig();
 
@@ -294,9 +294,9 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
     expect(config.autoReviewBlockPaths).toBe("secrets/,!Makefile,Justfile");
   });
 
-  it("still reads the deprecated AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES / _ADDITIONAL_HARD_BLOCK_PREFIXES (TY-271 deprecation)", () => {
-    process.env.AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES = "packages/,apps/";
-    process.env.AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES = "scripts/,Justfile";
+  it("still reads the deprecated LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES / _ADDITIONAL_HARD_BLOCK_PREFIXES (TY-271 deprecation)", () => {
+    process.env.LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES = "packages/,apps/";
+    process.env.LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES = "scripts/,Justfile";
 
     const config = loadInitConfig();
 

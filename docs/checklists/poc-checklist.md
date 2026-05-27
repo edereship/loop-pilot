@@ -8,13 +8,13 @@
 
 ### 実装必須
 
-- [x] Workflow A: PR 作成時に hidden comment 作成 + `@codex review` 投稿 → [Workflow A](../architecture/event-design.md#workflow-a-pr-作成時auto-review-inityml)
-- [x] Workflow B: Codex レビュー受信 + デバウンス待機 + claude-code-action 修正 + 再レビュー依頼 → [Workflow B](../architecture/event-design.md#workflow-b-codex-レビュー受信--claude-修正auto-review-loopyml)
+- [x] Workflow A: PR 作成時に hidden comment 作成 + `@codex review` 投稿 → [Workflow A](../architecture/event-design.md#workflow-a-pr-作成時looppilot-inityml)
+- [x] Workflow B: Codex レビュー受信 + デバウンス待機 + claude-code-action 修正 + 再レビュー依頼 → [Workflow B](../architecture/event-design.md#workflow-b-codex-レビュー受信--claude-修正loop-pilotyml)
 - [x] Severity パーサー（P0/P1/P2 抽出の正規表現） → [Severity の抽出ルール](../specs/severity-parser.md#severity-の抽出ルール)
 - [x] `@codex review` 投稿専用の接続済みユーザー PAT（`CODEX_REVIEW_REQUEST_TOKEN`）を Workflow A/B で使用し、未設定時は `GITHUB_TOKEN` に fallback → [Codex review request token](../architecture/event-design.md#codex-review-request-token)
 - [x] `anthropics/claude-code-action@v1` への repair request 構築（`buildClaudeCodeRepairRequest` / `buildClaudeCodeRepairPrompt`） → [Claude Code repair request](../specs/claude-code-repair-request.md)
 - [x] composite action `loop/action.yml` を pre-fix → claude-code-action → post-fix の3-step に分割 → [Workflow B Phase 3](../architecture/event-design.md#workflow-b-の処理フェーズ)
-- [x] post-fix の変更スコープ検査（block-list 方式: `.github/`/`dist/`/`package.json` 等を default block、その他は許可、20 files / 1000 lines 上限、`AUTO_REVIEW_BLOCK_PATHS` で運用カスタマイズ可） → [scope-policy.md](../operations/scope-policy.md)
+- [x] post-fix の変更スコープ検査（block-list 方式: `.github/`/`dist/`/`package.json` 等を default block、その他は許可、20 files / 1000 lines 上限、`LOOPPILOT_BLOCK_PATHS` で運用カスタマイズ可） → [scope-policy.md](../operations/scope-policy.md)
 - [x] `CHECK_COMMAND` 実行 + 失敗時ロールバック → [検証コマンドとロールバック](../operations/check-and-rollback.md)
 - [x] CHECK_COMMAND 失敗時の tail を `previousCheckFailure` に保存し、次 iteration の prompt にコンテキストとして渡す
 - [x] claude-code-action の `outcome=cancelled` を `action_timeout`、`outcome=failure` を `action_failure` / `max_turns_exceeded` に変換する post-fix 分岐
@@ -22,7 +22,7 @@
 - [x] `MAX_REVIEW_ITERATIONS` による停止制御 → [停止条件](../operations/stop-and-recovery.md#停止条件)
 - [x] 同一指摘ループ検知 → [ループ検知](../specs/loop-detection.md)
 - [x] Fork PR からの起動防止 → [セキュリティ](../operations/security.md#fork-pr-からの起動防止)
-- [x] Repository variables 未設定時も空文字 `contains()` で Workflow B が誤起動しない trigger guard → [イベント設計](../architecture/event-design.md#workflow-b-codex-レビュー受信--claude-修正auto-review-loopyml)
+- [x] Repository variables 未設定時も空文字 `contains()` で Workflow B が誤起動しない trigger guard → [イベント設計](../architecture/event-design.md#workflow-b-codex-レビュー受信--claude-修正loop-pilotyml)
 
 ---
 
@@ -43,7 +43,7 @@
 - 同一指摘ループ検知はユニットテスト済み。実 PR #7 では no-edit 停止時の failed attempt 消費を修正し、最終的にはループ停止ではなく done 終了を確認した。
 - fork PR からの起動防止は workflow/action guard として実装済み。本リポジトリで外部 fork PR を作成しての E2E 検証は未実施。
 - stabilize safeguard は実装・ユニットテスト済み。PR #7 では inline comment が取得できたため、追加 polling が必要なケースは踏んでいない。
-- claude-code-action 経路（TY-237）の dogfood は本 PR をターゲットに `auto-review-fix` ラベルで検証する。
+- claude-code-action 経路（TY-237）の dogfood は本 PR をターゲットに `loop-pilot` ラベルで検証する。
 - post-fix 変更スコープ検査は `tests/scope-checker.test.ts` で網羅済み。意図的なスコープ外修正を発生させた E2E は未実施（[scope-policy.md](../operations/scope-policy.md) 参照）。
 - `max_turns_exceeded` の検出は `actionExecutionFile` の文字列マッチに依存。execution file の正式スキーマが claude-code-action 側で公開されたら見直す。
 
@@ -63,7 +63,7 @@
 - Workflow B run `25434230427` で `pull_request_review` トリガーから PR head branch `linear/RCM-TY-11` を checkout し、依存関係セットアップ、Claude 修正、`CHECK_COMMAND`、commit/push、artifact upload がすべて成功した。PR head は `f7c4f16043` から `e81908f6a72ddc41185cee01f7a3d68849d17cc1` に更新された。
 - Workflow B run `25434230427` の artifact `codex-comments-7-50`（artifact id `6829810937`, digest `sha256:80146528a7b5e10c45db95b7205b84d059adc89a9d25094d37dccfeee5a76828`）で Codex コメントが保存された。
 - Workflow B は修正要約コメントと再 `@codex review` を投稿し、Codex は `Codex Review: Didn't find any major issues.` を返した。
-- 最終 Workflow B run `25434616354` は `issue_comment` トリガーで成功し、hidden comment state は `status: "done"`, `stopReason: "no_findings"` に更新された。PR コメントにも `Auto-review completed. Iterations: 1. All P0/P1 findings have been resolved.` が投稿された。
+- 最終 Workflow B run `25434616354` は `issue_comment` トリガーで成功し、hidden comment state は `status: "done"`, `stopReason: "no_findings"` に更新された。PR コメントにも `LoopPilot completed. Iterations: 1. All P0/P1 findings have been resolved.` が投稿された。
 
 ---
 

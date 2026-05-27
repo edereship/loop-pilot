@@ -19,7 +19,7 @@ PR #7 / TY-11 で、同一リポジトリ PR に対する Workflow A/B の主要
 
 | Issue | 優先度 | 分類 | 概要 |
 |------|--------|------|------|
-| TY-137 | High | 実装済み / 設定 | ラベル付き PR のみ auto-review を起動する default-strict 運用（`AUTO_REVIEW_LABEL` でラベル名カスタマイズ、`AUTO_REVIEW_FULL_AUTO=true` で全自動 opt-out） |
+| TY-137 | High | 実装済み / 設定 | ラベル付き PR のみ LoopPilot を起動する default-strict 運用（`LOOPPILOT_LABEL` でラベル名カスタマイズ、`LOOPPILOT_FULL_AUTO=true` で全自動 opt-out） |
 | TY-138 | High | 必須 / テスト | 複数 Codex 指摘を受けた場合の auto-fix loop テスト |
 | TY-139 | High | 必須 / 実装 | hidden comment の楽観ロック + TOCTOU 対策 |
 | TY-140 | High | 必須 / 運用判断 | Claude API retry / cost limit / spending guard |
@@ -35,7 +35,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 
 ## 設計上の修正が必要な項目（本番移植前に必須）
 
-- [x] ラベル付き PR のみ auto-review を起動する default-strict を実装する（TY-137 — デフォルトで `auto-review-fix` ラベル必須。`AUTO_REVIEW_LABEL` でラベル名カスタマイズ、`AUTO_REVIEW_FULL_AUTO=true` で全 PR opt-out）
+- [x] ラベル付き PR のみ LoopPilot を起動する default-strict を実装する（TY-137 — デフォルトで `loop-pilot` ラベル必須。`LOOPPILOT_LABEL` でラベル名カスタマイズ、`LOOPPILOT_FULL_AUTO=true` で全 PR opt-out）
 - [ ] 複数 Codex 指摘を受けた場合の auto-fix loop テストを追加する（TY-138）
 - [ ] インラインコメントの取得範囲フィルタの検証（`created_at` ベースのフィルタが期待通り動作するか。TY-138 の複数指摘テストに含める）
 - [ ] Claude API エラー時のリトライ戦略の実装・チューニング（TY-140）
@@ -59,7 +59,7 @@ High は本番移植前に完了または明確な保留判断が必要な項目
 - [ ] `CODEX_REVIEW_REQUEST_TOKEN` の運用方式決定（個人 PAT 継続ではなく、専用 machine user または GitHub App token への置き換えを検討。TY-143）
 - [x] Fork PR 起動防止の実装
 - [x] 外部 fork PR を使った起動防止 E2E 検証（TY-145）。2026-05-16 に disposable public repo `racoma-dev/auto-review-fix-test` の fork PR #1 で、Workflow A が起動せず、手動レビュー後の Workflow B も fork guard で checkout / auto-fix / push 前に停止することを確認済み。手順と証跡は [Production E2E Validation Notes](../operations/production-e2e-validation.md#external-fork-pr-validation) を参照
-- [x] branch protection / required checks 下での commit/push 可否確認（TY-145 / TY-257）。2026-05-16 に disposable public repo PR #2 で `GITHUB_TOKEN` repair push 後に必須CI `check` が再実行されないことを確認し、TY-257 で `AUTO_REVIEW_PUSH_TOKEN` を追加した。その後 PR #3 で dedicated push token により repair commit 上の `check` が再実行され、`done / no_findings` と `mergeStateStatus=CLEAN` まで到達することを確認済み。詳細は [Production E2E Validation Notes](../operations/production-e2e-validation.md#branch-protection-and-rulesets) を参照
+- [x] branch protection / required checks 下での commit/push 可否確認（TY-145 / TY-257）。2026-05-16 に disposable public repo PR #2 で `GITHUB_TOKEN` repair push 後に必須CI `check` が再実行されないことを確認し、TY-257 で `LOOPPILOT_PUSH_TOKEN` を追加した。その後 PR #3 で dedicated push token により repair commit 上の `check` が再実行され、`done / no_findings` と `mergeStateStatus=CLEAN` まで到達することを確認済み。詳細は [Production E2E Validation Notes](../operations/production-e2e-validation.md#branch-protection-and-rulesets) を参照
 - [ ] `MAX_REVIEW_ITERATIONS` の適正値決定（コスト試算に基づく。20以上も検討。TY-140）
 - [ ] `/restart-review` 等のリカバリコマンド実装（TY-144）
 - [ ] hidden comment 消失時の自動リカバリ機構（TY-144）

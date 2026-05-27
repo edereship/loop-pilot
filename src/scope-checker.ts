@@ -13,13 +13,13 @@
  *
  * The scope check is a pure block-list: every changed path is allowed unless
  * it matches a configured block pattern. There is no allow-list — operators
- * who need to forbid additional paths add them via `AUTO_REVIEW_BLOCK_PATHS`.
+ * who need to forbid additional paths add them via `LOOPPILOT_BLOCK_PATHS`.
  *
  * Block patterns come from two sources:
  *   1. `DEFAULT_BLOCK_PATTERNS` — built-in defaults whose contents would let
  *      a repair re-enable arbitrary execution or rewrite CI / dependency
  *      surface. `.github/` is marked `locked` and cannot be unblocked.
- *   2. The repo-level `AUTO_REVIEW_BLOCK_PATHS` spec — `.gitignore`-style
+ *   2. The repo-level `LOOPPILOT_BLOCK_PATHS` spec — `.gitignore`-style
  *      syntax (`secrets/`, `Justfile`, `!Makefile`) that either adds entries
  *      or removes entries from the defaults via the `!` prefix.
  */
@@ -51,7 +51,7 @@ export interface BlockPattern {
   readonly locked: boolean;
   /**
    * When true, the pattern was explicitly added by the operator via
-   * `AUTO_REVIEW_BLOCK_PATHS` (or legacy `additionalHardBlockPrefixes`).
+   * `LOOPPILOT_BLOCK_PATHS` (or legacy `additionalHardBlockPrefixes`).
    * `checkScopeBuildMode` enforces user-added patterns even when their path
    * matches a default-unlocked entry, so operators can re-block paths like
    * `dist/` or `package.json` in build mode.
@@ -78,7 +78,7 @@ export interface ScopeCheckPolicy {
 /**
  * Built-in block defaults. Only `.github/` is locked: rewriting workflow YAML
  * would let an agent disable the rest of the scope check from inside its own
- * diff. The rest are overridable via `AUTO_REVIEW_BLOCK_PATHS=!<path>` so
+ * diff. The rest are overridable via `LOOPPILOT_BLOCK_PATHS=!<path>` so
  * operators can opt specific paths in (e.g. `!dist/` for vendored bundles
  * the loop is expected to regenerate).
  */
@@ -106,7 +106,7 @@ const DEFAULT_BLOCK_PATTERN_PATHS = new Set(DEFAULT_BLOCK_PATTERNS.map((p) => p.
  * Matches any single-segment root dotfile (`.gitignore`, `.editorconfig`,
  * `.nvmrc`, …). Not part of `DEFAULT_BLOCK_PATTERNS` because it's a wildcard
  * that needs regex evaluation; tracked separately and overridable per-file
- * via `AUTO_REVIEW_BLOCK_PATHS=!.gitignore` etc.
+ * via `LOOPPILOT_BLOCK_PATHS=!.gitignore` etc.
  */
 const ROOT_DOTFILE_RE = /^\.[^/]+$/;
 
@@ -118,7 +118,7 @@ export const DEFAULT_SCOPE_POLICY: ScopeCheckPolicy = {
 };
 
 /**
- * Parsed `AUTO_REVIEW_BLOCK_PATHS` spec. `additions` are appended to the
+ * Parsed `LOOPPILOT_BLOCK_PATHS` spec. `additions` are appended to the
  * block list; `removals` are deleted from it (matched literally against
  * `BlockPattern.path`, including the trailing slash for directories).
  *
@@ -183,7 +183,7 @@ export function parseBlockPathsSpec(raw: string): BlockPathsSpec {
 }
 
 export interface ScopePolicyOverrides {
-  /** Raw `AUTO_REVIEW_BLOCK_PATHS` spec; empty string keeps defaults. */
+  /** Raw `LOOPPILOT_BLOCK_PATHS` spec; empty string keeps defaults. */
   blockPathsSpec?: string;
   maxFiles?: number;
   maxLines?: number;
@@ -432,7 +432,7 @@ export function checkScope(
  * Skipped vs `checkScope`:
  *   - Unlocked block patterns (default-blocked but un-lockable, e.g. `dist/`,
  *     `package.json`). The user explicitly chose `BUILD_COMMAND` to write to
- *     such paths; requiring a parallel `AUTO_REVIEW_BLOCK_PATHS=!dist/` is
+ *     such paths; requiring a parallel `LOOPPILOT_BLOCK_PATHS=!dist/` is
  *     friction without benefit.
  *   - File count / line count budgets. Build artifacts are typically large
  *     and deterministic, and the pre-build `checkScope` already constrained
@@ -446,7 +446,7 @@ export function checkScope(
  *   - **Locked** block patterns (`.github/`). The lock exists so the agent
  *     cannot disable the scope check itself by rewriting workflow YAML;
  *     letting `BUILD_COMMAND` write there would defeat that protection.
- *   - **Operator-added custom patterns** (entries in `AUTO_REVIEW_BLOCK_PATHS`
+ *   - **Operator-added custom patterns** (entries in `LOOPPILOT_BLOCK_PATHS`
  *     that are not part of `DEFAULT_BLOCK_PATTERNS`, e.g. `secrets/`). Build
  *     mode relaxes only the built-in defaults; explicit policy additions must
  *     be honoured so the operator's scope policy is not bypassed.
@@ -461,11 +461,11 @@ export function checkScopeBuildMode(
   let totalLines = 0;
 
   // Only enforce locked patterns, operator-added custom entries, and default
-  // paths that the operator explicitly re-blocked via AUTO_REVIEW_BLOCK_PATHS.
+  // paths that the operator explicitly re-blocked via LOOPPILOT_BLOCK_PATHS.
   // Default-list unlocked patterns (e.g. dist/, package.json) are relaxed so
   // BUILD_COMMAND output does not need separate exemptions for expected artifacts.
   // userAdded patterns are enforced even when their path matches a default so
-  // operators can re-block a default (e.g. AUTO_REVIEW_BLOCK_PATHS=dist/) and
+  // operators can re-block a default (e.g. LOOPPILOT_BLOCK_PATHS=dist/) and
   // have that policy respected in build mode.
   // Checking against only the enforced set ensures that a more-specific custom
   // block nested under a relaxed default (e.g. dist/secrets/ inside dist/) is

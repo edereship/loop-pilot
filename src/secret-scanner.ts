@@ -85,7 +85,7 @@ export interface SecretScanTarget {
 
 /**
  * Hard-fail patterns. Each entry must have effectively zero false-positive
- * rate in typical source code; matches stop the auto-review loop with
+ * rate in typical source code; matches stop the LoopPilot loop with
  * `secret_leak_suspected`. New entries should be added only after a warning
  * pattern has accumulated real-world hits without false positives.
  */

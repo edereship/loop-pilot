@@ -6,7 +6,7 @@ const ENV_KEYS = [
   "GITHUB_TOKEN",
   "PR_NUMBER",
   "CODEX_REVIEW_REQUEST_TOKEN",
-  "AUTO_REVIEW_PUSH_TOKEN",
+  "LOOPPILOT_PUSH_TOKEN",
 ] as const;
 
 type EnvKey = (typeof ENV_KEYS)[number];
@@ -20,7 +20,7 @@ describe("Codex review request token config", () => {
       delete process.env[key];
     }
 
-    process.env.GITHUB_REPOSITORY = "team-yubune/test-auto-ai-review";
+    process.env.GITHUB_REPOSITORY = "team-yubune/loop-pilot";
     process.env.GITHUB_TOKEN = "github-token";
     process.env.PR_NUMBER = "123";
   });
@@ -47,13 +47,13 @@ describe("Codex review request token config", () => {
     expect(config.codexReviewRequestToken).toBe("codex-connected-user-token");
   });
 
-  it("leaves autoReviewPushToken empty when AUTO_REVIEW_PUSH_TOKEN is not set", () => {
+  it("leaves autoReviewPushToken empty when LOOPPILOT_PUSH_TOKEN is not set", () => {
     const config = loadInitConfig();
     expect(config.autoReviewPushToken).toBe("");
   });
 
-  it("uses AUTO_REVIEW_PUSH_TOKEN when set", () => {
-    process.env.AUTO_REVIEW_PUSH_TOKEN = "push-token";
+  it("uses LOOPPILOT_PUSH_TOKEN when set", () => {
+    process.env.LOOPPILOT_PUSH_TOKEN = "push-token";
     const config = loadInitConfig();
     expect(config.autoReviewPushToken).toBe("push-token");
   });

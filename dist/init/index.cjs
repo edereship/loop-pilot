@@ -19220,7 +19220,7 @@ function loadBaseConfig() {
   if (!isValidModelName(claudeCodeModelEscalated)) {
     throw new Error(`CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`);
   }
-  const autoReviewPushToken = input("auto-review-push-token", "AUTO_REVIEW_PUSH_TOKEN", "");
+  const autoReviewPushToken = input("looppilot-push-token", "LOOPPILOT_PUSH_TOKEN", "");
   const buildCommand = input("build-command", "BUILD_COMMAND", "");
   if (buildCommand !== "") {
     const buildCommandValidation = validateCheckCommand(buildCommand);
@@ -19249,21 +19249,21 @@ function loadBaseConfig() {
     triggerEventName: input("trigger-event-name", "TRIGGER_EVENT_NAME", ""),
     prHeadRef: input("pr-head-ref", "PR_HEAD_REF", ""),
     prTitle: input("pr-title", "PR_TITLE", ""),
-    autoReviewLabel: input("auto-review-label", "AUTO_REVIEW_LABEL", ""),
-    autoReviewFullAuto: boolInput("auto-review-full-auto", "AUTO_REVIEW_FULL_AUTO", false),
-    autoReviewRestartRoles: input("auto-review-restart-roles", "AUTO_REVIEW_RESTART_ROLES", "author,write,maintain,admin"),
+    autoReviewLabel: input("looppilot-label", "LOOPPILOT_LABEL", ""),
+    autoReviewFullAuto: boolInput("looppilot-full-auto", "LOOPPILOT_FULL_AUTO", false),
+    autoReviewRestartRoles: input("looppilot-restart-roles", "LOOPPILOT_RESTART_ROLES", "author,write,maintain,admin"),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
-    autoMergeOnClean: boolInput("auto-merge-on-clean", "AUTO_REVIEW_AUTO_MERGE", false),
-    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS", 15, 1),
-    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
-    severityThreshold: severityThresholdInput("severity-threshold", "AUTO_REVIEW_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
-    autoReviewBlockPaths: input("auto-review-block-paths", "AUTO_REVIEW_BLOCK_PATHS", ""),
-    scopeMaxFiles: intInput("scope-max-files", "AUTO_REVIEW_SCOPE_MAX_FILES", 0),
-    scopeMaxLines: intInput("scope-max-lines", "AUTO_REVIEW_SCOPE_MAX_LINES", 0),
-    hardBlockOverride: stringListInput("auto-review-hard-block-override", "AUTO_REVIEW_HARD_BLOCK_OVERRIDE"),
-    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "AUTO_REVIEW_SCOPE_ALLOWED_PATH_PREFIXES"),
-    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "AUTO_REVIEW_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
+    autoMergeOnClean: boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false),
+    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "LOOPPILOT_AUTO_MERGE_POLL_SECONDS", 15, 1),
+    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
+    severityThreshold: severityThresholdInput("severity-threshold", "LOOPPILOT_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
+    autoReviewBlockPaths: input("looppilot-block-paths", "LOOPPILOT_BLOCK_PATHS", ""),
+    scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
+    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0),
+    hardBlockOverride: stringListInput("looppilot-hard-block-override", "LOOPPILOT_HARD_BLOCK_OVERRIDE"),
+    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES"),
+    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
   };
 }
 function stringListInput(inputName, envName) {
@@ -19411,17 +19411,17 @@ function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_
 
 // dist/state-manager.js
 var PREVIOUS_CHECK_FAILURE_READ_LIMIT = PREVIOUS_CHECK_FAILURE_MAX_CHARS * 2;
-var STATE_MARKER = "auto-review-state";
+var STATE_MARKER = "looppilot-state";
 var STATE_COMMENT_OPEN = "<!-- " + STATE_MARKER;
 var STATE_COMMENT_CLOSE = "-->";
-var STATE_COMMENT_VISIBLE_TEXT = "Auto-review state is stored in this comment.";
+var STATE_COMMENT_VISIBLE_TEXT = "LoopPilot state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 20;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
 var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
-var TRUSTED_STATE_AUTHORS_ENV = "AUTO_REVIEW_STATE_COMMENT_AUTHORS";
+var TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 function getTrustedStateCommentAuthors(env = process.env) {
-  const fromInput = getInput("auto-review-state-comment-authors");
+  const fromInput = getInput("looppilot-state-comment-authors");
   const raw = fromInput !== "" ? fromInput : env[TRUSTED_STATE_AUTHORS_ENV] ?? "";
   const parsed = raw.split(",").map((a) => a.trim()).filter((a) => a.length > 0);
   return parsed.length > 0 ? parsed : [DEFAULT_TRUSTED_STATE_AUTHOR];
@@ -19585,7 +19585,7 @@ async function readState(owner, name, pr, token) {
     // Filter to genuine state comments by anchoring on the visible header.
     // Using `startswith(VISIBLE_TEXT)` rather than the marker line keeps two
     // properties:
-    //   1. Comments that merely mention `<!-- auto-review-state` inline
+    //   1. Comments that merely mention `<!-- looppilot-state` inline
     //      (e.g., the Linear linkback that quotes it in backticks) are
     //      excluded — they do not start with the visible header.
     //   2. State comments where the trailing newline after the marker has
@@ -19710,11 +19710,11 @@ function parseCommentSnapshot(stdout, context) {
 }
 
 // dist/status-comment.js
-var STATUS_COMMENT_MARKER = "auto-review-status";
+var STATUS_COMMENT_MARKER = "looppilot-status";
 var STATUS_COMMENT_OPEN = `<!-- ${STATUS_COMMENT_MARKER} -->`;
 var STATUS_COMMENT_DATA_OPEN = `<!-- ${STATUS_COMMENT_MARKER}-data`;
 var STATUS_COMMENT_DATA_CLOSE = "-->";
-var STATUS_COMMENT_VISIBLE_HEADER = "## Auto-review status";
+var STATUS_COMMENT_VISIBLE_HEADER = "## LoopPilot status";
 var MAX_ENTRIES = 30;
 var MAX_ENTRY_BODY_LENGTH = 16e3;
 var ENTRY_BODY_TRUNCATION_MARKER = "\n\n_(output truncated \u2014 exceeded size limit)_";
@@ -20054,7 +20054,7 @@ var defaultDeps2 = {
 };
 async function runInit(config, deps = defaultDeps2) {
   registerAllSecrets(config, deps.setSecret);
-  deps.info(`Initializing auto-review for PR #${config.prNumber}`);
+  deps.info(`Initializing LoopPilot for PR #${config.prNumber}`);
   const existing = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
   let commentId;
   let state = createInitialState();
@@ -20067,7 +20067,7 @@ async function runInit(config, deps = defaultDeps2) {
       deps.info("[init] Detected crash-window state (waiting_codex + null lastCodexRequestCommentId). Resuming 1st-write \u2192 post \u2192 2nd-write sequence.");
       state = { ...existing.state, status: "initialized" };
     } else if (existing.state.status !== "initialized") {
-      deps.info(`Auto-review state is already ${existing.state.status}. Skipping init.`);
+      deps.info(`LoopPilot state is already ${existing.state.status}. Skipping init.`);
       deps.setOutput("comment-id", String(commentId));
       return;
     } else {
@@ -20135,7 +20135,7 @@ async function runInit(config, deps = defaultDeps2) {
     await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken, { expectedUpdatedAt: firstWriteResult.updatedAt });
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);
-    deps.warning(`[init] Failed to persist lastCodexRequestCommentId after @codex review post: ${message}. Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
+    deps.warning(`[init] Failed to persist lastCodexRequestCommentId after @codex review post: ${message}. LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
     if (!(error2 instanceof StateUpdateConflictError)) {
       try {
         await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken, { expectedUpdatedAt: firstWriteResult.updatedAt });

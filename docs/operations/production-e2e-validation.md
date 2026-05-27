@@ -1,7 +1,7 @@
 # Production E2E Validation Notes
 
 This document records the TY-145 production-migration validation performed
-against `team-yubune/test-auto-ai-review` and the disposable public repository
+against `team-yubune/loop-pilot` and the disposable public repository
 `racoma-dev/auto-review-fix-test`.
 
 Validation date: 2026-05-16
@@ -10,7 +10,7 @@ Validation date: 2026-05-16
 
 Repository:
 
-- `full_name`: `team-yubune/test-auto-ai-review`
+- `full_name`: `team-yubune/loop-pilot`
 - `private`: `true`
 - `default_branch`: `main`
 - Current operator permissions: `admin`, `maintain`, `push`, `triage`, `pull`
@@ -30,8 +30,8 @@ Repository variables:
 
 | Variable | Value |
 |---|---|
-| `AUTO_REVIEW_AUTO_MERGE` | `true` |
-| `AUTO_REVIEW_FULL_AUTO` | `true` |
+| `LOOPPILOT_AUTO_MERGE` | `true` |
+| `LOOPPILOT_FULL_AUTO` | `true` |
 | `CHECK_COMMAND` | `npm run check` |
 
 The repository default workflow permission is read-only, but the workflow files
@@ -49,8 +49,8 @@ production must verify this on the target repository.
 
 The same-repository E2E path was validated with PR #58:
 
-- PR: <https://github.com/team-yubune/test-auto-ai-review/pull/58>
-- Auto-fix run: <https://github.com/team-yubune/test-auto-ai-review/actions/runs/25952862118>
+- PR: <https://github.com/team-yubune/loop-pilot/pull/58>
+- Auto-fix run: <https://github.com/team-yubune/loop-pilot/actions/runs/25952862118>
 - Seed commit: `da7ebb58ef0726e5e5bb0c6b8491abfbad02eab7`
 - Auto-fix commit: `e1b1d28ea5af4a071d739b50ea329d4615a36c00`
 - Merge commit: `de8c25009f8750f3a2927333d2ad21d402f6192e`
@@ -77,14 +77,14 @@ Initial status comment cap check (TY-309):
 
 - [ ] Set `vars.MAX_REVIEW_ITERATIONS=10`, open a PR, and confirm the initial
   status comment posted by Workflow A shows `**Iterations**: 0 / 10` (not the
-  default `0 / 20`). This verifies `auto-review-init.yml` plumbs
+  default `0 / 20`). This verifies `looppilot-init.yml` plumbs
   `vars.MAX_REVIEW_ITERATIONS` into the init action so the cap matches operator
   config from the first comment, not just from the first post-fix iteration.
 
 Crash-notification dedup check (TY-310 #1):
 
 - [ ] Force a 2A stop notification (e.g. let the loop reach a terminal
-  `stopped` state) and then trigger the `auto-review-loop.yml` 2B fail-safe
+  `stopped` state) and then trigger the `looppilot-loop.yml` 2B fail-safe
   within the same 90s window (a crashed loop run on the same PR). Confirm only
   **one** top-level `🛑` notification lands on the PR. The 2B dedup query uses
   `gh api --paginate`, so even on a high-traffic PR — where the recent 2A
@@ -113,7 +113,7 @@ What remains for production:
 1. Enable or use a repository where external forks are allowed.
 2. Create a fork-owned branch with a harmless docs-only change.
 3. Open a PR from the fork into the production repository.
-4. Add the normal auto-review trigger label or enable the production trigger
+4. Add the normal LoopPilot trigger label or enable the production trigger
    mode being validated.
 5. Confirm Workflow A does not create hidden state or post `@codex review`.
 6. If a Codex review/comment is manually posted, confirm Workflow B stops before
@@ -186,7 +186,7 @@ Observed result:
 
 This indicates that using `GITHUB_TOKEN` for the auto-fix push is not sufficient
 when production requires CI to run on the repair commit. TY-257 adds
-`AUTO_REVIEW_PUSH_TOKEN` so production can use a dedicated machine-user PAT or
+`LOOPPILOT_PUSH_TOKEN` so production can use a dedicated machine-user PAT or
 GitHub App token for the repair commit push while keeping
 `CODEX_REVIEW_REQUEST_TOKEN` limited to `@codex review` requests.
 
@@ -206,7 +206,7 @@ public repository:
 
 Observed result:
 
-- `AUTO_REVIEW_PUSH_TOKEN` was configured as a Repository secret.
+- `LOOPPILOT_PUSH_TOKEN` was configured as a Repository secret.
 - the initial PR `check` failed for the seeded regression;
 - the auto-fix loop repaired the regression and pushed the repair commit;
 - GitHub Actions created a new `check` run on the repair commit;
@@ -233,17 +233,17 @@ Local verification on 2026-05-16:
 Production guidance:
 
 - Keep repository required checks aligned with `CHECK_COMMAND`.
-- Since TY-277, `AUTO_REVIEW_AUTO_MERGE=true` polls every workflow run on the
+- Since TY-277, `LOOPPILOT_AUTO_MERGE=true` polls every workflow run on the
   PR HEAD before merging and refuses to merge when any concluded as failure /
   cancelled / timed_out / action_required / startup_failure / stale. Auto-merge
   no longer depends on branch protection's required checks; the gate is
   enforced inside `src/pr-merger.ts:mergeIfChecksPass`. Tune the wait window via
-  `AUTO_REVIEW_AUTO_MERGE_POLL_SECONDS` (default 15) and
-  `AUTO_REVIEW_AUTO_MERGE_TIMEOUT_MINUTES` (default 10).
+  `LOOPPILOT_AUTO_MERGE_POLL_SECONDS` (default 15) and
+  `LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES` (default 10).
 - If `CHECK_COMMAND` differs from the required checks, document which signal is
-  authoritative for auto-review completion.
+  authoritative for LoopPilot completion.
 - If required checks must run on repair commits, configure
-  `AUTO_REVIEW_PUSH_TOKEN` with a non-`GITHUB_TOKEN` actor that can push the PR
+  `LOOPPILOT_PUSH_TOKEN` with a non-`GITHUB_TOKEN` actor that can push the PR
   branch and trigger workflows.
 
 ## Human-Required Items
