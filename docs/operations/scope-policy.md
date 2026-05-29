@@ -1,6 +1,6 @@
 # Scope Policy — auto-fix の変更スコープ検査
 
-> claude-code-action が生成した diff を post-fix がどのように受け入れ / 拒否するかと、運用側で許可・禁止を調整する `LOOPPILOT_BLOCK_PATHS` Repository variable の仕様 (TY-271)。
+> claude-code-action が生成した diff を post-fix がどのように受け入れ / 拒否するかと、運用側で許可・禁止を調整する `LOOPPILOT_BLOCK_PATHS` Repository variable の仕様。
 
 ## 概要
 
@@ -14,7 +14,7 @@ post-fix は `anthropics/claude-code-action@v1` の出力を `git diff --numstat
 | `too_many_files` | 変更ファイル数が `LOOPPILOT_SCOPE_MAX_FILES` 上限を超過（default 20） |
 | `too_many_lines` | 追加+削除行数が `LOOPPILOT_SCOPE_MAX_LINES` 上限を超過（default 1000） |
 
-allow-list は存在しない（TY-271）。block-list にマッチしないパスはすべて許可される。
+allow-list は存在しない。block-list にマッチしないパスはすべて許可される。
 
 ## Default block-list
 
@@ -94,7 +94,7 @@ LOOPPILOT_BLOCK_PATHS = secrets/,infra/terraform/,!Makefile
 
 `0` または空文字を渡すとデフォルトが使われる。action input を `"0"` 明示すると `core.getInput` が「設定済み」と解釈して Repository variable のフォールバックを上書きしてしまうため、Repository variable 主導で運用する場合は input を空のまま（`with:` で渡さない / 空文字を渡す）にする。
 
-## `BUILD_COMMAND` と build 後 scope 再 check (TY-281)
+## `BUILD_COMMAND` と build 後 scope 再 check
 
 `BUILD_COMMAND` Repository variable (または `build-command` input) を設定すると、post-fix は CHECK_COMMAND 通過後・commit 直前にそのコマンドを実行し、生成された差分も auto-fix commit に含めて push する。`dist/` などのビルド成果物を repo にコミットする運用 (この repo を含む GitHub Action 配布レポなど) で、auto-fix commit が `src/` と drift しないようにする経路。
 
@@ -114,7 +114,7 @@ build 後は **緩和版 scope check** (`checkScopeBuildMode`) が走る。Build
 
 これにより、`BUILD_COMMAND=npm run bundle` を Repository variable に設定するだけで `dist/` 配下が auto-fix commit に同梱される。`LOOPPILOT_BLOCK_PATHS=!dist/` を併設する必要はない。ただし build command が `.github/` を書き換えるような事故 (CI-rewrite escape hatch) は依然として `scope_violation` で止まる。
 
-複数ステップ (lint + build + post-process など) のニーズには **npm script ラップを推奨** する (例: `package.json` に `"build": "npm run lint && npm run bundle"` を追加して `BUILD_COMMAND=npm run build`)。`&&` をそのまま `BUILD_COMMAND` に書く形は TY-289 #2 の config-load 時 allowlist (`validateCheckCommand`) で **shell metacharacter として reject** される。multi-command native support は意図的に付けていない (既存の `CHECK_COMMAND` と同じ方針)。allowlist の詳細と移行手順は [security.md](security.md) の「CHECK_COMMAND / BUILD_COMMAND validation」節を参照。
+複数ステップ (lint + build + post-process など) のニーズには **npm script ラップを推奨** する (例: `package.json` に `"build": "npm run lint && npm run bundle"` を追加して `BUILD_COMMAND=npm run build`)。`&&` をそのまま `BUILD_COMMAND` に書く形は config-load 時の allowlist (`validateCheckCommand`) で **shell metacharacter として reject** される。multi-command native support は意図的に付けていない (既存の `CHECK_COMMAND` と同じ方針)。allowlist の詳細は [security.md](security.md) の「CHECK_COMMAND / BUILD_COMMAND validation」節を参照。
 
 エラーハンドリング:
 
@@ -124,7 +124,7 @@ build 後は **緩和版 scope check** (`checkScopeBuildMode`) が走る。Build
 | 生成物が `.github/` 等 locked path に該当 / `..` 含む path | `scope_violation` (同上で復元、停止コメントは `formatScopeViolationDetail` の表現) |
 | 生成物が無い (no-op) | 何もせず claude-code-action の差分のみ commit |
 
-## repair prompt への事前共有 (TY-278)
+## repair prompt への事前共有
 
 pre-fix は `buildScopePolicy()` で得た effective policy を `claude-code-action@v1` の repair prompt に `## Scope Policy (your edits must satisfy)` セクションとして埋め込む。Claude が事前に境界を知っていれば、そもそも違反 diff を生成しないため、scope_violation 経由の revert + iteration 浪費を構造的に減らせる。
 
@@ -150,7 +150,7 @@ If a faithful repair would exceed these limits, stop and explain rather than pro
 - `.github/` は locked 注記 (`(structurally locked, cannot be overridden)`) を inline で付与。
 - `max-files` / `max-lines` は Repository variable で上書きされていれば override 後の値。default 値と一致する場合も省略しない。
 - セクションは **`## Codex Findings` の直後 / `## Instructions` の直前**に挿入される。
-- `buildScopePolicy()` が失敗した場合 (parse error 等) はセクションを省略する。pre-TY-278 と同じ挙動 (Claude が知らない状態) に戻るだけで安全側。`core.warning` でログのみ残す。
+- `buildScopePolicy()` が失敗した場合 (parse error 等) はセクションを省略する。Claude が scope policy を知らない状態に戻るだけで安全側。`core.warning` でログのみ残す。
 
 実装: `src/claude-code-repair-request.ts`（`buildClaudeCodeRepairPrompt`, `formatScopePolicySection`）, `src/main-pre-fix.ts`。
 
@@ -190,7 +190,7 @@ See docs/operations/scope-policy.md.
 
 「セキュリティ拒否であり override 不可」を明示。
 
-## 旧 variable の deprecation（TY-271）
+## 旧 variable の deprecation
 
 以下の 3 変数は deprecated。設定されていたら post-fix 起動時に warning ログを出し、旧仕様で受け入れる。**次マイナーで削除予告**。
 
@@ -216,7 +216,7 @@ See docs/operations/scope-policy.md.
 ## 関連
 
 - 実装: `src/scope-checker.ts`（`parseBlockPathsSpec`, `buildScopePolicy`, `checkScope`）
-- pre-fix 配線 (prompt 共有): `src/main-pre-fix.ts` / `src/claude-code-repair-request.ts`（`formatScopePolicySection`, TY-278）
+- pre-fix 配線 (prompt 共有): `src/main-pre-fix.ts` / `src/claude-code-repair-request.ts`（`formatScopePolicySection`）
 - post-fix 配線: `src/main-post-fix.ts`（`formatScopeViolationDetail`）
 - セキュリティ運用全般: [security.md](security.md)
 - 停止条件とリカバリ: [stop-and-recovery.md](stop-and-recovery.md)

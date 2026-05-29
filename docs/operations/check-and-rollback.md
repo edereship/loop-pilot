@@ -4,7 +4,7 @@
 
 Claude が修正を適用した後に実行する検証コマンドは `CHECK_COMMAND` 環境変数で指定する。
 
-**PoC 実測:** PR #7 の Workflow B run `25434230427` では、依存関係セットアップ後に `CHECK_COMMAND` が成功し、その後 commit/push された。TY-40 で `CHECK_COMMAND` 前の依存関係セットアップを追加済み。
+`CHECK_COMMAND` の実行前には依存関係のセットアップを行う。これにより `CHECK_COMMAND` が成功した場合に変更が commit/push される。
 
 ### コマンド設計
 
@@ -18,7 +18,7 @@ Claude が修正を適用した後に実行する検証コマンドは `CHECK_CO
 
 `CHECK_COMMAND` が非ゼロで終了した場合、commit / push は行わない。
 
-### ロールバックのフロー (TY-236 以降: `claude-code-action` 経路)
+### ロールバックのフロー (`claude-code-action` 経路)
 
 1. `anthropics/claude-code-action@v1` が repo-level repair を実行し、working tree を直接編集する（変更点は `git diff --numstat HEAD` で把握する）
 2. post-fix が `git diff` を `parseGitNumstat` → `checkScope` に通し、`src/`, `tests/`, `docs/` の allow-list と hard-block / size budget で違反を弾く
@@ -33,8 +33,6 @@ Claude が修正を適用した後に実行する検証コマンドは `CHECK_CO
 - `status: stopped`, `stop_reason: test_failure` で停止する
 - PR に失敗内容（コマンド出力の冒頭 20行 + 末尾 50行）をコメントとして投稿する。冒頭を含めるのは、テストフレームワークによってはエラーサマリーが出力の先頭に表示されるため
 
-**PoC 実測:** PR #7 の途中検証で依存関係未セットアップにより `CHECK_COMMAND` が失敗し、変更はロールバックされ停止コメントが投稿された。その後 TY-40 で依存関係セットアップを追加し、PR #7 の再検証では成功した。
-
 ### 出力のサニタイズ
 
 投稿前に以下の処理を行う:
@@ -47,7 +45,6 @@ Claude が修正を適用した後に実行する検証コマンドは `CHECK_CO
 ## 関連ドキュメント
 
 - [Claude Code repair request 仕様](../specs/claude-code-repair-request.md) — claude-code-action 向け repair prompt
-- [Claude 修正エンジン仕様 (archived)](../_archive/specs/claude-fix-engine.md) — 旧 `edit_file` 直適用方式の歴史記録
 - [停止条件とリカバリ](stop-and-recovery.md) — テスト失敗後の停止・復帰
 - [推奨フローと状態管理](../architecture/flow-and-state.md) — フロー全体での位置づけ
 - [全ドキュメント索引](../README.md)

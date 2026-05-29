@@ -2,11 +2,11 @@
 
 > Codex の findings を `anthropics/claude-code-action@v1` に渡す repo-level repair request / prompt の生成仕様。
 
-このモジュールは **request builder / serializer のみ** を担う pure module であり、GitHub Actions の workflow 統合、Claude Code Action の実行、commit/push などの副作用は対象外である。workflow 統合は <issue id="6e907267-a4ce-4639-8172-7260d5b1199a">TY-236</issue> で扱う。
+このモジュールは **request builder / serializer のみ** を担う pure module であり、GitHub Actions の workflow 統合、Claude Code Action の実行、commit/push などの副作用は対象外である。
 
 ## 位置づけ
 
-従来の `src/claude-fix-engine.ts` は Claude API の `edit_file` ツールで **単一ファイル単位** の修正を行う方式だった。<issue id="ed2b6617-9c7a-46eb-8afd-da2a451b8a79">TY-234</issue> で repo-level repair executor は `anthropics/claude-code-action@v1` を採用する方針に決定したため、Codex finding を **「修正範囲」ではなく「調査開始点（entry point）」** として扱う新しい payload が必要になった。
+従来の `src/claude-fix-engine.ts` は Claude API の `edit_file` ツールで **単一ファイル単位** の修正を行う方式だった。repo-level repair executor は `anthropics/claude-code-action@v1` を採用しており、Codex finding を **「修正範囲」ではなく「調査開始点（entry point）」** として扱う payload を生成する。
 
 このドキュメントは `src/claude-code-repair-request.ts` の役割と shape をまとめる。
 
@@ -54,7 +54,7 @@ export interface ClaudeCodeRepairFinding {
 }
 ```
 
-- `pr.headSha` は本チケットの時点では `null` 許容。TY-236 の workflow 統合で GitHub event / checkout 結果から実値を渡す。
+- `pr.headSha` は `null` 許容。workflow 統合では GitHub event / checkout 結果から実値を渡す。
 - `execution.previousCheckFailure` は初回 repair では `null`。CHECK_COMMAND 失敗 output を次回 repair の追加コンテキストとして渡す場合に利用する。長すぎる出力は `truncatePreviousCheckFailure()` で安全に短縮する（既定 20,000 chars、head 25% + tail 75% の **head + tail 方式**）。
 - `instructions` には Claude Code に守らせる行動制約を embed する（後述）。
 
@@ -71,7 +71,7 @@ truncatePreviousCheckFailure(output, maxChars?): string
 
 `buildClaudeCodeRepairRequest()` の入力は `PrContext`、`Finding[]`、`iteration` / `maxIterations`、`checkCommand`、optional `headSha`、optional `previousCheckFailure`。`Finding` には `suggestion` を追加しない（必要になれば parser 側で別チケット化）。
 
-## Findings の上限と truncation（TY-261）
+## Findings の上限と truncation
 
 `buildClaudeCodeRepairRequest()` は payload に embed する findings に対し以下の 2 つの cap を適用する。
 
@@ -129,7 +129,7 @@ findingsTruncated: {
 
 Claude 4.6 / 4.7 (200K token context) に対して十分な余裕があり、claude-code-action 側の入力上限抵触リスクは個別 cap の段階で実質排除される。
 
-## CHECK_COMMAND 失敗ログの truncation（TY-262）
+## CHECK_COMMAND 失敗ログの truncation
 
 `truncatePreviousCheckFailure(output, maxChars?)` は head + tail 方式で `output` を `maxChars` 以下に切り詰める。
 
@@ -139,7 +139,7 @@ Claude 4.6 / 4.7 (200K token context) に対して十分な余裕があり、cla
   - head の末尾が改行で終わっていない場合は、可読性のため marker 直前に `\n` を 1 文字挿入する
 - `maxChars` が極小（marker フォーマット長以下）の場合は、tail のみ verbatim を返すフォールバックに切り替える
 
-head 25% の根拠: jest / vitest / pytest は失敗サマリが末尾に固まるため tail を厚めに残す。tsc / eslint --max-warnings 系は最初のエラーが先頭に出るため head にも一定の領域を確保する。50:50 だと tail が痩せ、20:80 だと head が薄すぎる。25:75 がスイートスポット。実装後に実測で再検証する余地を残す。
+head 25% の根拠: jest / vitest / pytest は失敗サマリが末尾に固まるため tail を厚めに残す。tsc / eslint --max-warnings 系は最初のエラーが先頭に出るため head にも一定の領域を確保する。50:50 だと tail が痩せ、20:80 だと head が薄すぎる。25:75 がスイートスポット。
 
 cut 位置は **文字単位** で行う（行境界には揃えない）。`result.length <= maxChars` の不変条件を最優先するためで、tsc / jest / linter の出力は前後コンテキストから Claude Code 側が補完できる前提とする。
 
@@ -161,12 +161,11 @@ cut 位置は **文字単位** で行う（行境界には揃えない）。`res
 
 ## 過去知見の取り込み
 
-- <issue id="9a461f27-1b6f-4cb8-add1-2af5922eb846">TY-230</issue>（自前 Claude repair agent loop、不採用）から: CHECK_COMMAND 出力を修正入力に含める、既存テストを仕様として扱う、関連ファイル探索を許可する、という 3 点を prompt に反映している。
-- <issue id="2922d9cf-1e69-4c41-b0a3-3863a9d1cc21">TY-225</issue>: prompt 改善内容は本チケットへ吸収済み。
+- 不採用となった自前 Claude repair agent loop の検討から、CHECK_COMMAND 出力を修正入力に含める、既存テストを仕様として扱う、関連ファイル探索を許可する、という 3 点を prompt に反映している。
 
 ## 非対象（再掲）
 
-- `anthropics/claude-code-action@v1` の workflow 統合本体（TY-236）
+- `anthropics/claude-code-action@v1` の workflow 統合本体
 - GitHub Actions workflow permissions の最終設計
 - 実際の Claude Code 実行 / PR 作成 / commit / rollback / push
 - Codex severity parser の全面刷新
@@ -177,6 +176,5 @@ cut 位置は **文字単位** で行う（行境界には揃えない）。`res
 
 ## 関連ドキュメント
 
-- [Claude 修正エンジン仕様 (archived)](../_archive/specs/claude-fix-engine.md) — 旧 `edit_file` 方式の仕様。本ドキュメントは後継。
 - [Severity パーサー仕様](severity-parser.md) — findings 抽出
 - [全ドキュメント索引](../README.md)
