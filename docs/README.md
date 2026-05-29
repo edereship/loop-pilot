@@ -2,21 +2,21 @@
 
 > PR に対して Codex がレビューし、Claude が自動修正する自動ループの設計資料。
 
-## 現状ステータス
+## 概要
 
-PoC の主要 E2E は PR #7 / TY-11 で確認済み。
+LoopPilot は本番稼働中の Codex レビュー × Claude 自動修正ループである。PR が開かれると 1 サイクルは次の流れで進む。
 
-- Codex review 起動
+- Codex review 起動 (`@codex review`)
 - Workflow B 起動
-- Claude 修正
-- `CHECK_COMMAND`
-- commit/push
+- Claude (`claude-code-action`) による修正
+- `CHECK_COMMAND` 実行
+- commit / push
 - 再 `@codex review`
 - 閾値以上 (default `P3`) の finding が解消された `done` 終了
 
-現在の実装では P0/P1/P2/P3 をすべて自動修正対象とし（default `P3`、`LOOPPILOT_SEVERITY_THRESHOLD` で変更可能）、停止後・完了後は `/restart-review` または `/restart-review --hard` で再度レビュー・修正ループにかけられる。詳細は [推奨フローと状態管理](architecture/flow-and-state.md) と [停止条件とリカバリ](operations/stop-and-recovery.md) を参照する。
+P0/P1/P2/P3 をすべて自動修正対象とし（default `P3`、`LOOPPILOT_SEVERITY_THRESHOLD` で変更可能）、停止後・完了後は `/restart-review` または `/restart-review --hard` で再度レビュー・修正ループにかけられる。フローと状態管理の詳細は [推奨フローと状態管理](architecture/flow-and-state.md)、停止と復旧は [停止条件とリカバリ](operations/stop-and-recovery.md) を参照する。
 
-本番移植前の残課題は [本番移植チェックリスト](checklists/production-migration.md) に集約する。次に読むべき資料は、現状確認なら [PoC チェックリスト](checklists/poc-checklist.md)、移植判断なら [本番移植チェックリスト](checklists/production-migration.md)、停止後の復旧手順なら [停止条件とリカバリ](operations/stop-and-recovery.md)。
+導入手順・必要なトークン権限・設定変数はリポジトリ直下の [README](../README.md) にまとまっている。本ディレクトリは設計・運用の詳細資料を提供する。
 
 ## ドキュメント構成
 
@@ -53,13 +53,15 @@ PoC の主要 E2E は PR #7 / TY-11 で確認済み。
 |-------------|------|
 | [テスト戦略](testing/test-strategy.md) | ユニットテスト（パーサー・ハッシュ・edit 適用・ループ検知）・統合テスト |
 
-### Checklists — チェックリスト
+### Checklists — チェックリスト（履歴）
+
+PoC からの立ち上げ・本番移植時に使ったチェックリスト。現在は履歴資料として残している。
 
 | ドキュメント | 内容 |
 |-------------|------|
-| [PoC チェックリスト](checklists/poc-checklist.md) | 実装必須項目・検証事項・初期実装スコープ |
-| [本番移植チェックリスト](checklists/production-migration.md) | 設計修正項目・運用/セキュリティ項目 |
-| [Hygiene 判断ログ](operations/hygiene-decisions.md) | TY-270 ほか、リポジトリ整備 / 見送り判断の記録 |
+| [PoC チェックリスト](checklists/poc-checklist.md) | 立ち上げ期の実装必須項目・検証事項（履歴） |
+| [本番移植チェックリスト](checklists/production-migration.md) | 本番移植時に確認した設計修正・運用/セキュリティ項目（履歴） |
+| [Hygiene 判断ログ](operations/hygiene-decisions.md) | リポジトリ整備 / 見送り判断の記録 |
 
 ### Archive — 役目を終えた設計資料
 
@@ -72,7 +74,7 @@ PoC の主要 E2E は PR #7 / TY-11 で確認済み。
 
 ## 読み方ガイド
 
-1. **初めて読む場合:** [システム概要](architecture/system-overview.md) → [推奨フローと状態管理](architecture/flow-and-state.md) の順で全体像を掴む
-2. **実装を始める場合:** [PoC チェックリスト](checklists/poc-checklist.md) を起点に、各仕様ドキュメントを参照する
-3. **特定コンポーネントを実装する場合:** Specs 配下の該当ドキュメントを直接参照する
+1. **導入する場合:** リポジトリ直下の [README](../README.md) のクイックスタートとトークン権限を参照する
+2. **設計を理解する場合:** [システム概要](architecture/system-overview.md) → [推奨フローと状態管理](architecture/flow-and-state.md) の順で全体像を掴む
+3. **特定コンポーネントを追う場合:** Specs 配下の該当ドキュメントを直接参照する
 4. **停止後・完了後に再実行する場合:** [停止条件とリカバリ](operations/stop-and-recovery.md) の `/restart-review` 手順と `LOOPPILOT_RESTART_ROLES` を確認する
