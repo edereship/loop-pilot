@@ -35,6 +35,18 @@ export interface GhExecResult {
   code: number;
 }
 
+/**
+ * Outcome of a permission-sensitive probe. `ok:false` means the value could not
+ * be determined (e.g. 403) — checks must surface that as `unknown`, never a
+ * silent pass (TY-347).
+ */
+export type Probe<T> = { ok: true; value: T } | { ok: false; reason: string };
+
+export interface RepoInfo {
+  defaultBranch: string;
+  allowAutoMerge: boolean;
+}
+
 export interface GhClient {
   /** `owner/repo` of the repo `gh` resolves in the cwd. */
   currentRepo(): Promise<string>;
@@ -49,6 +61,21 @@ export interface GhClient {
     color: string,
     description: string,
   ): Promise<"created" | "exists">;
+
+  // ── TY-347 read-only probes ───────────────────────────────────────────────
+  /** Secret NAMES (values are never readable). Throws {@link GhError} on 403. */
+  listSecretNames(repo: string): Promise<string[]>;
+  /** Repository Actions variable value, or null when unset (404). */
+  getVariable(repo: string, name: string): Promise<string | null>;
+  /** Default branch + Allow-auto-merge setting. */
+  getRepoInfo(repo: string): Promise<RepoInfo>;
+  /**
+   * Required status-check contexts on a branch. Returns null when the branch is
+   * not protected / has no required checks (404). Throws {@link GhError} on 403.
+   */
+  getRequiredStatusCheckContexts(repo: string, branch: string): Promise<string[] | null>;
+  /** Logins seen on recent issue/PR comments (for Codex-connection inference). */
+  listRecentActorLogins(repo: string): Promise<string[]>;
 }
 
 function run(cmd: string, args: string[]): Promise<GhExecResult> {
@@ -148,5 +175,69 @@ export class RealGhClient implements GhClient {
       throw new GhError(`gh label create failed: ${stderr.trim()}`, parseHttpStatus(stderr), stderr);
     }
     return "created";
+  }
+
+  async listSecretNames(repo: string): Promise<string[]> {
+    // Repository secrets. A 403 here propagates → the check reports `unknown`.
+    const r = await this.api<{ secrets?: { name: string }[] }>(
+      `repos/${repo}/actions/secrets?per_page=100`,
+    );
+    const names = new Set((r?.secrets ?? []).map((s) => s.name));
+    // Also union the ORG secrets visible to this repo — the workflow can use
+    // them too, so omitting them would false-positive "secret missing". Best
+    // effort: skip silently if the repo is not in an org / org secrets are
+    // unreadable. (Environment secrets are intentionally not checked: the
+    // LoopPilot workflows declare no `environment:`, so they can't use them.)
+    try {
+      const org = await this.api<{ secrets?: { name: string }[] }>(
+        `repos/${repo}/actions/organization-secrets?per_page=100`,
+      );
+      for (const s of org?.secrets ?? []) names.add(s.name);
+    } catch {
+      /* repo not in an org / no org-secret visibility — repo secrets suffice */
+    }
+    return [...names];
+  }
+
+  async getVariable(repo: string, name: string): Promise<string | null> {
+    try {
+      const r = await this.api<{ value?: string }>(
+        `repos/${repo}/actions/variables/${encodeURIComponent(name)}`,
+      );
+      return r?.value ?? null;
+    } catch (e) {
+      if (e instanceof GhError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async getRepoInfo(repo: string): Promise<RepoInfo> {
+    const r = await this.api<{ default_branch: string; allow_auto_merge?: boolean }>(`repos/${repo}`);
+    return { defaultBranch: r.default_branch, allowAutoMerge: Boolean(r.allow_auto_merge) };
+  }
+
+  async getRequiredStatusCheckContexts(repo: string, branch: string): Promise<string[] | null> {
+    try {
+      const r = await this.api<{ contexts?: string[]; checks?: { context: string }[] }>(
+        `repos/${repo}/branches/${encodeURIComponent(branch)}/protection/required_status_checks`,
+      );
+      const ctxs = new Set<string>([
+        ...(r.contexts ?? []),
+        ...((r.checks ?? []).map((c) => c.context)),
+      ]);
+      return [...ctxs];
+    } catch (e) {
+      // 404 = branch not protected or no required checks → treat as "none".
+      if (e instanceof GhError && e.status === 404) return null;
+      throw e; // 403 etc. bubble up so the check can report `unknown`.
+    }
+  }
+
+  async listRecentActorLogins(repo: string): Promise<string[]> {
+    const r = await this.api<Array<{ user?: { login?: string } }>>(
+      `repos/${repo}/issues/comments?per_page=100&sort=created&direction=desc`,
+    );
+    if (!Array.isArray(r)) return [];
+    return r.map((c) => c.user?.login).filter((x): x is string => typeof x === "string");
   }
 }

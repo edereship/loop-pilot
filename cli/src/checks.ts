@@ -121,7 +121,196 @@ export const toolchainCheck: Check = async (ctx: PreflightContext): Promise<Chec
   };
 };
 
-/** TY-346 core checks. TY-347 prepends/append its checks here. */
+// ── TY-347: secret / branch-protection / auto-merge / Codex-inference checks ──
+
+const ANTHROPIC_API = "ANTHROPIC_API_KEY";
+const ANTHROPIC_OAUTH = "CLAUDE_CODE_OAUTH_TOKEN";
+const CODEX_TOKEN = "CODEX_REVIEW_REQUEST_TOKEN";
+const PUSH_TOKEN = "LOOPPILOT_PUSH_TOKEN";
+
+/** Anthropic auth: exactly one of API key / OAuth token (config.ts fail-fast). */
+export const anthropicAuthCheck: Check = async (ctx): Promise<CheckResult> => {
+  const sn = ctx.secretNames;
+  if (!sn || !sn.ok) {
+    return {
+      id: "secret.anthropicAuth",
+      status: "unknown",
+      summary: "cannot verify Anthropic credentials",
+      details: sn ? sn.reason : "secret names were not gathered.",
+      nextSteps: ["Re-run with an account that can read the repo's Actions secrets (admin), or verify the secrets manually in Settings → Secrets and variables → Actions."],
+    };
+  }
+  const hasApi = sn.value.includes(ANTHROPIC_API);
+  const hasOauth = sn.value.includes(ANTHROPIC_OAUTH);
+  if (hasApi && hasOauth) {
+    return {
+      id: "secret.anthropicAuth",
+      status: "error",
+      summary: "both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are set",
+      details: "pre-fix fail-fasts when both are set (prevents accidental per-token billing while you think you're on a subscription).",
+      nextSteps: ["Remove one secret so exactly one Anthropic credential remains."],
+    };
+  }
+  if (!hasApi && !hasOauth) {
+    return {
+      id: "secret.anthropicAuth",
+      status: "error",
+      summary: "no Anthropic credential is set",
+      details: "Set exactly one of ANTHROPIC_API_KEY (API billing) or CLAUDE_CODE_OAUTH_TOKEN (Pro/Max subscription). pre-fix fail-fasts on neither. (Repo + org secrets were checked; the workflows can't use environment secrets.)",
+      nextSteps: ["Add one as a Repository secret: Settings → Secrets and variables → Actions."],
+    };
+  }
+  return {
+    id: "secret.anthropicAuth",
+    status: "ok",
+    summary: `exactly one Anthropic credential set (${hasApi ? ANTHROPIC_API : ANTHROPIC_OAUTH})`,
+  };
+};
+
+/** Codex review-request token (recommended for a reliable Codex trigger). */
+export const codexTokenCheck: Check = async (ctx): Promise<CheckResult> => {
+  const sn = ctx.secretNames;
+  if (!sn || !sn.ok) {
+    return {
+      id: "secret.codexReviewToken",
+      status: "unknown",
+      summary: "cannot verify CODEX_REVIEW_REQUEST_TOKEN",
+      details: sn ? sn.reason : "secret names were not gathered.",
+    };
+  }
+  if (sn.value.includes(CODEX_TOKEN)) {
+    return { id: "secret.codexReviewToken", status: "ok", summary: `${CODEX_TOKEN} is set` };
+  }
+  return {
+    id: "secret.codexReviewToken",
+    status: "warning",
+    summary: `${CODEX_TOKEN} is not set`,
+    details: "Without it, `@codex review` is posted as github-actions[bot], which may not reliably start Codex. Recommended in production.",
+    nextSteps: ["Add CODEX_REVIEW_REQUEST_TOKEN — a fine-grained PAT from a Codex-connected user (Pull requests: write)."],
+  };
+};
+
+/** Required checks / auto-merge ⇒ LOOPPILOT_PUSH_TOKEN needed (the #3 silent failure). */
+export const pushTokenCheck: Check = async (ctx): Promise<CheckResult> => {
+  const sn = ctx.secretNames;
+  const rc = ctx.requiredChecks;
+  if (!sn || !sn.ok) {
+    return {
+      id: "secret.loopPilotPushToken",
+      status: "unknown",
+      summary: "cannot verify LOOPPILOT_PUSH_TOKEN",
+      details: sn ? sn.reason : "secret names were not gathered.",
+    };
+  }
+  const hasToken = sn.value.includes(PUSH_TOKEN);
+  const requiredKnown = rc?.ok === true;
+  const requiredActive = (requiredKnown && rc!.value.length > 0) || ctx.autoMerge === true;
+
+  if (!hasToken && rc && !rc.ok && ctx.autoMerge !== true) {
+    return {
+      id: "secret.loopPilotPushToken",
+      status: "unknown",
+      summary: "cannot determine whether LOOPPILOT_PUSH_TOKEN is required",
+      details: `Branch protection is unreadable (${rc.reason}); if required checks are enforced, a missing push token means GITHUB_TOKEN-pushed fixes won't re-trigger them.`,
+      nextSteps: ["If the default branch enforces required checks, set LOOPPILOT_PUSH_TOKEN (machine-user PAT / GitHub App token, Contents: write)."],
+    };
+  }
+  if (requiredActive && !hasToken) {
+    const why = ctx.autoMerge === true ? "LOOPPILOT_AUTO_MERGE is on" : "the default branch enforces required checks";
+    return {
+      id: "secret.loopPilotPushToken",
+      status: "warning",
+      summary: `LOOPPILOT_PUSH_TOKEN is missing while ${why}`,
+      details: "Commits pushed with GITHUB_TOKEN do NOT re-trigger required checks, so a repair commit can land drift that only fails on main. Strongly recommended here.",
+      nextSteps: ["Set LOOPPILOT_PUSH_TOKEN — a machine-user fine-grained PAT or GitHub App token (Contents: Read and write)."],
+    };
+  }
+  if (hasToken) {
+    return { id: "secret.loopPilotPushToken", status: "ok", summary: `${PUSH_TOKEN} is set` };
+  }
+  return {
+    id: "secret.loopPilotPushToken",
+    status: "ok",
+    summary: "LOOPPILOT_PUSH_TOKEN not required (no required checks / auto-merge)",
+  };
+};
+
+/** Auto-merge config: repo "Allow auto-merge" must be on when LOOPPILOT_AUTO_MERGE=true. */
+export const autoMergeCheck: Check = async (ctx): Promise<CheckResult> => {
+  if (ctx.autoMerge !== true) {
+    return { id: "autoMerge.config", status: "ok", summary: "auto-merge not enabled (LOOPPILOT_AUTO_MERGE != true)" };
+  }
+  const ri = ctx.repoInfo;
+  if (!ri || !ri.ok) {
+    return {
+      id: "autoMerge.config",
+      status: "unknown",
+      summary: "cannot read the repository auto-merge setting",
+      details: ri ? ri.reason : "repo info was not gathered.",
+    };
+  }
+  if (!ri.value.allowAutoMerge) {
+    return {
+      id: "autoMerge.config",
+      status: "error",
+      summary: "LOOPPILOT_AUTO_MERGE=true but the repo disallows auto-merge",
+      details: "`gh pr merge --auto` fails when 'Allow auto-merge' is off, and the loop silently skips the merge with a warning.",
+      nextSteps: [
+        "Enable Settings → General → Pull Requests → Allow auto-merge.",
+        "Ensure the loop caller grants `actions: read` (the auto-merge guard reads other runs' status).",
+      ],
+    };
+  }
+  return {
+    id: "autoMerge.config",
+    status: "ok",
+    summary: "auto-merge enabled and the repo allows it",
+    details: "Ensure the loop caller's permissions include `actions: read` (cannot be verified from here).",
+  };
+};
+
+/** Codex connection — inferred from recent bot activity. First-class `unknown`. */
+export const codexConnectionCheck: Check = async (ctx): Promise<CheckResult> => {
+  const cs = ctx.codexSeen;
+  const bot = ctx.codexBotLogin || "chatgpt-codex-connector[bot]";
+  if (!cs || !cs.ok) {
+    return {
+      id: "codex.connection",
+      status: "unknown",
+      summary: "could not infer Codex connection",
+      details: cs ? cs.reason : "Codex activity was not gathered.",
+      nextSteps: ["Confirm the ChatGPT Codex GitHub App is installed on this repo; open a PR and check that `@codex review` produces a review."],
+    };
+  }
+  if (cs.value) {
+    return { id: "codex.connection", status: "ok", summary: `recent activity from ${bot} seen — Codex appears connected` };
+  }
+  return {
+    id: "codex.connection",
+    status: "unknown",
+    summary: `no recent activity from ${bot}`,
+    details: "Cannot confirm the Codex GitHub App is connected (inference only — connection cannot be auto-detected reliably).",
+    nextSteps: [
+      "Install/connect the ChatGPT Codex GitHub App for this repository.",
+      "Open a PR and verify `@codex review` triggers a Codex review (then re-run doctor).",
+    ],
+  };
+};
+
+/** TY-346 core checks (local + label). */
 export function coreChecks(): Check[] {
   return [labelCheck, toolchainCheck];
+}
+
+/** Full pre-flight: TY-346 core + TY-347 gathered-signal checks, ordered by impact. */
+export function allChecks(): Check[] {
+  return [
+    labelCheck,
+    anthropicAuthCheck,
+    codexConnectionCheck,
+    pushTokenCheck,
+    autoMergeCheck,
+    codexTokenCheck,
+    toolchainCheck,
+  ];
 }

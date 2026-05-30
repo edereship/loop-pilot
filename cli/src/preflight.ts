@@ -11,7 +11,7 @@
  * before the first PR, 2 = the check run itself could not proceed (handled by
  * the command when the context cannot be built — e.g. auth/repo resolution).
  */
-import type { GhClient } from "./gh.js";
+import type { GhClient, Probe, RepoInfo } from "./gh.js";
 import type { ToolchainDetection } from "./toolchain.js";
 
 export type CheckStatus = "ok" | "warning" | "error" | "unknown";
@@ -46,6 +46,22 @@ export interface PreflightContext {
   label?: string;
   /** Whether full-auto is configured (label not required when true). */
   fullAuto?: boolean;
+
+  // ── TY-347 gathered signals (populated by gatherSignals; checks interpret) ──
+  /** Default branch name (for the branch-protection probe). */
+  defaultBranch?: string;
+  /** LOOPPILOT_AUTO_MERGE === "true". */
+  autoMerge?: boolean;
+  /** Resolved Codex bot login (vars.CODEX_BOT_LOGIN || default). */
+  codexBotLogin?: string;
+  /** Secret NAMES, or a failed probe (e.g. 403). */
+  secretNames?: Probe<string[]>;
+  /** Required status-check contexts on the default branch (value [] = none). */
+  requiredChecks?: Probe<string[]>;
+  /** Repo default-branch + allow-auto-merge setting. */
+  repoInfo?: Probe<RepoInfo>;
+  /** Whether recent Codex bot activity was seen (inference). */
+  codexSeen?: Probe<boolean>;
 }
 
 export type Check = (ctx: PreflightContext) => Promise<CheckResult>;

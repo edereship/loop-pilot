@@ -12,7 +12,8 @@
  */
 import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { coreChecks } from "./checks.js";
+import { allChecks } from "./checks.js";
+import { gatherSignals } from "./gather.js";
 import { buildInitPlan, executeInitPlan, type InitIO } from "./init.js";
 import { GhAuthError, RealGhClient, type GhClient } from "./gh.js";
 import {
@@ -205,17 +206,27 @@ async function runDoctor(
 ): Promise<number> {
   if (!repoCache) repoCache = await gh.currentRepo();
   const tc = detection ?? readToolchain(cwd);
-  // TY-347 will read the repo's CHECK_COMMAND / LOOPPILOT_LABEL / LOOPPILOT_FULL_AUTO
-  // variables via `gh api`; until then doctor uses the detected command and flags.
+  // Read the repo's own LOOPPILOT_* / CHECK_COMMAND variables, secrets, branch
+  // protection, auto-merge setting, and recent Codex activity (TY-347). Each
+  // probe degrades independently to `unknown` on 403.
+  const signals = await gatherSignals(gh, repoCache);
   const ctx: PreflightContext = {
     repository: repoCache,
     gh,
     toolchain: tc,
-    checkCommand: args.checkCommand ?? checkCommand ?? tc.checkCommand,
-    label: args.label,
-    fullAuto: args.fullAuto,
+    // CHECK_COMMAND precedence: explicit flag > repo variable > init suggestion > detection.
+    checkCommand: args.checkCommand ?? signals.checkCommand ?? checkCommand ?? tc.checkCommand,
+    label: args.label ?? signals.label,
+    fullAuto: args.fullAuto || signals.fullAuto,
+    defaultBranch: signals.defaultBranch,
+    autoMerge: signals.autoMerge,
+    codexBotLogin: signals.codexBotLogin,
+    secretNames: signals.secretNames,
+    requiredChecks: signals.requiredChecks,
+    repoInfo: signals.repoInfo,
+    codexSeen: signals.codexSeen,
   };
-  const results = await runPreflight(coreChecks(), ctx);
+  const results = await runPreflight(allChecks(), ctx);
   const report = buildReport(repoCache, results);
   console.log(args.json ? formatJson(report) : formatTable(report));
   return exitCodeForReport(report);

@@ -37,6 +37,47 @@ Pre-flight exit codes: `0` = no errors (warnings/unknown allowed), `1` = an erro
 to fix before the first PR, `2` = the check run itself could not proceed (auth /
 repo resolution).
 
+## Pre-flight checks (`doctor`)
+
+Read-only checks against the developer's authenticated `gh` session. Each surfaces
+one of the silent-failure classes that otherwise only appear after the first PR.
+A check that lacks permission to determine its answer returns `unknown` (never a
+silent pass); 403s degrade per-probe.
+
+| Check id | Surfaces | Statuses |
+|---|---|---|
+| `label.gate` | Gate label missing → no Actions run is generated | ok / error / unknown |
+| `secret.anthropicAuth` | Anthropic credential dual-set / unset (repo + org secrets) | ok / error / unknown |
+| `codex.connection` | Codex GitHub App connection (inferred from recent bot activity) | ok / **unknown** |
+| `secret.loopPilotPushToken` | Required checks / auto-merge active but push token missing | ok / warning / unknown |
+| `autoMerge.config` | `LOOPPILOT_AUTO_MERGE=true` but repo "Allow auto-merge" off | ok / error / unknown |
+| `secret.codexReviewToken` | `CODEX_REVIEW_REQUEST_TOKEN` missing (recommended) | ok / warning / unknown |
+| `toolchain.checkCommand` | CHECK_COMMAND unsafe / inconsistent with the detected toolchain | ok / warning / error |
+
+Codex connection is **inference only** (the App connection cannot be auto-detected
+reliably) — its negative result is `unknown`, never `error`.
+
+### `--json` schema
+
+```json
+{
+  "ok": false,
+  "repository": "owner/repo",
+  "checks": [
+    {
+      "id": "secret.loopPilotPushToken",
+      "status": "ok|warning|error|unknown",
+      "summary": "short human text",
+      "details": "actionable detail or null",
+      "nextSteps": ["concrete command or UI step"]
+    }
+  ]
+}
+```
+
+`ok` is `false` iff any check is `error`. Field order is stable. Exit code mirrors
+`ok` (0/1), or `2` when the run could not start.
+
 ## Local development (inside loop-pilot)
 
 ```bash
