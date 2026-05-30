@@ -2,96 +2,124 @@
 
 [English](README.md) | **日本語**
 
-> AI review-fix loop for GitHub pull requests — Codex レビュー × Claude 自動修正のループを GitHub Actions として実行する。
+> GitHub Pull Request 向けの AI レビュー修正ループ。LoopPilot は Codex に PR レビューを依頼し、指摘を Claude に修正させ、チェックを実行し、PR がクリーンになるまで繰り返します。
 
-PR を開くと、LoopPilot が Codex にレビューを依頼し、Codex が見つけた指摘を [Claude](https://github.com/anthropics/claude-code-action) が自動修正し、修正のたびにあなたの check を再実行します — レビューがクリーンになるまでこれを繰り返します。すべて GitHub Actions として動くので、ホスティングは不要です。
+LoopPilot は GitHub Actions の再利用可能 workflow として動きます。サーバー運用やホスティングは不要です。推奨の導入方法は [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) です。
 
-**目次:** [仕組み](#仕組み) · [前提条件](#前提条件) · [クイックスタート](#クイックスタート) · [導入](#導入) · [初回 PR の前に](#初回-pr-の前にやること手動が必要な部分) · [トークンと権限](#トークンと必要権限-fine-grained-pat) · [設定](#設定-repository-variables) · [ドキュメント](#ドキュメント)
-
-## クイックスタート
-
-最速は [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) — 1 コマンドで一式をスキャフォールドします:
+## まずここから
 
 ```bash
-gh extension install team-yubune/gh-looppilot   # 1. 一度だけ。PATH に Node >= 20 ＋ `gh auth login` 済み
-cd path/to/your-repo                             # 2. 対象リポジトリのローカルクローン内で
-gh looppilot init                                # 3. workflow 2 本 + ゲートラベルを生成、CHECK_COMMAND を提案、pre-flight 実行
+# 1. 一度だけインストール。Node >= 20 と認証済み GitHub CLI が必要です。
+gh extension install team-yubune/gh-looppilot
+
+# 2. LoopPilot を入れたいリポジトリで実行します。
+cd path/to/your-repo
+gh looppilot init
+
+# 3. 必要な secret を追加したあと、設定を確認します。
+gh looppilot doctor
 ```
 
-続けて [初回 PR の前にやること](#初回-pr-の前にやること手動が必要な部分)（Codex 連携・secret 投入）を実施してください。手動で貼りたい場合は [手動で導入](#2-手動で導入cli-を使わない場合) を参照。
+`gh looppilot init` の後に、下記の手動ステップを 2 つ実施してください。Codex GitHub App の連携と、Claude 認証情報の追加です。その後、PR を開いて `loop-pilot` ラベルを付けます。
 
-> **実際にやることはこれだけ:** CLI を実行し、Codex を一度連携し、Anthropic の secret を **1 つ**（`ANTHROPIC_API_KEY` か `CLAUDE_CODE_OAUTH_TOKEN`）設定する。あとは自動か追加オプションです — 2 つの PAT は required checks の再実行・auto-merge・Codex の確実な起動が必要なときだけ追加します。
+## LoopPilot がすること
 
-## 仕組み
+1. `loop-pilot` ラベル付きで PR を開く。
+2. LoopPilot が `@codex review` を投稿する。
+3. Codex が PR をレビューし、指摘を返す。
+4. Claude が `anthropics/claude-code-action` 経由で指摘を修正する。
+5. LoopPilot が `CHECK_COMMAND`、scope check、secret scan を実行し、修正 commit を push して、再度 Codex にレビューを依頼する。
+6. 指摘がなくなれば `done`、ガード・上限・検証失敗などで人の対応が必要なら `stopped` で終了する。
 
-1. **Workflow A (init)** — PR が開かれ、ゲートを満たすと LoopPilot が初期化され、初回の `@codex review` を投稿する。
-2. **Codex** がコードレビューを実施し、総評コメントと inline コメントを返す。
-3. **Workflow B (loop)** — Codex のレビューを検知し、`claude-code-action` が findings を修正 → `CHECK_COMMAND` → scope / secret チェック → commit / push → 再度 `@codex review`。
-4. findings がなくなるまで 2–3 を繰り返し、`done` で終了（任意で auto-merge）。上限到達・修正不能・スコープ違反などでは `stopped` で停止する。
-
-Codex は findings に **P0–P3**（P0 が最も重大）のラベルを付け、デフォルトでは全部を対象に修正します。
-
-> **ガードレールは自動 — 管理不要です:** 各修正は `CHECK_COMMAND` **と**安全ガード（scope policy・ロックされた `.github/`・size budget・secret scanner）を通過しなければ revert されるため、無関係・危険な変更が紛れ込むことはありません。`done` / `stopped` はいずれも PR 上のステータスコメントと通知で可視化されます。fork PR は両 workflow で無効化されます（自リポジトリ PR のみ対象）。
+安全ガードも組み込まれています。fork PR は無視され、`.github/` は変更不可、修正は scope check と secret scan を通過する必要があり、すべての修正で指定した検証コマンドが実行されます。
 
 ## 前提条件
 
-- GitHub Actions が有効なリポジトリで、**同一リポジトリ PR への commit / push が許可**されていること。
-- 対象リポジトリに **ChatGPT Codex の GitHub 連携 (Codex GitHub App)** が導入され、`@codex review` でレビューが起動すること。
-- **Anthropic API キー** または **Claude Code サブスクリプションの OAuth トークン**（いずれか一方）。
-- `CHECK_COMMAND` を実行できるツールチェイン。デフォルトは Node.js / npm。pytest・go test・make 等を使う場合は caller の `language` input（`node` / `python` / `go` / `rust` / `none`）で切り替える。
-- 必要なトークンと権限は [トークンと必要権限](#トークンと必要権限-fine-grained-pat) を参照。
+| 必要なもの | 理由 |
+|---|---|
+| GitHub Actions が有効 | LoopPilot は Actions 上で動きます。 |
+| 同一リポジトリ内の PR branch | fork PR はセキュリティ上ブロックします。 |
+| ChatGPT Codex GitHub 連携 | `@codex review` で対象 repo の Codex レビューを起動するため。 |
+| Claude 認証情報 1 つ | `ANTHROPIC_API_KEY` または `CLAUDE_CODE_OAUTH_TOKEN` を設定します。 |
+| 検証コマンド | デフォルトは `npm run check`。`CHECK_COMMAND` で変更できます。 |
 
-## 導入
+## CLI で導入
 
-導入方法は 2 つ — **`gh looppilot` CLI**（推奨）か、**手動で薄い caller を貼る**か。どちらも生成物は同一で、いずれの場合も Codex GitHub App の連携と secret 投入だけが手作業です。
+推奨は `gh looppilot init` です。1 コマンドで次を実行します。
 
-### 1. [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) で導入（推奨）
+- toolchain を検出し、`CHECK_COMMAND` を提案
+- `.github/workflows/looppilot-init.yml` を作成
+- `.github/workflows/looppilot-loop.yml` を作成
+- ゲートラベル `loop-pilot` を作成
+- GitHub の制約で自動化できない手順を表示
+- pre-flight check を実行
 
-`gh looppilot init` の 1 コマンド（上の [クイックスタート](#クイックスタート) 参照）が以下を行います。
+導入後は `gh looppilot doctor` でいつでも設定を再確認できます。機械可読出力が必要な場合は `--json` を付けてください。
 
-- toolchain を自動検出（Node / Python / Go / Rust / Make）し、`CHECK_COMMAND` と caller の `language` を提案
-- 薄い caller 2 本（`.github/workflows/looppilot-{init,loop}.yml`、`@v1` 参照）を生成
-- ゲートラベル `loop-pilot` を冪等に作成
-- 自動化できない手動手順（Codex App 連携・secret 投入）を表示
-- 最後に **pre-flight 検査** を実行し、初回 PR 前に設定漏れ（ラベル / Codex 連携 / secret / toolchain）を可視化
+## 初回 PR 前の手動ステップ
 
-導入後はいつでも `gh looppilot doctor`（read-only）で設定を再確認できます。`--json` で機械可読出力も出ます。
+### 1. Codex を連携する
 
-### 2. 手動で導入（CLI を使わない場合）
+[ChatGPT Codex](https://chatgpt.com/codex) を開き、GitHub を接続して、対象リポジトリに Codex GitHub App のアクセスを許可してください。`chatgpt-codex-connector[bot]` が対象 repo で動作できることを確認します。
 
-<details>
-<summary><b>手動（CLI 不要）導入を展開</b> — 上記の CLI がこのセクションの内容をすべて生成します。CLI を使えない場合のみ開いてください。</summary>
+これがない場合、LoopPilot は `@codex review` を投稿できますが、Codex レビューは返ってきません。
 
-#### 2-1. ゲートラベルの作成（または full-auto）
+### 2. secrets を追加する
 
-デフォルトでは `loop-pilot` ラベルが付いた PR のみが LoopPilot 対象です。利用側リポジトリで **以下のいずれかを先に実施** しないと、workflow を貼っても `if:` 条件が `false` になり Actions タブに run が生成されません。
-
-**選択 A: ラベルを作成する（推奨、PR 単位で制御できる）**
+初回テスト PR では Claude 認証情報が 1 つあれば十分です。
 
 ```bash
-gh label create loop-pilot \
-  --color BFD4F2 \
-  --description "Run LoopPilot on this PR"
+gh secret set ANTHROPIC_API_KEY --repo <owner>/<repo>
+# または:
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 ```
 
-PR にこのラベルを付けると Workflow A / B が起動します。ラベルが付かない PR では何も起きません（workflow run も生成されません）。
+本番運用では、下記の GitHub PAT も追加してください。
 
-**選択 B: 全 PR で有効化する（full-auto）**
+| Secret | 必須か | 用途 |
+|---|---|---|
+| `ANTHROPIC_API_KEY` または `CLAUDE_CODE_OAUTH_TOKEN` | 必須。ちょうど一方だけ | `claude-code-action` が修正を行うため。 |
+| `CODEX_REVIEW_REQUEST_TOKEN` | 推奨 | Codex 連携済みユーザーとして `@codex review` を投稿するため。 |
+| `LOOPPILOT_PUSH_TOKEN` | protected branch では推奨 | `GITHUB_TOKEN` 以外の actor として repair commit を push し、required checks を再実行させるため。 |
+| `GITHUB_TOKEN` | 自動 | GitHub Actions が注入します。作成・保存は不要です。 |
 
-Repository variable `LOOPPILOT_FULL_AUTO=true` を設定すると、すべての非 fork PR で LoopPilot が起動します。
+トークン権限とセキュリティの詳細は [docs/operations/security.md](docs/operations/security.md) を参照してください。
 
-ラベルゲートの詳細仕様は [`docs/architecture/event-design.md`](docs/architecture/event-design.md) を参照。
+## 初回 PR チェックリスト
 
-#### 2-2. caller workflow を追加
+1. `gh looppilot doctor` を実行し、`error = 0` を確認する。
+2. 同一リポジトリ内の branch から PR を開く。
+3. full-auto を有効化していない場合、`loop-pilot` ラベルを付ける。
+4. LoopPilot の status comment と最初の `@codex review` を確認する。
+5. ループ終了後、最終状態が `done` か `stopped` かを確認する。
 
-LoopPilot 本体は **再利用可能ワークフロー (`workflow_call`)** として配布されます。あなたは、発火イベントと secret / 権限だけを書いた小さな caller workflow を 2 本置くだけです（各 ~15–22 行）。トリガー条件・Codex レビュー検知・fork ガード・toolchain セットアップ・crash 処理はすべて再利用可能ワークフロー側にあるため、`@v1` を追従するだけで、自分の caller を編集せずに改善・修正が自動で届きます。
+## よく使う設定
 
-> **secret の渡し方**: 同一 org 内なら `secrets: inherit` が使えます。**別 org の adopter は `secrets: inherit` を使えない**（same-org 限定）ため、下記サンプルのように secret を明示列挙してください。`GITHUB_TOKEN` は Actions が自動付与するため列挙不要です。
+対象リポジトリの GitHub Actions Repository variables として設定します。
 
-#### Workflow A — PR を開いた時に初期化
+| Variable | デフォルト | 使う場面 |
+|---|---|---|
+| `CHECK_COMMAND` | `npm run check` | 検証コマンドを変えたい。 |
+| `BUILD_COMMAND` | 空 | `dist/` などの生成物を commit 前に更新したい。 |
+| `LOOPPILOT_LABEL` | `loop-pilot` | ゲートラベル名を変えたい。 |
+| `LOOPPILOT_FULL_AUTO` | `false` | すべての非 fork PR で LoopPilot を動かしたい。 |
+| `MAX_REVIEW_ITERATIONS` | `20` | ループ上限を変えたい。 |
+| `LOOPPILOT_SEVERITY_THRESHOLD` | `P3` | 低 severity の Codex 指摘を対象外にしたい。 |
+| `LOOPPILOT_AUTO_MERGE` | `false` | `done / no_findings` 到達時に squash merge したい。 |
+| `LOOPPILOT_BLOCK_PATHS` | 空 | 自動修正で触らせたくない path を追加したい。 |
+
+すべての input は [loop/action.yml](loop/action.yml) と [init/action.yml](init/action.yml) にまとまっています。
+
+## 手動導入
+
+CLI を使えない場合だけ、この手順を使ってください。
+
+<details>
+<summary><b>2 つの workflow caller を表示</b></summary>
+
+### `.github/workflows/looppilot-init.yml`
 
 ```yaml
-# .github/workflows/looppilot-init.yml
 name: LoopPilot Init
 
 on:
@@ -100,7 +128,6 @@ on:
 
 jobs:
   init:
-    # caller の job が GITHUB_TOKEN 権限を付与する（再利用ワークフローの token は caller で上限が決まる）
     permissions:
       contents: read
       pull-requests: write
@@ -110,10 +137,9 @@ jobs:
       CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 ```
 
-#### Workflow B — Codex のレビューを受けて修正ループ
+### `.github/workflows/looppilot-loop.yml`
 
 ```yaml
-# .github/workflows/looppilot-loop.yml
 name: LoopPilot Loop
 
 on:
@@ -128,212 +154,46 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      actions: read        # auto-merge ガード用。LOOPPILOT_AUTO_MERGE を使わないなら省略可
+      actions: read
     uses: team-yubune/loop-pilot/.github/workflows/loop.yml@v1
     secrets:
       CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
       LOOPPILOT_PUSH_TOKEN: ${{ secrets.LOOPPILOT_PUSH_TOKEN }}
-      # ANTHROPIC_API_KEY と CLAUDE_CODE_OAUTH_TOKEN はちょうど一方だけ設定する
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
       language: node   # node | python | go | rust | none
 ```
 
-`@v1` は安定版のリリースタグ（moving タグ。最新の `v1.x.y` を自動追従）。固定したい場合は `@v1.2.3` や commit SHA を使ってください。`@main` は破壊的変更を受け得るため本番非推奨です。詳細は [リリース手順](docs/operations/releasing.md)。
-
-すべての Repository variable（`CHECK_COMMAND` / `LOOPPILOT_LABEL` / `MAX_REVIEW_ITERATIONS` など。[設定 (Repository variables)](#設定-repository-variables)）は **adopter 自身のリポジトリ** で解決されます（`vars` / `github` コンテキストは caller に解決される GitHub 仕様）。薄い caller でこれらを再記述する必要はありません。
-
-#### 非 Node ツールチェイン（`language` input）
-
-`CHECK_COMMAND` / `BUILD_COMMAND` を実行する環境を caller の `language` input 一つで切り替えられます。`loop` 本体は runner の Node 上で動くため、`language` は検証環境のみを制御します。
-
-| `language` | セットアップ | 依存インストール |
-|---|---|---|
-| `node`（default） | `actions/setup-node@v5`（Node 24, npm cache） | `package-lock.json` があれば `npm ci` |
-| `python` | `actions/setup-python@v5`（3.x） | `requirements.txt` があれば `pip install -r` |
-| `go` | `actions/setup-go@v5`（stable） | — |
-| `rust` | `rustup` stable（minimal） | — |
-| `none` | なし（runner プリインストールを利用。例: make / gcc） | — |
-
-`CHECK_COMMAND`（`vars.CHECK_COMMAND`）は選んだ toolchain に合わせて設定してください（例: Python なら `pytest`、Go なら `go test ./...`、Make なら `make check`）。
-
-</details>
-
-## 初回 PR の前にやること（手動が必要な部分）
-
-CLI / 手動どちらで導入しても、以下は **プラットフォーム制約で自動化できない手作業**です。CLI の `gh looppilot init` 実行後、この手順を行ってから初回 PR を開いてください。
-
-1. **Codex GitHub App を対象リポジトリに連携する。** [ChatGPT → Codex](https://chatgpt.com/codex) で GitHub 連携設定を開き、GitHub アカウントを接続し、対象 repo（または org 全体）へのアクセスを許可する。**`chatgpt-codex-connector[bot]`** が対象 repo で動作できることを確認する。これが無いと `@codex review` を投稿してもレビューが返りません（pre-flight では `codex.connection = unknown` と表示されます）。
-2. **secret を登録する**（値はコマンドから設定できません。GitHub UI または `gh secret set` で投入）。
-   - `ANTHROPIC_API_KEY` **または** `CLAUDE_CODE_OAUTH_TOKEN`（どちらか一方・**必須**）
-   - `CODEX_REVIEW_REQUEST_TOKEN`（推奨。Codex 連携ユーザーの fine-grained PAT）
-   - `LOOPPILOT_PUSH_TOKEN`（branch protection の required checks や auto-merge を使うなら）
-   - 詳細は下記 [トークンと必要権限](#トークンと必要権限-fine-grained-pat)。
-3. **pre-flight で確認する。** `gh looppilot doctor` を実行し、`error` が 0 になることを確認する（`warning` / `unknown` は許容）。
-4. **初回 PR を開く**（ゲートラベル `loop-pilot` を付ける。full-auto なら不要）。期待される流れ:
-   - init が **ステータスコメント** と最初の **`@codex review`** を投稿する
-   - Codex のレビューを受けて loop が起動し、Claude 修正 → `CHECK_COMMAND` → commit/push → 再 `@codex review`
-   - 閾値以上の指摘が解消されれば **`done / no_findings`** で終了。解消できない場合は停止理由が PR に明示される
+full-auto を有効化しない場合は、ゲートラベルも作成します。
 
 ```bash
-# secret 投入の例
-gh secret set ANTHROPIC_API_KEY --repo <owner>/<repo>          # 値はプロンプトで入力
-gh secret set CODEX_REVIEW_REQUEST_TOKEN --repo <owner>/<repo>
-gh looppilot doctor                                            # error が 0 か確認
+gh label create loop-pilot \
+  --color BFD4F2 \
+  --description "Run LoopPilot on this PR"
 ```
-
-## トークンと必要権限 (Fine-grained PAT)
-
-LoopPilot は 4 つの認証情報を扱いますが、**`GITHUB_TOKEN` は GitHub Actions が自動で供給するため、あなたが作成・保存することはありません。** 実際に用意するものは少しだけで、初回 PR では secret は 1 つです。
-
-| あなたが作成（GitHub Actions の **Repository secrets** に保存） | いつ |
-|---|---|
-| `ANTHROPIC_API_KEY` **または** `CLAUDE_CODE_OAUTH_TOKEN` | 常に — ちょうど 1 つ選ぶ |
-| `CODEX_REVIEW_REQUEST_TOKEN`（fine-grained PAT） | 推奨 — `@codex review` を確実に起動させる |
-| `LOOPPILOT_PUSH_TOKEN`（PAT / GitHub App） | branch protection の required checks か auto-merge を使うとき |
-
-`GITHUB_TOKEN` は毎回注入されます。あなたは workflow の `permissions:` ブロックで権限を絞るだけで、サンプル caller には既に記載済みです。
-
-> **初回 PR に必須の secret は 1 つだけ:** `ANTHROPIC_API_KEY` か `CLAUDE_CODE_OAUTH_TOKEN` のいずれか一方です。2 つの PAT は required checks の再実行・auto-merge・Codex の確実な起動を使うときに追加します。最初の動作確認では省略できます。「誰が用意するか」は [Secrets サマリ](#secrets-サマリ) を参照。
-
-**あなたが作成する PAT（2〜3 節）についての指針:**
-
-- すべての PAT は **対象リポジトリ 1 つだけにスコープを限定**する（org 全体への付与は避ける）。
-- Fine-grained PAT では `Metadata: Read-only` が自動付与される（必須）ため、以下の表では省略する。
-- 必ず GitHub Actions の **Repository secrets** に保存する（ログには自動でマスクされる）。
-- **作成場所:** GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**。**Resource owner** を対象リポジトリのオーナーに、**Repository access** を *Only select repositories* → 対象 repo に設定し、各節に記載の権限を有効化します。
-
-### 1. `GITHUB_TOKEN`（自動 — あなたは作成しません）
-
-**これは必要？** 作業不要 — 自動です。権限を絞るだけ。
-
-Actions が実行ごとに自動生成するトークンです。**あなたが作成・コピー・保存することはありません** — 自動で注入されます。workflow の `permissions:` ブロックで権限を絞るだけです（上記サンプル caller で設定済み）。
-
-| Workflow | permissions |
-|---|---|
-| Workflow A (`looppilot-init.yml`) | `contents: read`, `pull-requests: write`, `issues: write` |
-| Workflow B (`looppilot-loop.yml`) | `contents: write`, `pull-requests: write`, `issues: write`, `actions: read` |
-
-- **`issues: write` / `pull-requests: write`** — LoopPilot のステータス／state 追跡コメントと通知の維持、PR メタデータ・inline review comment・ラベルの読み取り、auto-merge の実行。
-- **`contents: write`**（Workflow B のみ）— `LOOPPILOT_PUSH_TOKEN` 未設定時に repair commit を `GITHUB_TOKEN` で push するためのフォールバック。Workflow A は checkout のみで push しないため `contents: read`。
-- **`actions: read`**（Workflow B のみ）— `LOOPPILOT_AUTO_MERGE=true` のときだけ必須。auto-merge 前に HEAD の他 CI run が green かを `/actions/runs` で確認する。未付与だと API が 403 を返し auto-merge が常に skip される。auto-merge を使わないなら省略可。
-
-### 2. `CODEX_REVIEW_REQUEST_TOKEN`（Fine-grained PAT・推奨 — 無いと `@codex review` が確実に起動しないことがある）
-
-**これは必要？** 推奨 — 無いと `@codex review` が確実に起動しないことがある。
-
-`@codex review` コメントを **Codex と連携済みのユーザー** として投稿し、Codex のレビューを起動・再起動するためのトークン。未設定時は `GITHUB_TOKEN`（= `github-actions[bot]`）にフォールバックしますが、bot 投稿では Codex が確実に起動しないため、連携ユーザーの PAT を推奨します。
-
-**発行元:** ChatGPT Codex を GitHub に連携済みのユーザー。長期運用では、actor を安定・監査可能にするため、個人アカウントではなく専用の machine user または GitHub App での発行を推奨。
-
-**Fine-grained PAT — Repository permissions:**
-
-| Permission | Level | 要否 | 用途 |
-|---|---|---|---|
-| Pull requests | Read and write | **必須** | PR 会話に `@codex review` を投稿（`POST /repos/{owner}/{repo}/issues/{pr}/comments`。PR 番号宛のコメントは fine-grained PAT では Pull requests 権限で認可される） |
-| Issues | Read and write | 推奨 | issue/PR 共通のコメント endpoint に対する保険 |
-
-push・checkout・state comment 読み書き・findings 取得には**使いません**（それらは `GITHUB_TOKEN`）。詳細は [`docs/operations/security.md`](docs/operations/security.md#codex-review-request-token)。
-
-### 3. `LOOPPILOT_PUSH_TOKEN`（Fine-grained PAT または GitHub App トークン — branch protection の required checks か auto-merge を使うなら必須、使わないなら不要）
-
-**これは必要？** 初回 PR では不要。branch protection の required checks・auto-merge・CI でしか検証できない成果物の commit を使うなら追加する。
-
-repair commit の `git push` 専用トークン。**`GITHUB_TOKEN` で push した commit には GitHub が `pull_request: synchronize` を発火させない**仕様のため、未設定だと auto-fix commit に対して required CI checks が再実行されず、CI でしか露呈しない問題（例: committed build artifacts の drift、type-check の退行）が merge 後の main で初めて顕在化する経路を残します。以下に該当する場合は設定を強く推奨します。
-
-- branch protection で **required CI checks** を強制している
-- `LOOPPILOT_AUTO_MERGE=true` で auto-fix → 自動 merge を回す
-- build 成果物・生成コード・lockfile など、CI でしか検証できない成果物を commit しており、古いままの commit は required check でしか検知できない
-
-**発行元:** 対象リポジトリにスコープした machine user の Fine-grained PAT、または GitHub App installation token。`GITHUB_TOKEN` 以外の actor であることが required check 再実行の条件です。
-
-**Fine-grained PAT — Repository permissions:**
-
-| Permission | Level | 要否 | 用途 |
-|---|---|---|---|
-| Contents | Read and write | **必須** | PR head branch へ repair commit を push |
-
-`.github/` は scope check で hard-block されており repair commit が workflow ファイルに触れないため、**`Workflows` 権限は不要**です。`@codex review` 投稿・コメント・claude-code-action 入力には**使いません**。詳細は [`docs/operations/security.md`](docs/operations/security.md#looppilot-push-token)。
-
-### 4. `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`（いずれか一方）
-
-**これは必要？** 必須 — ちょうど 1 つ設定する。すべての adopter が追加する唯一の secret です。
-
-`claude-code-action` の認証情報。GitHub トークンではありません。**ちょうど一方だけ** を設定してください（両方／どちらも未設定なら pre-fix が起動時に fail fast します）。
-
-| Secret | 用途 | 課金 |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Anthropic API 直接呼び出し | Anthropic API 従量課金 |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code サブスク (Pro / Max)。`claude setup-token` で発行 | サブスク使用量を消費 |
-
-両方セット時の fail fast は「サブスクへ切替えたつもりで API キー削除を忘れ課金が続く」事故を防ぐためです。詳細は [`docs/operations/security.md`](docs/operations/security.md)（認証 / サブスク利用時の注意）。
-
-### Secrets サマリ
-
-| Secret | 用意するのは | 要否 | 概要 |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | **あなた** | いずれか一方が必須 | claude-code-action の認証 |
-| `CODEX_REVIEW_REQUEST_TOKEN` | あなた（fine-grained PAT） | 推奨 | `@codex review` を連携ユーザーとして投稿 |
-| `LOOPPILOT_PUSH_TOKEN` | あなた（PAT / GitHub App） | required checks / auto-merge 利用時は必須 | repair commit を `GITHUB_TOKEN` 以外の actor で push し required CI checks を再実行させる |
-| `GITHUB_TOKEN` | **自動（Actions）** | 設定不要 | 実行ごとに注入。`permissions:` で権限を絞るだけ |
-
-## 設定 (Repository variables)
-
-すべて任意で、未設定ならデフォルトで安全に動きます（全 input は [`loop/action.yml`](loop/action.yml) / [`init/action.yml`](init/action.yml) を参照）。よく調整するもの:
-
-| Variable | デフォルト | 説明 |
-|---|---|---|
-| `LOOPPILOT_LABEL` | `loop-pilot` | このラベルを持つ PR のみ処理。**ラベルを repo に作成し PR に付ける**こと — 作成しないと run が生成されない |
-| `LOOPPILOT_FULL_AUTO` | `false` | `true` でラベルゲートを無効化（全非 fork PR で起動） |
-| `MAX_REVIEW_ITERATIONS` | `20` | 1 PR あたりの最大修正回数 |
-| `CHECK_COMMAND` | `npm run check` | 修正後に走らせる検証コマンド（allowlist で検証。shell メタ文字・未許可バイナリは fail fast） |
-| `LOOPPILOT_SEVERITY_THRESHOLD` | `P3` | これ未満の severity を無視。`P3` は P0–P3 すべて対象、`P2` で P3 を skip など |
-| `LOOPPILOT_AUTO_MERGE` | `false` | `done / no_findings` 到達時に自動 squash merge。**repo Settings → General → "Allow auto-merge" の有効化が前提**。CI 失敗・HEAD 変化・timeout 等の skip 時は PR コメントで理由を通知 |
-
-<details>
-<summary><b>詳細な変数</b> — build・scope・モデル階層・Codex/ロールの上書き</summary>
-
-| Variable | デフォルト | 説明 |
-|---|---|---|
-| `BUILD_COMMAND` | （空 = skip） | `CHECK_COMMAND` 通過後・staging 前に走る任意ビルド。`dist/` 等の生成物が `src/` と drift しないようにする。複数ステップは npm script / Makefile に集約 |
-| `LOOPPILOT_BLOCK_PATHS` | （空） | `.gitignore` 風の block-path spec。`secrets/`（dir）、`Justfile`（file）、`!Makefile`（default 解除）。`!.github/...` は無視（`.github/` は locked） |
-| `CLAUDE_CODE_MODEL_BASE` | `claude-sonnet-4-6` | base tier モデル。escalation 条件が立たない iteration で使用 |
-| `CLAUDE_CODE_MODEL_ESCALATED` | `claude-opus-4-7` | escalated tier。P0 finding・直前 CHECK 失敗・同一 findings 再発で使用。`BASE` と同値にすると tiering 無効 |
-| `CODEX_BOT_LOGIN` | `chatgpt-codex-connector[bot]` | Codex bot のログイン名（連携先が変わった場合の上書き用） |
-| `CODEX_REVIEW_MARKER` | `Codex Review` | Codex 総評コメントの判定マーカー |
-| `LOOPPILOT_RESTART_ROLES` | `author,write,maintain,admin` | `/restart-review` を許可するロール |
-| `LOOPPILOT_STATE_COMMENT_AUTHORS` | （空 = `github-actions[bot]`） | LoopPilot の state 追跡コメントの信頼 author。GitHub App / machine user が投稿する場合に設定 |
-
-> auto-merge を使う場合は、リポジトリ Settings → General → Pull Requests → **"Allow auto-merge" を有効化**してください。無効のままだと `gh pr merge --auto` が即 fail し、`⏸️ Auto-merge skipped` の PR コメントで理由が通知されます。
 
 </details>
 
-## ドキュメント
+## 関連ドキュメント
 
-- [`docs/README.md`](docs/README.md) — 全体目次
-- [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md) — 設計概要
-- [`docs/architecture/flow-and-state.md`](docs/architecture/flow-and-state.md) — フロー / state 管理
-- [`docs/operations/security.md`](docs/operations/security.md) — secrets / トークン権限 / scope check / 認証
-- [`docs/operations/stop-and-recovery.md`](docs/operations/stop-and-recovery.md) — 停止条件と `/restart-review`
-- [`docs/operations/scope-policy.md`](docs/operations/scope-policy.md) — 変更スコープ検査と `LOOPPILOT_BLOCK_PATHS`
+- [ドキュメント目次](docs/README.md)
+- [システム概要](docs/architecture/system-overview.md)
+- [フローと state 管理](docs/architecture/flow-and-state.md)
+- [セキュリティとトークン権限](docs/operations/security.md)
+- [停止条件とリカバリ](docs/operations/stop-and-recovery.md)
+- [Scope policy](docs/operations/scope-policy.md)
+- [リリース手順](docs/operations/releasing.md)
 
 ## 開発
 
-*LoopPilot 自体への貢献向け — 導入には不要です。*
-
-<details>
-<summary><b>ビルド &amp; テスト</b></summary>
-
 ```bash
 npm ci
-npm run check     # tsc --noEmit + tests/ typecheck + vitest run
-npm run bundle    # dist/ を再生成
+npm run check
+npm run bundle
 ```
 
-PR を開くと CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) が typecheck / test / dist drift をチェックします。`src/` を変更したら `npm run bundle` で `dist/` を再生成してコミットしてください（公開 action は `dist/` を実行するため）。
-
-</details>
+CI は typecheck、test、`dist/` drift を確認します。`src/` を変更した場合は `npm run bundle` を実行し、再生成された `dist/` も commit してください。
 
 ## ライセンス
 
