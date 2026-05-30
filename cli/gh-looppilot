@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# gh CLI extension entrypoint for LoopPilot (ADR-0001).
+#
+# `gh extension install team-yubune/gh-looppilot` clones this repo and runs this
+# executable for `gh looppilot ...`. It is a thin shim that execs the bundled
+# Node CLI (cli.cjs) sitting next to it. Node >= 20 is required.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+BUNDLE="$DIR/cli.cjs"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "gh-looppilot: Node.js (>= 20) is required but 'node' was not found on PATH." >&2
+  echo "Install Node from https://nodejs.org/ and retry." >&2
+  exit 2
+fi
+
+if [ ! -f "$BUNDLE" ]; then
+  echo "gh-looppilot: bundle not found at $BUNDLE." >&2
+  echo "If running from source, build it with: npm run bundle:cli" >&2
+  exit 2
+fi
+
+exec node "$BUNDLE" "$@"
