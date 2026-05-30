@@ -1,11 +1,13 @@
 # ADR-0001: CLI 配布設計（`gh looppilot` の配布方式・repo 境界）
 
-- **Status:** Accepted
+- **Status:** Accepted — **Implemented & extracted（2026-05-30）**
 - **Date:** 2026-05-30
 - **Deciders:** LoopPilot maintainers
 - **Related:** TY-348（本 ADR）、TY-346（CLI scaffold 実装）、TY-347（pre-flight / doctor）、TY-349（外部 adopter E2E）、[リリース手順](../operations/releasing.md)
 
 > これは LoopPilot で最初の ADR である。今後の設計判断も `docs/architecture/adr-NNNN-<slug>.md` 形式で残す。
+
+> **更新（2026-05-30）:** 抽出を実施済み。CLI は **[team-yubune/gh-looppilot](https://github.com/team-yubune/gh-looppilot)（v0.1.0, public）** が single source of truth。`gh extension install team-yubune/gh-looppilot` で導入でき、本リポジトリの README クイックスタートも CLI 主導線に更新済み。ステージング用の `loop-pilot/cli/` は重複解消のため**削除**した（履歴は git に残る）。以降の CLI 変更は gh-looppilot 側で行う。下記「実装ステージング」節は当時の経緯として残す。
 
 ## Context（背景）
 
