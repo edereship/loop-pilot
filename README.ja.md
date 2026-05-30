@@ -78,10 +78,38 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 
 | Secret | 必須か | 用途 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` または `CLAUDE_CODE_OAUTH_TOKEN` | 必須。ちょうど一方だけ | `claude-code-action` が修正を行うため。 |
-| `CODEX_REVIEW_REQUEST_TOKEN` | 推奨 | Codex 連携済みユーザーとして `@codex review` を投稿するため。 |
-| `LOOPPILOT_PUSH_TOKEN` | protected branch では推奨 | `GITHUB_TOKEN` 以外の actor として repair commit を push し、required checks を再実行させるため。 |
+| `ANTHROPIC_API_KEY` または `CLAUDE_CODE_OAUTH_TOKEN` | 必須（いずれか一方のみ） | `claude-code-action` が修正を行うため。 |
+| `CODEX_REVIEW_REQUEST_TOKEN` | 必須 | Codex 連携済みユーザーとして `@codex review` を投稿するため。 |
+| `LOOPPILOT_PUSH_TOKEN` | 必須 | `GITHUB_TOKEN` 以外の actor として repair commit を push し、required checks を再実行させるため。 |
 | `GITHUB_TOKEN` | 自動 | GitHub Actions が注入します。作成・保存は不要です。 |
+
+#### 2 つの Fine-grained PAT を作成する
+
+`CODEX_REVIEW_REQUEST_TOKEN` と `LOOPPILOT_PUSH_TOKEN` は GitHub の **Fine-grained personal access token（PAT）** です。初めて作成する場合は、まず GitHub 公式ガイドを参照してください: [Creating a fine-grained personal access token](https://docs.github.com/ja/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token)。
+
+各トークンの作成手順:
+
+1. **Settings → Developer settings → Fine-grained tokens → Generate new token** を開く（上記リンクからでも可）。
+2. **Repository access** で **Only select repositories** を選び、対象リポジトリのみを指定する。
+3. **Permissions → Repository permissions** で、そのトークンに必要な権限だけを付与する:
+
+   | トークン | Repository permissions |
+   |---|---|
+   | `CODEX_REVIEW_REQUEST_TOKEN` | `Pull requests: Read and write`、`Issues: Read and write` |
+   | `LOOPPILOT_PUSH_TOKEN` | `Contents: Read and write` |
+
+4. トークンを生成してコピーし、repository secret として保存する:
+
+   ```bash
+   gh secret set CODEX_REVIEW_REQUEST_TOKEN --repo <owner>/<repo>
+   gh secret set LOOPPILOT_PUSH_TOKEN --repo <owner>/<repo>
+   ```
+
+注意:
+
+- `CODEX_REVIEW_REQUEST_TOKEN` は GitHub アカウントが Codex と連携済みのユーザーで発行してください。連携していないと `@codex review` がレビューを起動しません。
+- `LOOPPILOT_PUSH_TOKEN` は `GITHUB_TOKEN` 以外の actor（専用 machine user または GitHub App token を推奨）で発行してください。その actor による push でないと required checks が再実行されません。
+- 2 つのトークンは分けてください。レビュー依頼用トークンには push 権限を付与しないでください。
 
 トークン権限とセキュリティの詳細は [docs/operations/security.md](docs/operations/security.md) を参照してください。
 

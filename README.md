@@ -79,9 +79,37 @@ For production, add the two GitHub PATs shown below.
 | Secret | Required? | Purpose |
 |---|---|---|
 | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Required, exactly one | Lets `claude-code-action` perform fixes. |
-| `CODEX_REVIEW_REQUEST_TOKEN` | Recommended | Posts `@codex review` as a Codex-integrated user. |
-| `LOOPPILOT_PUSH_TOKEN` | Recommended for protected branches | Pushes repair commits as a non-`GITHUB_TOKEN` actor so required checks re-run. |
+| `CODEX_REVIEW_REQUEST_TOKEN` | Required | Posts `@codex review` as a Codex-integrated user. |
+| `LOOPPILOT_PUSH_TOKEN` | Required | Pushes repair commits as a non-`GITHUB_TOKEN` actor so required checks re-run. |
 | `GITHUB_TOKEN` | Automatic | GitHub Actions injects it. You do not create or store it. |
+
+#### Creating the two fine-grained PATs
+
+`CODEX_REVIEW_REQUEST_TOKEN` and `LOOPPILOT_PUSH_TOKEN` are GitHub **fine-grained personal access tokens (PATs)**. If you have never made one, follow GitHub's official guide first: [Creating a fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token).
+
+For each token:
+
+1. Open **Settings → Developer settings → Fine-grained tokens → Generate new token** (or use the link above).
+2. Under **Repository access**, choose **Only select repositories** and pick the target repository only.
+3. Under **Permissions → Repository permissions**, grant exactly the scopes for that token:
+
+   | Token | Repository permissions |
+   |---|---|
+   | `CODEX_REVIEW_REQUEST_TOKEN` | `Pull requests: Read and write`, `Issues: Read and write` |
+   | `LOOPPILOT_PUSH_TOKEN` | `Contents: Read and write` |
+
+4. Generate the token, copy it, and store it as a repository secret:
+
+   ```bash
+   gh secret set CODEX_REVIEW_REQUEST_TOKEN --repo <owner>/<repo>
+   gh secret set LOOPPILOT_PUSH_TOKEN --repo <owner>/<repo>
+   ```
+
+Notes:
+
+- Issue `CODEX_REVIEW_REQUEST_TOKEN` from a user whose GitHub account is connected to Codex, otherwise `@codex review` will not start a review.
+- `LOOPPILOT_PUSH_TOKEN` must belong to an actor other than `GITHUB_TOKEN` (a dedicated machine user or GitHub App token is recommended) so that its pushes re-trigger required checks.
+- Keep the two tokens separate — do not give the review token push access.
 
 Token scopes and security details are in [docs/operations/security.md](docs/operations/security.md).
 
