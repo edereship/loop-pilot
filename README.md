@@ -4,7 +4,26 @@
 
 > AI review-fix loop for GitHub pull requests — runs a loop of Codex review × Claude auto-fix as a GitHub Action.
 
-LoopPilot is a GitHub Action that, when a PR is opened, asks Codex (`chatgpt-codex-connector[bot]`) for a code review, and has [`anthropics/claude-code-action@v1`](https://github.com/anthropics/claude-code-action) auto-fix the P0–P3 findings Codex returns. After every fix it runs `CHECK_COMMAND` (default `npm run check`), and any fix that fails to satisfy the scope policy, hard-block, size budget, or secret scanner is reverted. When findings run out it stops with `done`; if they can't be resolved or the iteration limit is reached it stops with `stopped`. Both outcomes are surfaced via a status comment on the PR and notifications.
+When you open a pull request, LoopPilot asks Codex to review it, lets [Claude](https://github.com/anthropics/claude-code-action) auto-fix what Codex finds, and re-runs your checks after every fix — repeating until the review comes back clean. It runs entirely as a GitHub Action; there's nothing to host.
+
+**Get started in 3 steps** (the fastest path is the [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot)):
+
+```bash
+# 1. Install the CLI (once). Needs Node >= 20 on PATH and an authenticated
+#    GitHub CLI — run `gh auth login` first if you haven't.
+gh extension install team-yubune/gh-looppilot
+
+# 2. From inside a local clone of the repo you want to add LoopPilot to:
+cd path/to/your-repo
+
+# 3. Scaffold the two workflows + gate label, get a CHECK_COMMAND suggestion,
+#    and run a pre-flight check.
+gh looppilot init
+```
+
+Then finish the [manual steps before your first PR](#before-your-first-pr-manual-steps) (connect Codex, add secrets). Prefer to wire it up by hand? See [Install manually](#2-install-manually-without-the-cli).
+
+**Contents:** [How it works](#how-it-works) · [Prerequisites](#prerequisites) · [Quickstart](#quickstart) · [Before your first PR](#before-your-first-pr-manual-steps) · [Tokens & permissions](#tokens--required-permissions-fine-grained-pat) · [Configuration](#configuration-repository-variables) · [Docs](#documentation)
 
 For design details, see [`docs/README.md`](docs/README.md).
 
@@ -14,6 +33,8 @@ For design details, see [`docs/README.md`](docs/README.md).
 2. **Codex** performs the code review and returns a summary comment and inline comments.
 3. **Workflow B (loop)** — detects the Codex review, then `claude-code-action` fixes the findings → `CHECK_COMMAND` → scope / secret check → commit / push → `@codex review` again.
 4. Steps 2–3 repeat until there are no findings, ending with `done` (optionally auto-merge). On reaching the limit, being unable to fix, a scope violation, etc., it stops with `stopped`.
+
+Codex labels findings **P0–P3** (P0 = most severe); by default LoopPilot fixes all of them. Every fix must pass `CHECK_COMMAND` and the safety guards — scope policy, locked `.github/`, size budget, and secret scanner — or it is reverted, so a fix can never sneak in unrelated or unsafe changes. Both `done` and `stopped` are surfaced via a status comment on the PR and notifications.
 
 Fork PRs are disabled by the security guards in both workflows (only PRs from the same repository are targeted).
 
@@ -27,15 +48,17 @@ Fork PRs are disabled by the security guards in both workflows (only PRs from th
 
 ## Quickstart
 
-There are two ways to install. Either the **`gh looppilot` CLI (recommended, one command)** or **manually pasting in the thin callers**. In both cases, only the Codex GitHub App integration and injecting secrets are manual steps (the CLI walks you through them). Finally, perform [Before your first PR (manual steps)](#before-your-first-pr-manual-steps).
+There are two ways to install: the **`gh looppilot` CLI (recommended, one command)** or **manually pasting in the thin callers**. Either way, only the Codex GitHub App integration and injecting secrets stay manual (the CLI walks you through them), and you finish with [Before your first PR](#before-your-first-pr-manual-steps).
 
-### 1. Install with the `gh looppilot` CLI (recommended)
+### 1. Install with the [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) (recommended)
 
 ```bash
-# 1. Install the CLI extension (once)
+# 1. Install the CLI extension (once). Needs Node >= 20 on PATH and an
+#    authenticated GitHub CLI (run `gh auth login` first if needed).
 gh extension install team-yubune/gh-looppilot
 
-# 2. Run it in the directory of the repo you want to install into
+# 2. Run it from inside a local clone of the target GitHub repo
+#    (the repo must already exist on GitHub with a configured remote).
 cd path/to/your-repo
 gh looppilot init
 ```
@@ -53,6 +76,9 @@ After installation, you can re-check the configuration any time with `gh looppil
 > If you want to paste it in manually instead of using the CLI, go to "2. Install manually" below. The mechanism is the same (thin caller → reusable workflow `@v1`), and the generated artifacts are identical.
 
 ### 2. Install manually (without the CLI)
+
+<details>
+<summary><b>Expand the manual, CLI-free install</b> — the CLI above already generates everything in this section. Open this only if you can't use the CLI.</summary>
 
 #### 2-1. Create the gate label (or full-auto)
 
@@ -152,11 +178,13 @@ Set `CHECK_COMMAND` (`vars.CHECK_COMMAND`) to match the toolchain you chose (e.g
 
 > This repository itself also dogfoods LoopPilot in `.github/workflows/looppilot-{init,loop}.yml`. Because these are callers in the same repo, they use `secrets: inherit` and a local reference to the reusable workflow (`./.github/workflows/{init,loop}.yml`); the sample above for external adopters replaces these with a tagged ref + explicitly enumerated secrets. For the internal implementation of the reusable workflow, see [`.github/workflows/loop.yml`](.github/workflows/loop.yml) / [`init.yml`](.github/workflows/init.yml).
 
+</details>
+
 ## Before your first PR (manual steps)
 
 Whether you install via the CLI or manually, the following are **manual steps that can't be automated due to platform constraints**. After running the CLI's `gh looppilot init`, perform these steps before opening your first PR.
 
-1. **Integrate the Codex GitHub App with the target repository.** Install the [ChatGPT Codex](https://chatgpt.com/codex) GitHub integration and enable the target repo. Without this, posting `@codex review` won't return a review (pre-flight will show `codex.connection = unknown`).
+1. **Connect the Codex GitHub App to the target repository.** In [ChatGPT → Codex](https://chatgpt.com/codex), open the GitHub connection settings, connect your GitHub account, and grant access to the target repo (or the whole org). Confirm that **`chatgpt-codex-connector[bot]`** can act on the repo. Without this, posting `@codex review` returns no review (pre-flight shows `codex.connection = unknown`).
 2. **Register the secrets** (values can't be set from the command; inject them via the GitHub UI or `gh secret set`).
    - `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN` (one of them, **required**)
    - `CODEX_REVIEW_REQUEST_TOKEN` (recommended; the fine-grained PAT of the user integrated with Codex)
@@ -182,6 +210,10 @@ LoopPilot uses three kinds of GitHub tokens and one kind of Anthropic credential
 - Scope every PAT **to just the one target repository** (avoid granting org-wide).
 - For fine-grained PATs, `Metadata: Read-only` is auto-granted (required), so it is omitted from the tables below.
 - Always store tokens in GitHub Actions **Repository secrets** (they are automatically masked in logs).
+
+> **For your first PR you only need one secret:** `ANTHROPIC_API_KEY` *or* `CLAUDE_CODE_OAUTH_TOKEN`. `CODEX_REVIEW_REQUEST_TOKEN` and `LOOPPILOT_PUSH_TOKEN` are optional (production-focused) — the [Secrets summary](#secrets-summary) shows required vs optional at a glance, and the per-token sections below are reference detail.
+>
+> **Where to create the fine-grained PATs below:** GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**. Set **Resource owner** to the repo owner and **Repository access** to *Only select repositories* → the target repo, then enable the permissions listed in each section.
 
 ### 1. `GITHUB_TOKEN` (Actions built-in / not a PAT)
 
