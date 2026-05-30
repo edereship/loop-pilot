@@ -44,6 +44,7 @@ P0/P1/P2/P3 をすべて自動修正対象とし（default `P3`、`LOOPPILOT_SEV
 | [Scope Policy](operations/scope-policy.md) | post-fix の変更スコープ検査仕様・`LOOPPILOT_BLOCK_PATHS` syntax |
 | [検証コマンドとロールバック](operations/check-and-rollback.md) | `CHECK_COMMAND`・失敗時ロールバック・出力サニタイズ |
 | [停止条件とリカバリ](operations/stop-and-recovery.md) | 正常/強制/異常停止・停止コメント・`/restart-review` による再実行手順 |
+| [リリース手順](operations/releasing.md) | `vX.Y.Z` タグ運用・moving `v1` 張り替え・リリース前ガード・配布手順 |
 
 ## 読み方ガイド
 
