@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && vitest run",
+    "check:action-refs": "node --import tsx scripts/check-action-refs.ts",
     "init": "node --import tsx src/main-init.ts",
     "pre-fix": "node --import tsx src/main-pre-fix.ts",
     "post-fix": "node --import tsx src/main-post-fix.ts",
