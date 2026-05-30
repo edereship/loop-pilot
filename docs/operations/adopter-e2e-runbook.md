@@ -222,15 +222,46 @@ pre-flight 出力（正常系 / 失敗系）:
 
 ---
 
+## 実測ログ #1 — 2026-05-30（自動実行分・ゲート 1〜3 + 5 を承認のうえ実施）
+
+| 項目 | 実測 |
+|---|---|
+| 日時 | 2026-05-30 |
+| v1 / Release | `v1` & `v1.0.0` → `d78cf83`。Release: https://github.com/team-yubune/loop-pilot/releases/tag/v1.0.0 |
+| extension | `gh extension install team-yubune/gh-looppilot`（v0.1.0）→ `gh looppilot version` = 0.1.0 ✓ |
+| sandbox repo | https://github.com/team-yubune/loop-pilot-sandbox（Node fixture、`npm run check` = `node --test` green） |
+| 導入経路 | **B**: `gh looppilot init`（公開 extension）を sandbox clone で実行 |
+| init の自動処理 | caller 2 本生成（`…/{init,loop}.yml@v1` 参照）/ `loop-pilot` ラベル created / 手動手順表示 / pre-flight 実行 |
+| pre-flight（init 直後） | `label.gate=ok`（init が作成）, `secret.anthropicAuth=error`（secret 未投入＝想定）, `codex.connection=unknown`, `secret.loopPilotPushToken=ok`, `autoMerge=ok`, `secret.codexReviewToken=warning`, `toolchain=ok`（exit 1）→ サイレント失敗を正しく可視化 |
+| 初回 PR | https://github.com/team-yubune/loop-pilot-sandbox/pull/1（`loop-pilot` ラベル付き） |
+| init workflow run | **success**（公開再利用ワークフロー `init.yml@v1` 経由）: https://github.com/team-yubune/loop-pilot-sandbox/actions/runs/26680895293 |
+| init が PR に投稿 | ✅ hidden **state comment**（iterationCount 0）/ ✅ **status comment**（"Initialized — waiting for first Codex review", 0/20）/ ✅ **`@codex review`** |
+| Codex 応答 | `chatgpt-codex-connector[bot]` が「create a Codex account and connect to github」を返信 → **トリガーは Codex 基盤に到達**。実レビューは App 連携待ち（=ゲート 4） |
+| loop workflow | 未起動（Codex の実レビューが前提。App 連携 + Anthropic secret 投入後に自動起動する想定） |
+| 最終状態 | init まで観測。**loop→done/no_findings はゲート 4（Codex 連携）+ 5（Anthropic secret）待ち** |
+| 詰まった点 | なし。公開導線（`@v1` 解決・extension install・再利用ワークフロー cross-repo 解決・init action）は全て成功 |
+| product bug | 0 件（新規）。pre-flight 構築中に repo-only secret 走査の false-positive を発見し TY-347 内で修正済み（repo+org union） |
+
+**結論:** 自動化可能な公開導入経路は end-to-end で成立を確認。残りは PR #1 上で human が
+(4) Codex GitHub App を sandbox に連携し (5) `ANTHROPIC_API_KEY` か `CLAUDE_CODE_OAUTH_TOKEN` を
+投入するだけ。その後 Codex が実レビューを投稿すれば loop（Workflow B）が自動起動し、
+CHECK_COMMAND → commit/push → 再 review → `done/no_findings` まで進む想定。
+
+---
+
 ## human-required ゲート一覧（このセッションで自動化できなかった項目）
 
-| # | 操作 | 種別 | 備考 |
+| # | 操作 | 種別 | 状態 |
 |---|---|---|---|
-| 1 | `v1.0.0` タグ push（→ `v1` 張り替え + Release 作成） | 公開 / irreversible | E2E の前提。`release.yml` が自動処理 |
-| 2 | `team-yubune/gh-looppilot` 作成 + `cli/` 抽出 | 新規 repo 作成 / 公開 | 経路 B（CLI install）の前提。抽出前は経路 A |
-| 3 | `team-yubune/loop-pilot-sandbox` 作成 | 新規 repo 作成 | 別 repo の adopter 見立て |
-| 4 | Codex GitHub App 連携 | プラットフォーム | 自動化不可。pre-flight は推定のみ |
-| 5 | secret 値の投入（Anthropic / Codex / push token） | secret | 値はコードから設定不可 |
+| 1 | `v1.0.0` タグ push（→ `v1` 張り替え + Release 作成） | 公開 / irreversible | ✅ 完了（2026-05-30、承認のうえ実施） |
+| 2 | `team-yubune/gh-looppilot` 作成 + `cli/` 抽出 | 新規 repo 作成 / 公開 | ✅ 完了（v0.1.0、`gh extension install` 動作確認済み） |
+| 3 | `team-yubune/loop-pilot-sandbox` 作成 + fixture + caller | 新規 repo 作成 | ✅ 完了（PR #1 で init 成功） |
+| 4 | **Codex GitHub App を sandbox に連携** | プラットフォーム | ⬜ **残**（PR #1 上で実施。pre-flight は `unknown` で degrade 表示済み） |
+| 5 | **`ANTHROPIC_API_KEY` または `CLAUDE_CODE_OAUTH_TOKEN` を sandbox secret に投入** | secret | ⬜ **残**（値はコードから設定不可） |
+
+> 残 (4)(5) を PR #1 で実施 → Codex が実レビューを投稿 → loop（Workflow B）が自動起動し
+> `done/no_findings` まで到達する想定。`CODEX_REVIEW_REQUEST_TOKEN` / `LOOPPILOT_PUSH_TOKEN` は
+> 本番推奨だが必須ではない（pre-flight は warning 表示）。
 
 ---
 
