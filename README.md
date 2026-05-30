@@ -2,30 +2,25 @@
 
 **English** | [日本語](README.ja.md)
 
-> AI review-fix loop for GitHub pull requests — runs a loop of Codex review × Claude auto-fix as a GitHub Action.
+> AI review-fix loop for GitHub pull requests — Codex review × Claude auto-fix, run as a GitHub Action.
 
 When you open a pull request, LoopPilot asks Codex to review it, lets [Claude](https://github.com/anthropics/claude-code-action) auto-fix what Codex finds, and re-runs your checks after every fix — repeating until the review comes back clean. It runs entirely as a GitHub Action; there's nothing to host.
 
-**Get started in 3 steps** (the fastest path is the [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot)):
+**Contents:** [How it works](#how-it-works) · [Prerequisites](#prerequisites) · [Quickstart](#quickstart) · [Installation](#installation) · [Before your first PR](#before-your-first-pr-manual-steps) · [Tokens & permissions](#tokens--required-permissions-fine-grained-pat) · [Configuration](#configuration-repository-variables) · [Docs](#documentation)
+
+## Quickstart
+
+The fastest path is the [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) — one command scaffolds everything:
 
 ```bash
-# 1. Install the CLI (once). Needs Node >= 20 on PATH and an authenticated
-#    GitHub CLI — run `gh auth login` first if you haven't.
-gh extension install team-yubune/gh-looppilot
-
-# 2. From inside a local clone of the repo you want to add LoopPilot to:
-cd path/to/your-repo
-
-# 3. Scaffold the two workflows + gate label, get a CHECK_COMMAND suggestion,
-#    and run a pre-flight check.
-gh looppilot init
+gh extension install team-yubune/gh-looppilot   # 1. once; needs Node >= 20 on PATH + `gh auth login`
+cd path/to/your-repo                             # 2. a local clone of your target repo
+gh looppilot init                                # 3. scaffolds the workflows + gate label, suggests CHECK_COMMAND, runs pre-flight
 ```
 
-Then finish the [manual steps before your first PR](#before-your-first-pr-manual-steps) (connect Codex, add secrets). Prefer to wire it up by hand? See [Install manually](#2-install-manually-without-the-cli).
+Then do the [manual steps before your first PR](#before-your-first-pr-manual-steps) (connect Codex, add secrets). Prefer to wire it up by hand? See [Install manually](#2-install-manually-without-the-cli).
 
-**Contents:** [How it works](#how-it-works) · [Prerequisites](#prerequisites) · [Quickstart](#quickstart) · [Before your first PR](#before-your-first-pr-manual-steps) · [Tokens & permissions](#tokens--required-permissions-fine-grained-pat) · [Configuration](#configuration-repository-variables) · [Docs](#documentation)
-
-For design details, see [`docs/README.md`](docs/README.md).
+> **What you actually have to do:** run the CLI, connect Codex once, and set **one** Anthropic secret (`ANTHROPIC_API_KEY` *or* `CLAUDE_CODE_OAUTH_TOKEN`). Everything else is automatic or additive — add the two PATs only when you need required-check re-runs, auto-merge, or reliable Codex triggering.
 
 ## How it works
 
@@ -34,9 +29,9 @@ For design details, see [`docs/README.md`](docs/README.md).
 3. **Workflow B (loop)** — detects the Codex review, then `claude-code-action` fixes the findings → `CHECK_COMMAND` → scope / secret check → commit / push → `@codex review` again.
 4. Steps 2–3 repeat until there are no findings, ending with `done` (optionally auto-merge). On reaching the limit, being unable to fix, a scope violation, etc., it stops with `stopped`.
 
-Codex labels findings **P0–P3** (P0 = most severe); by default LoopPilot fixes all of them. Every fix must pass `CHECK_COMMAND` and the safety guards — scope policy, locked `.github/`, size budget, and secret scanner — or it is reverted, so a fix can never sneak in unrelated or unsafe changes. Both `done` and `stopped` are surfaced via a status comment on the PR and notifications.
+Codex labels findings **P0–P3** (P0 = most severe); by default LoopPilot fixes all of them.
 
-Fork PRs are disabled by the security guards in both workflows (only PRs from the same repository are targeted).
+> **Guardrails are automatic — you don't manage them:** every fix must pass `CHECK_COMMAND` **and** the safety guards (scope policy, locked `.github/`, size budget, secret scanner) or it is reverted, so a fix can never sneak in unrelated or unsafe changes. Both `done` and `stopped` are surfaced via a status comment on the PR and notifications. Fork PRs are disabled in both workflows (only PRs from the same repository are targeted).
 
 ## Prerequisites
 
@@ -46,24 +41,13 @@ Fork PRs are disabled by the security guards in both workflows (only PRs from th
 - A toolchain that can run `CHECK_COMMAND`. The default is Node.js / npm. To use pytest, go test, make, etc., switch via the caller's `language` input (`node` / `python` / `go` / `rust` / `none`).
 - For required tokens and permissions, see [Tokens & required permissions](#tokens--required-permissions-fine-grained-pat).
 
-## Quickstart
+## Installation
 
-There are two ways to install: the **`gh looppilot` CLI (recommended, one command)** or **manually pasting in the thin callers**. Either way, only the Codex GitHub App integration and injecting secrets stay manual (the CLI walks you through them), and you finish with [Before your first PR](#before-your-first-pr-manual-steps).
+Two ways to install — the **`gh looppilot` CLI** (recommended) or **pasting the thin callers by hand**. Both produce identical artifacts; either way, only connecting the Codex GitHub App and injecting secrets stay manual.
 
 ### 1. Install with the [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) (recommended)
 
-```bash
-# 1. Install the CLI extension (once). Needs Node >= 20 on PATH and an
-#    authenticated GitHub CLI (run `gh auth login` first if needed).
-gh extension install team-yubune/gh-looppilot
-
-# 2. Run it from inside a local clone of the target GitHub repo
-#    (the repo must already exist on GitHub with a configured remote).
-cd path/to/your-repo
-gh looppilot init
-```
-
-`gh looppilot init` does the following in a single command:
+The single `gh looppilot init` command (shown in [Quickstart](#quickstart) above):
 
 - Auto-detects the toolchain (Node / Python / Go / Rust / Make) and suggests `CHECK_COMMAND` and the caller's `language`
 - Generates two thin callers (`.github/workflows/looppilot-{init,loop}.yml`, referencing `@v1`)
@@ -71,9 +55,7 @@ gh looppilot init
 - Displays the manual steps that can't be automated (Codex App integration, injecting secrets)
 - Finally runs a **pre-flight check** to surface configuration gaps (label / Codex integration / secret / toolchain) before your first PR
 
-After installation, you can re-check the configuration any time with `gh looppilot doctor` (read-only). `--json` also produces machine-readable output. Next, perform [Before your first PR (manual steps)](#before-your-first-pr-manual-steps).
-
-> If you want to paste it in manually instead of using the CLI, go to "2. Install manually" below. The mechanism is the same (thin caller → reusable workflow `@v1`), and the generated artifacts are identical.
+Re-check the configuration any time with `gh looppilot doctor` (read-only); `--json` also produces machine-readable output.
 
 ### 2. Install manually (without the CLI)
 
@@ -102,7 +84,7 @@ For the detailed spec of the label gate, see [`docs/architecture/event-design.md
 
 #### 2-2. Add the caller workflows
 
-LoopPilot itself is distributed as a **reusable workflow (`workflow_call`)**. The adopter only places two thin callers that write just the trigger event and secrets / permissions (each ~15–22 lines). The `if:` conditions, Codex marker detection, fork guard, toolchain setup, and crash fail-safe are all consolidated into the reusable workflow, so changes such as the marker are reflected across all adopters by re-pointing `@v1` (resolving the distributed versioning problem).
+LoopPilot itself is distributed as a **reusable workflow (`workflow_call`)**. You add two small caller workflows that specify only the trigger event and the secrets / permissions (each ~15–22 lines). All of the trigger conditions, Codex review detection, fork guard, toolchain setup, and crash handling live inside the reusable workflow, so you receive improvements and fixes automatically by tracking `@v1` — without ever editing your own callers.
 
 > **How to pass secrets**: Within the same org you can use `secrets: inherit`. **Adopters in a different org cannot use `secrets: inherit`** (same-org only), so enumerate the secrets explicitly as in the sample below. `GITHUB_TOKEN` is auto-provided by Actions, so it does not need to be enumerated.
 
@@ -176,8 +158,6 @@ You can switch the environment that runs `CHECK_COMMAND` / `BUILD_COMMAND` with 
 
 Set `CHECK_COMMAND` (`vars.CHECK_COMMAND`) to match the toolchain you chose (e.g. `pytest` for Python, `go test ./...` for Go, `make check` for Make).
 
-> This repository itself also dogfoods LoopPilot in `.github/workflows/looppilot-{init,loop}.yml`. Because these are callers in the same repo, they use `secrets: inherit` and a local reference to the reusable workflow (`./.github/workflows/{init,loop}.yml`); the sample above for external adopters replaces these with a tagged ref + explicitly enumerated secrets. For the internal implementation of the reusable workflow, see [`.github/workflows/loop.yml`](.github/workflows/loop.yml) / [`init.yml`](.github/workflows/init.yml).
-
 </details>
 
 ## Before your first PR (manual steps)
@@ -192,7 +172,7 @@ Whether you install via the CLI or manually, the following are **manual steps th
    - For details, see [Tokens & required permissions](#tokens--required-permissions-fine-grained-pat) below.
 3. **Verify with pre-flight.** Run `gh looppilot doctor` and confirm that `error` is 0 (`warning` / `unknown` are acceptable).
 4. **Open your first PR** (add the gate label `loop-pilot`; not needed in full-auto). Expected flow:
-   - init posts a **state comment** and **`@codex review`**
+   - init posts its **status comment** and the first **`@codex review`**
    - On receiving the Codex review, loop starts: Claude fix → `CHECK_COMMAND` → commit/push → `@codex review` again
    - When findings at or above the threshold are resolved, it ends with **`done / no_findings`**. If they can't be resolved, the stop reason is stated explicitly on the PR
 
@@ -205,12 +185,17 @@ gh looppilot doctor                                            # Confirm error i
 
 ## Tokens & required permissions (Fine-grained PAT)
 
-LoopPilot involves four credentials, but **`GITHUB_TOKEN` is supplied automatically by GitHub Actions — you never create or store it.** What you actually prepare is short:
+LoopPilot involves four credentials, but **`GITHUB_TOKEN` is supplied automatically by GitHub Actions — you never create or store it.** What you actually prepare is short, and for your first PR it's a single secret:
 
-- **You provide** (store as GitHub Actions **Repository secrets**): one Anthropic credential — `ANTHROPIC_API_KEY` *or* `CLAUDE_CODE_OAUTH_TOKEN` (**required**) — plus, for production, the optional PATs `CODEX_REVIEW_REQUEST_TOKEN` and `LOOPPILOT_PUSH_TOKEN`.
-- **Automatic, nothing to set up:** `GITHUB_TOKEN`. Actions injects it on every run; you only scope it via the workflow `permissions:` block, which the sample callers already include.
+| You create (store as GitHub Actions **Repository secrets**) | When |
+|---|---|
+| `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN` | Always — pick exactly one |
+| `CODEX_REVIEW_REQUEST_TOKEN` (fine-grained PAT) | Recommended — makes `@codex review` fire reliably |
+| `LOOPPILOT_PUSH_TOKEN` (PAT / GitHub App) | When you use branch-protection required checks or auto-merge |
 
-> **For your first PR you only need one secret:** `ANTHROPIC_API_KEY` *or* `CLAUDE_CODE_OAUTH_TOKEN`. The two PATs are production-focused and can be skipped initially. The [Secrets summary](#secrets-summary) shows who sets up what at a glance.
+`GITHUB_TOKEN` is injected on every run; you only scope it via the workflow `permissions:` block, which the sample callers already include.
+
+> **For your first PR you only need one secret:** `ANTHROPIC_API_KEY` *or* `CLAUDE_CODE_OAUTH_TOKEN`. Add the two PATs when you use required-check re-runs, auto-merge, or reliable Codex triggering; you can skip them for an initial run. The [Secrets summary](#secrets-summary) shows who sets up what at a glance.
 
 Guidance for the PATs **you create** (sections 2–3):
 
@@ -221,6 +206,8 @@ Guidance for the PATs **you create** (sections 2–3):
 
 ### 1. `GITHUB_TOKEN` (automatic — you don't create this)
 
+**Do I need this?** No action needed — it's automatic; you only scope it.
+
 Actions auto-generates this token for each run, so **you never create, copy, or store it** — it's injected automatically. You only narrow its permissions in the workflow's `permissions:` block (the sample callers above already set these).
 
 | Workflow | permissions |
@@ -228,15 +215,17 @@ Actions auto-generates this token for each run, so **you never create, copy, or 
 | Workflow A (`looppilot-init.yml`) | `contents: read`, `pull-requests: write`, `issues: write` |
 | Workflow B (`looppilot-loop.yml`) | `contents: write`, `pull-requests: write`, `issues: write`, `actions: read` |
 
-- **`issues: write` / `pull-requests: write`** — reading/writing the hidden state comment / status comment / various notifications, reading PR metadata / inline review comments / labels, and executing auto-merge.
+- **`issues: write` / `pull-requests: write`** — maintaining LoopPilot's status and state-tracking comments and notifications, reading PR metadata / inline review comments / labels, and performing auto-merge.
 - **`contents: write`** (Workflow B only) — a fallback for pushing the repair commit with `GITHUB_TOKEN` when `LOOPPILOT_PUSH_TOKEN` is not set. Workflow A only checks out and does not push, so `contents: read`.
 - **`actions: read`** (Workflow B only) — required only when `LOOPPILOT_AUTO_MERGE=true`. Before auto-merging, it checks via `/actions/runs` whether other CI runs on HEAD are green. Without it, the API returns 403 and auto-merge is always skipped. Can be omitted if you don't use auto-merge.
 
-### 2. `CODEX_REVIEW_REQUEST_TOKEN` (Fine-grained PAT, optional / recommended for production)
+### 2. `CODEX_REVIEW_REQUEST_TOKEN` (Fine-grained PAT — recommended; without it `@codex review` may not reliably trigger)
+
+**Do I need this?** Recommended — without it, `@codex review` may not reliably trigger.
 
 A token for posting the `@codex review` comment **as a user already integrated with Codex** to trigger and re-trigger Codex's review. When not set, it falls back to `GITHUB_TOKEN` (= `github-actions[bot]`), but bot posts don't reliably trigger Codex, so a PAT of the integrated user is recommended.
 
-**Issued by:** a user who has integrated ChatGPT Codex with GitHub (in production, replacing it with a dedicated machine user or a GitHub App is recommended).
+**Issued by:** a user who has integrated ChatGPT Codex with GitHub. For a maintained setup, issue this from a dedicated machine user or a GitHub App rather than a personal account, so the actor is stable and auditable.
 
 **Fine-grained PAT — Repository permissions:**
 
@@ -247,13 +236,15 @@ A token for posting the `@codex review` comment **as a user already integrated w
 
 It is **not used** for push, checkout, reading/writing the state comment, or fetching findings (those use `GITHUB_TOKEN`). For details, see [`docs/operations/security.md`](docs/operations/security.md#codex-review-request-token).
 
-### 3. `LOOPPILOT_PUSH_TOKEN` (Fine-grained PAT or GitHub App token, optional / effectively required in production)
+### 3. `LOOPPILOT_PUSH_TOKEN` (Fine-grained PAT or GitHub App token — required for branch-protection required checks or auto-merge; otherwise optional)
 
-A token dedicated to the `git push` of the repair commit. Because of the spec where **GitHub does not fire `pull_request: synchronize` for commits pushed with `GITHUB_TOKEN`**, when not set the required CI checks are not re-run against auto-fix commits, leaving a path where `dist/` drift or typecheck regressions first surface on main after merge. Setting it is strongly recommended in the following cases:
+**Do I need this?** Skip it for your first PR; add it if you use branch-protection required checks, auto-merge, or commit artifacts that only CI can validate.
+
+A token dedicated to the `git push` of the repair commit. Because of the spec where **GitHub does not fire `pull_request: synchronize` for commits pushed with `GITHUB_TOKEN`**, when not set the required CI checks are not re-run against auto-fix commits, leaving a path where issues that only surface in CI (for example, drift in committed build artifacts or a type-check regression) first appear on main after merge. Setting it is strongly recommended in the following cases:
 
 - You enforce **required CI checks** with branch protection
 - You run auto-fix → auto-merge with `LOOPPILOT_AUTO_MERGE=true`
-- You include **drift that can only be detected in CI**, such as committed build artifacts / generated code / lockfiles
+- Your repo commits artifacts that only CI can validate — e.g. build output, generated code, or lockfiles — where a stale commit would only be caught by a required check
 
 **Issued by:** a fine-grained PAT of a machine user scoped to the target repository, or a GitHub App installation token. Being an actor other than `GITHUB_TOKEN` is the condition for required checks to re-run.
 
@@ -266,6 +257,8 @@ A token dedicated to the `git push` of the repair commit. Because of the spec wh
 `.github/` is hard-blocked by the scope check so the repair commit never touches workflow files, so the **`Workflows` permission is not needed**. It is **not used** for posting `@codex review`, comments, or claude-code-action inputs. For details, see [`docs/operations/security.md`](docs/operations/security.md#looppilot-push-token).
 
 ### 4. `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (either one)
+
+**Do I need this?** Required — set exactly one. This is the one secret every adopter must add.
 
 The credential for `claude-code-action`. It is not a GitHub token. Set **exactly one** (if both / neither are set, pre-fix fails fast at startup).
 
@@ -281,32 +274,40 @@ The fail fast when both are set is to prevent the accident of "intending to swit
 | Secret | Set up by | Required? | Overview |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | **You** | One of them required | Authentication for claude-code-action |
-| `CODEX_REVIEW_REQUEST_TOKEN` | You (fine-grained PAT) | Optional (recommended) | Post `@codex review` as the integrated user |
-| `LOOPPILOT_PUSH_TOKEN` | You (PAT / GitHub App) | Optional (effectively required in production) | For pushing the repair commit. Needed to re-run required checks |
+| `CODEX_REVIEW_REQUEST_TOKEN` | You (fine-grained PAT) | Recommended | Post `@codex review` as the integrated user |
+| `LOOPPILOT_PUSH_TOKEN` | You (PAT / GitHub App) | Required for required checks / auto-merge | Pushes the repair commit as a non-`GITHUB_TOKEN` actor so required CI checks re-run |
 | `GITHUB_TOKEN` | **Automatic (Actions)** | Nothing to set up | Injected each run; you only scope it via `permissions:` |
 
 ## Configuration (Repository variables)
 
-All are optional and work safely with defaults when not set. Here is an excerpt of the commonly used ones (for all inputs, see [`loop/action.yml`](loop/action.yml) / [`init/action.yml`](init/action.yml)).
+All are optional and work safely with defaults when not set (for the full list, see [`loop/action.yml`](loop/action.yml) / [`init/action.yml`](init/action.yml)). The commonly-tuned ones:
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOOPPILOT_LABEL` | `loop-pilot` | Only PRs with this label are targeted (default-strict). **You must create the label in the repo and add it to the PR** (no run is generated if it isn't created) |
+| `LOOPPILOT_LABEL` | `loop-pilot` | Only PRs with this label are processed. **Create the label in the repo and add it to the PR** — otherwise no run is generated |
 | `LOOPPILOT_FULL_AUTO` | `false` | `true` disables the label gate (triggers on all non-fork PRs) |
 | `MAX_REVIEW_ITERATIONS` | `20` | Maximum number of fixes per PR |
 | `CHECK_COMMAND` | `npm run check` | The validation command run after a fix (validated by an allowlist; shell metacharacters / unallowed binaries fail fast) |
-| `BUILD_COMMAND` | (empty = skip) | An optional build that runs after `CHECK_COMMAND` passes and before staging. Keeps generated artifacts like `dist/` from drifting from `src/`. Consolidate multiple steps into an npm script / Makefile |
 | `LOOPPILOT_SEVERITY_THRESHOLD` | `P3` | Ignore severities below this. `P3` targets all of P0–P3, `P2` skips P3, etc. |
 | `LOOPPILOT_AUTO_MERGE` | `false` | Auto squash-merge on reaching `done / no_findings`. **Requires enabling repo Settings → General → "Allow auto-merge"**. On skips due to CI failure / HEAD change / timeout, etc., the reason is notified via a PR comment |
+
+<details>
+<summary><b>Advanced variables</b> — build, scope, model tiers, Codex/role overrides</summary>
+
+| Variable | Default | Description |
+|---|---|---|
+| `BUILD_COMMAND` | (empty = skip) | An optional build that runs after `CHECK_COMMAND` passes and before staging. Keeps generated artifacts like `dist/` from drifting from `src/`. Consolidate multiple steps into an npm script / Makefile |
 | `LOOPPILOT_BLOCK_PATHS` | (empty) | A `.gitignore`-style block-path spec. `secrets/` (dir), `Justfile` (file), `!Makefile` (clear default). `!.github/...` is ignored (`.github/` is locked) |
 | `CLAUDE_CODE_MODEL_BASE` | `claude-sonnet-4-6` | Base-tier model. Used on iterations where escalation conditions are not met |
 | `CLAUDE_CODE_MODEL_ESCALATED` | `claude-opus-4-7` | Escalated tier. Used for P0 findings, a failed prior CHECK, or recurrence of the same findings. Setting it equal to `BASE` disables tiering |
 | `CODEX_BOT_LOGIN` | `chatgpt-codex-connector[bot]` | The Codex bot's login name (for overriding when the integration target changes) |
 | `CODEX_REVIEW_MARKER` | `Codex Review` | The detection marker for the Codex summary comment |
 | `LOOPPILOT_RESTART_ROLES` | `author,write,maintain,admin` | Roles allowed to use `/restart-review` |
-| `LOOPPILOT_STATE_COMMENT_AUTHORS` | (empty = `github-actions[bot]`) | Trusted authors of the hidden state comment. Set this when writing with a GitHub App / machine user |
+| `LOOPPILOT_STATE_COMMENT_AUTHORS` | (empty = `github-actions[bot]`) | Authors trusted to write LoopPilot's state-tracking comment. Set this when the comment is posted by a GitHub App / machine user |
 
 > If you use auto-merge, go to repository Settings → General → Pull Requests → **enable "Allow auto-merge"**. If left disabled, `gh pr merge --auto` fails immediately, and the reason is notified via a `⏸️ Auto-merge skipped` PR comment.
+
+</details>
 
 ## Documentation
 
@@ -319,6 +320,11 @@ All are optional and work safely with defaults when not set. Here is an excerpt 
 
 ## Development
 
+*For contributing to LoopPilot itself — not needed to adopt it.*
+
+<details>
+<summary><b>Build &amp; test</b></summary>
+
 ```bash
 npm ci
 npm run check     # tsc --noEmit + tests/ typecheck + vitest run
@@ -326,6 +332,8 @@ npm run bundle    # Regenerate dist/
 ```
 
 When you open a PR, CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) checks typecheck / test / dist drift. After changing `src/`, regenerate `dist/` with `npm run bundle` and commit it (the published action runs `dist/`).
+
+</details>
 
 ## License
 
