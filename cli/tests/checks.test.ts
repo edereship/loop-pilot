@@ -1,18 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { GhError, type GhClient } from "../src/gh.js";
+import { GhError } from "../src/gh.js";
 import { labelCheck, toolchainCheck } from "../src/checks.js";
 import type { PreflightContext } from "../src/preflight.js";
 import { detectToolchain } from "../src/toolchain.js";
-
-function fakeGh(over: Partial<GhClient> = {}): GhClient {
-  return {
-    currentRepo: async () => "acme/widgets",
-    api: (async () => ({})) as GhClient["api"],
-    labelExists: async () => true,
-    createLabel: async () => "created",
-    ...over,
-  };
-}
+import { fakeGh } from "./helpers.js";
 
 function ctx(over: Partial<PreflightContext> = {}): PreflightContext {
   return { repository: "acme/widgets", gh: fakeGh(), ...over };
