@@ -15,8 +15,16 @@ if (!tag) {
   process.exit(2);
 }
 
-// Files that pin team-yubune/loop-pilot sub-actions by published path@ref.
-const FILES = ["loop/action.yml", "init/action.yml"];
+// Files that pin team-yubune/loop-pilot sub-actions / actions by published
+// path@ref. The composite actions reference their sibling sub-actions, and the
+// reusable workflows (TY-345) reference the top-level composite actions — both
+// must move in lockstep with the release major.
+const FILES = [
+  "loop/action.yml",
+  "init/action.yml",
+  ".github/workflows/loop.yml",
+  ".github/workflows/init.yml",
+];
 
 let failed = false;
 for (const file of FILES) {

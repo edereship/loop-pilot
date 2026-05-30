@@ -20,7 +20,7 @@ fork PR は両 workflow のセキュリティガードで無効化されます�
 - GitHub Actions が有効なリポジトリで、**同一リポジトリ PR への commit / push が許可**されていること。
 - 対象リポジトリに **ChatGPT Codex の GitHub 連携 (Codex GitHub App)** が導入され、`@codex review` でレビューが起動すること。
 - **Anthropic API キー** または **Claude Code サブスクリプションの OAuth トークン**（いずれか一方）。
-- `CHECK_COMMAND` を実行できるツールチェイン。デフォルトは Node.js / npm。pytest・make 等を使う場合は Workflow B のセットアップ手順（`setup-node` / `npm ci`）を各ツールチェインに合わせて差し替えること。
+- `CHECK_COMMAND` を実行できるツールチェイン。デフォルトは Node.js / npm。pytest・go test・make 等を使う場合は caller の `language` input（`node` / `python` / `go` / `rust` / `none`）で切り替える。
 - 必要なトークンと権限は [トークンと必要権限](#トークンと必要権限-fine-grained-pat) を参照。
 
 ## クイックスタート
@@ -51,7 +51,13 @@ Repository variable `LOOPPILOT_FULL_AUTO=true` を設定すると、すべての
 
 ラベルゲートの詳細仕様は [`docs/architecture/event-design.md`](docs/architecture/event-design.md) を参照。
 
-### 2. Workflow A — PR を開いた時に初期化
+### 2. 2 つの caller workflow を追加
+
+LoopPilot 本体は **再利用可能ワークフロー (`workflow_call`)** として配布されます。adopter は発火イベントと secret / 権限だけを書いた薄い caller を 2 本置くだけです（各 ~15–22 行）。`if:` 条件・Codex マーカー判定・fork ガード・toolchain セットアップ・crash fail-safe はすべて再利用可能ワークフロー側に集約されており、マーカー変更などは `@v1` の張り替えで全 adopter に反映されます（分散バージョニング問題の解消）。
+
+> **secret の渡し方**: 同一 org 内なら `secrets: inherit` が使えます。**別 org の adopter は `secrets: inherit` を使えない**（same-org 限定）ため、下記サンプルのように secret を明示列挙してください。`GITHUB_TOKEN` は Actions が自動付与するため列挙不要です。
+
+#### Workflow A — PR を開いた時に初期化
 
 ```yaml
 # .github/workflows/looppilot-init.yml
@@ -61,82 +67,19 @@ on:
   pull_request:
     types: [opened, ready_for_review, labeled]
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-
 jobs:
   init:
-    concurrency:
-      group: looppilot-init-${{ github.repository }}-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
-    # Default-strict label gate with a full-auto opt-out:
-    #   - vars.LOOPPILOT_FULL_AUTO == 'true' → gate disabled; every non-fork ready
-    #     PR triggers init. `labeled` events are ignored so adding any label does
-    #     NOT reset state and re-post `@codex review`.
-    #   - otherwise (default) → the PR must carry the gate label
-    #     (vars.LOOPPILOT_LABEL || 'loop-pilot'). On `labeled` events the added
-    #     label itself must match the gate label.
-    if: >
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      (
-        (vars.LOOPPILOT_FULL_AUTO == 'true' && github.event.action != 'labeled') ||
-        (
-          vars.LOOPPILOT_FULL_AUTO != 'true' &&
-          contains(github.event.pull_request.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot') &&
-          (github.event.action != 'labeled' || github.event.label.name == (vars.LOOPPILOT_LABEL || 'loop-pilot'))
-        )
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Check fork PR (security guard)
-        if: github.event.pull_request.head.repo.full_name != github.repository
-        run: |
-          echo "::error::Fork PR detected. LoopPilot is disabled for fork PRs."
-          exit 1
-
-      - name: Run init
-        uses: team-yubune/loop-pilot/init@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
-          pr-number: ${{ github.event.pull_request.number }}
-          # Show the operator-configured cap in the initial status comment.
-          # Use the same expression as looppilot-loop.yml so both agree.
-          max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
-          # Trusted state-comment author override; empty falls back to github-actions[bot].
-          looppilot-state-comment-authors: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}
-
-      # Fail-safe: Workflow A has no in-process crash hook, so any failure here
-      # (checkout, fork rejection, or a Node crash in `Run init`) would otherwise
-      # leave the PR silent — no state, no `@codex review`, no notification.
-      # `cancelled()` is required alongside `failure()` because a job timeout or a
-      # manual cancel ends steps as `cancelled`, which a bare `if: failure()`
-      # would skip. State is intentionally NOT mutated here: pre-fix reconciles an
-      # incomplete init on the next valid trigger.
-      - name: Post init failure notification
-        if: failure() || cancelled()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUM: ${{ github.event.pull_request.number }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          BODY=$'⚠️ **LoopPilot init failed.**\n\nThe init workflow that prepares LoopPilot state and posts the initial `@codex review` failed before completing. LoopPilot may not be active on this PR until init runs successfully. Re-run this workflow from the Actions tab, or re-trigger init by removing and re-adding the gate label (or closing/reopening the PR in full-auto mode).\n\nWorkflow run: '"$RUN_URL"
-          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
-            --method POST \
-            --raw-field body="$BODY" \
-            >/dev/null || echo "::warning::Failed to post init failure notification via gh api; check GITHUB_TOKEN scope."
+    # caller の job が GITHUB_TOKEN 権限を付与する（再利用ワークフローの token は caller で上限が決まる）
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: team-yubune/loop-pilot/.github/workflows/init.yml@v1
+    secrets:
+      CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 ```
 
-### 3. Workflow B — Codex のレビューを受けて修正ループ
+#### Workflow B — Codex のレビューを受けて修正ループ
 
 ```yaml
 # .github/workflows/looppilot-loop.yml
@@ -148,250 +91,43 @@ on:
   pull_request_review:
     types: [submitted]
 
-concurrency:
-  group: pr-${{ github.event.issue.number || github.event.pull_request.number }}-auto-fix
-  cancel-in-progress: false
-
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  # actions: read is required only when LOOPPILOT_AUTO_MERGE=true: mergeIfChecksPass
-  # reads /repos/.../actions/runs?head_sha=... to verify every other workflow run on
-  # HEAD finished green before squash-merging. Without it the API returns 403 and
-  # auto-merge always skips. Safe to drop if you never enable auto-merge.
-  actions: read
-
 jobs:
-  auto-fix:
-    # Two entry conditions:
-    #  (a) /restart-review by a trusted commenter (OWNER/MEMBER/COLLABORATOR, or the
-    #      PR author) — bypasses the label gate so a stopped/completed loop can be
-    #      recovered even after the gate label was removed. The fork guard and the
-    #      runtime permission check still apply.
-    #  (b) A Codex review/comment on a gated PR — full-auto OR the gate label present,
-    #      from the Codex bot, carrying the review marker (or a usage-limit notice).
-    # issue_comment exposes labels under github.event.issue.labels;
-    # pull_request_review under github.event.pull_request.labels.
-    if: >
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        (
-          github.event.comment.body == '/restart-review' ||
-          startsWith(github.event.comment.body, '/restart-review ')
-        ) &&
-        (
-          github.event.comment.author_association == 'OWNER' ||
-          github.event.comment.author_association == 'MEMBER' ||
-          github.event.comment.author_association == 'COLLABORATOR' ||
-          github.event.comment.user.login == github.event.issue.user.login
-        )
-      ) ||
-      (
-        (
-          vars.LOOPPILOT_FULL_AUTO == 'true' ||
-          contains(github.event.issue.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot') ||
-          contains(github.event.pull_request.labels.*.name, vars.LOOPPILOT_LABEL || 'loop-pilot')
-        ) &&
-        (
-          (
-            github.event_name == 'issue_comment' &&
-            github.event.issue.pull_request &&
-            (
-              github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
-              (vars.CODEX_BOT_LOGIN != '' && github.event.comment.user.login == vars.CODEX_BOT_LOGIN)
-            ) &&
-            (
-              contains(github.event.comment.body, 'Codex Review') ||
-              (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER)) ||
-              contains(github.event.comment.body, 'Codex usage limit') ||
-              contains(github.event.comment.body, 'Codex quota')
-            )
-          ) ||
-          (
-            github.event_name == 'pull_request_review' &&
-            github.event.review.state == 'commented' &&
-            (
-              github.event.review.user.login == 'chatgpt-codex-connector[bot]' ||
-              (vars.CODEX_BOT_LOGIN != '' && github.event.review.user.login == vars.CODEX_BOT_LOGIN)
-            ) &&
-            (
-              contains(github.event.review.body, 'Codex Review') ||
-              (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.review.body, vars.CODEX_REVIEW_MARKER)) ||
-              contains(github.event.review.body, 'Codex usage limit') ||
-              contains(github.event.review.body, 'Codex quota')
-            )
-          )
-        )
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Get PR info
-        id: pr
-        run: |
-          PR_DATA=$(gh api "/repos/${REPO}/pulls/${PR_NUM}")
-
-          DELIM="EOF_$(openssl rand -hex 8)"
-
-          echo "head_ref<<$DELIM" >> "$GITHUB_OUTPUT"
-          echo "$PR_DATA" | jq -r '.head.ref' >> "$GITHUB_OUTPUT"
-          echo "$DELIM" >> "$GITHUB_OUTPUT"
-
-          echo "head_sha<<$DELIM" >> "$GITHUB_OUTPUT"
-          echo "$PR_DATA" | jq -r '.head.sha' >> "$GITHUB_OUTPUT"
-          echo "$DELIM" >> "$GITHUB_OUTPUT"
-
-          echo "title<<$DELIM" >> "$GITHUB_OUTPUT"
-          echo "$PR_DATA" | jq -r '.title' >> "$GITHUB_OUTPUT"
-          echo "$DELIM" >> "$GITHUB_OUTPUT"
-
-          # .head.repo can be null for deleted fork repos — default to empty
-          FORK_NAME=$(echo "$PR_DATA" | jq -r '.head.repo.full_name // empty')
-          echo "fork<<$DELIM" >> "$GITHUB_OUTPUT"
-          echo "$FORK_NAME" >> "$GITHUB_OUTPUT"
-          echo "$DELIM" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
-
-      - name: Check fork PR (security guard)
-        if: steps.pr.outputs.fork == '' || steps.pr.outputs.fork != github.repository
-        run: |
-          echo "::error::Fork PR detected or source repo unknown. LoopPilot is disabled for fork PRs."
-          exit 1
-
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.pr.outputs.head_ref }}
-          fetch-depth: 1
-
-      # Node toolchain for the default CHECK_COMMAND. If your CHECK_COMMAND uses a
-      # different toolchain (pytest / make / cargo / …), replace this and the
-      # dependency-install step below accordingly.
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: ${{ hashFiles('package-lock.json', 'npm-shrinkwrap.json') != '' && 'npm' || '' }}
-
-      - name: Configure git user for commit
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Install dependencies for check command
-        if: hashFiles('package-lock.json', 'npm-shrinkwrap.json') != ''
-        run: npm ci
-
-      - name: Run auto-fix loop
-        id: loop
-        uses: team-yubune/loop-pilot/loop@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
-          looppilot-push-token: ${{ secrets.LOOPPILOT_PUSH_TOKEN }}
-          # Pass both auth secrets through. Pre-fix fails fast unless exactly one is
-          # non-empty, so set ANTHROPIC_API_KEY (API billing) OR
-          # CLAUDE_CODE_OAUTH_TOKEN (Pro / Max subscription) — never both.
-          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          pr-number: ${{ github.event.issue.number || github.event.pull_request.number }}
-          pr-head-ref: ${{ steps.pr.outputs.head_ref }}
-          pr-title: ${{ steps.pr.outputs.title }}
-          trigger-comment-id: ${{ github.event.comment.id || github.event.review.id }}
-          trigger-comment-body: ${{ github.event.comment.body || github.event.review.body }}
-          trigger-user-login: ${{ github.event.comment.user.login || github.event.review.user.login }}
-          # Lets pre-fix disambiguate issue_comment.id vs pull_request_review.id when
-          # deduplicating against the last processed review (separate ID namespaces).
-          trigger-event-name: ${{ github.event_name }}
-          max-review-iterations: ${{ vars.MAX_REVIEW_ITERATIONS || '20' }}
-          debounce-seconds: ${{ vars.DEBOUNCE_SECONDS || '90' }}
-          check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}
-          build-command: ${{ vars.BUILD_COMMAND || '' }}
-          codex-bot-login: ${{ vars.CODEX_BOT_LOGIN || 'chatgpt-codex-connector[bot]' }}
-          codex-review-marker: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
-          stabilize-interval-seconds: ${{ vars.STABILIZE_INTERVAL_SECONDS || '10' }}
-          stabilize-count: ${{ vars.STABILIZE_COUNT || '3' }}
-          looppilot-label: ${{ vars.LOOPPILOT_LABEL || '' }}
-          looppilot-full-auto: ${{ vars.LOOPPILOT_FULL_AUTO || 'false' }}
-          looppilot-restart-roles: ${{ vars.LOOPPILOT_RESTART_ROLES || 'author,write,maintain,admin' }}
-          # Model tiering: set BASE === ESCALATED to operate without tiering.
-          claude-code-model-base: ${{ vars.CLAUDE_CODE_MODEL_BASE || 'claude-sonnet-4-6' }}
-          claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-7' }}
-          claude-code-max-turns: ${{ vars.CLAUDE_CODE_MAX_TURNS || '40' }}
-          auto-merge-on-clean: ${{ vars.LOOPPILOT_AUTO_MERGE || 'false' }}
-          auto-merge-poll-seconds: ${{ vars.LOOPPILOT_AUTO_MERGE_POLL_SECONDS || '15' }}
-          auto-merge-timeout-minutes: ${{ vars.LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES || '10' }}
-          severity-threshold: ${{ vars.LOOPPILOT_SEVERITY_THRESHOLD || 'P3' }}
-          # Trusted state-comment author override; empty falls back to github-actions[bot].
-          looppilot-state-comment-authors: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}
-
-      # Fail-safe (loop crashed): if the composite ./loop action ends in failure or
-      # cancelled, the in-process stop notification may never have posted (token
-      # revoked, API outage, Node killed, job timeout). Post a top-level 🛑 comment
-      # so the operator knows the loop stopped. Keying on steps.loop.conclusion (not
-      # failure()) avoids a misleading "crashed" comment when an EARLIER step failed
-      # and the loop was skipped. always() is required to run after a failed step.
-      # Dedup: skip if an in-process 🛑 stop notification already posted within 90s.
-      - name: Post crash notification on workflow failure
-        if: >
-          always() &&
-          (steps.loop.conclusion == 'failure' ||
-           steps.loop.conclusion == 'cancelled')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          LOOP_CONCLUSION: ${{ steps.loop.conclusion }}
-        run: |
-          set -euo pipefail
-          SINCE=$(date -u -d '90 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
-          # --paginate walks the full since= window (issue comments are served oldest
-          # first); emit one .id per match and count lines so the numeric test below
-          # works across pages.
-          RECENT_STOP=$(gh api --paginate \
-            "repos/${REPO}/issues/${PR_NUM}/comments?since=${SINCE}" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("🛑 **LoopPilot stopped**"))) | .id' \
-            2>/dev/null | grep -c . || true)
-          if [ "${RECENT_STOP:-0}" -gt 0 ]; then
-            echo "::notice::A top-level stop notification already posted within 90s (${RECENT_STOP} found); skipping fail-safe to avoid a duplicate."
-            exit 0
-          fi
-          BODY=$'🛑 **LoopPilot crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post.\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
-          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
-            --method POST \
-            --raw-field body="$BODY" \
-            >/dev/null || echo "::warning::Failed to post crash notification comment via gh api; check GITHUB_TOKEN scope."
-
-      # Fail-safe (early-step failure): complements the crash notification above. If
-      # an EARLIER step failed (Get PR info, fork guard, checkout, setup-node, npm
-      # ci), the loop step is skipped and produces no notification. This fires on the
-      # exact complement (failure/cancelled AND loop skipped). State is not mutated;
-      # the next valid Codex review retries the loop.
-      - name: Post early-step failure notification
-        if: >
-          always() &&
-          (failure() || cancelled()) &&
-          steps.loop.conclusion == 'skipped'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          BODY=$'⚠️ **LoopPilot Workflow B failed before the auto-fix loop could start.**\n\nThe failure happened in an early setup step (e.g. `actions/checkout`, `actions/setup-node`, `npm ci`, or the PR info / fork guard step). The looppilot-state was not modified — the next valid Codex review will retry the loop.\n\nWorkflow run: '"$RUN_URL"
-          gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
-            --method POST \
-            --raw-field body="$BODY" \
-            >/dev/null || echo "::warning::Failed to post early-step failure notification via gh api; check GITHUB_TOKEN scope."
+  loop:
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read        # auto-merge ガード用。LOOPPILOT_AUTO_MERGE を使わないなら省略可
+    uses: team-yubune/loop-pilot/.github/workflows/loop.yml@v1
+    secrets:
+      CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
+      LOOPPILOT_PUSH_TOKEN: ${{ secrets.LOOPPILOT_PUSH_TOKEN }}
+      # ANTHROPIC_API_KEY と CLAUDE_CODE_OAUTH_TOKEN はちょうど一方だけ設定する
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      language: node   # node | python | go | rust | none
 ```
 
-> 本リポジトリ自身も `.github/workflows/looppilot-{init,loop}.yml` で LoopPilot を dogfooding しています。上記サンプルはそれらと同等で、外部利用向けに `uses:` をローカル参照 (`./init` / `./loop`) からリリースタグ参照 (`team-yubune/loop-pilot/init@v1` / `loop@v1`) に置き換えたものです。`@v1` は安定版のリリースタグを指します。最新を追う場合は `@main` も使えますが、破壊的変更を受ける可能性があります。本番では `@v1` などのタグか commit SHA への固定を推奨します。
+`@v1` は安定版のリリースタグ（moving タグ。最新の `v1.x.y` を自動追従）。固定したい場合は `@v1.2.3` や commit SHA を使ってください。`@main` は破壊的変更を受け得るため本番非推奨です。詳細は [リリース手順](docs/operations/releasing.md)。
+
+すべての Repository variable（`CHECK_COMMAND` / `LOOPPILOT_LABEL` / `MAX_REVIEW_ITERATIONS` など。[設定 (Repository variables)](#設定-repository-variables)）は **adopter 自身のリポジトリ** で解決されます（`vars` / `github` コンテキストは caller に解決される GitHub 仕様）。薄い caller でこれらを再記述する必要はありません。
+
+#### 非 Node ツールチェイン（`language` input）
+
+`CHECK_COMMAND` / `BUILD_COMMAND` を実行する環境を caller の `language` input 一つで切り替えられます。`loop` 本体は runner の Node 上で動くため、`language` は検証環境のみを制御します。
+
+| `language` | セットアップ | 依存インストール |
+|---|---|---|
+| `node`（default） | `actions/setup-node@v5`（Node 24, npm cache） | `package-lock.json` があれば `npm ci` |
+| `python` | `actions/setup-python@v5`（3.x） | `requirements.txt` があれば `pip install -r` |
+| `go` | `actions/setup-go@v5`（stable） | — |
+| `rust` | `rustup` stable（minimal） | — |
+| `none` | なし（runner プリインストールを利用。例: make / gcc） | — |
+
+`CHECK_COMMAND`（`vars.CHECK_COMMAND`）は選んだ toolchain に合わせて設定してください（例: Python なら `pytest`、Go なら `go test ./...`、Make なら `make check`）。
+
+> 本リポジトリ自身も `.github/workflows/looppilot-{init,loop}.yml` で LoopPilot を dogfooding しています。同一 repo の caller のため `secrets: inherit` と再利用可能ワークフローのローカル参照（`./.github/workflows/{init,loop}.yml`）を使い、上記の外部 adopter 向けサンプルは tagged ref + secret 明示列挙に置き換えたものです。再利用可能ワークフローの内部実装は [`.github/workflows/loop.yml`](.github/workflows/loop.yml) / [`init.yml`](.github/workflows/init.yml) を参照。
 
 ## トークンと必要権限 (Fine-grained PAT)
 
