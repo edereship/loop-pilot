@@ -46,7 +46,6 @@ P0/P1/P2/P3 をすべて自動修正対象とし（default `P3`、`LOOPPILOT_SEV
 | [検証コマンドとロールバック](operations/check-and-rollback.md) | `CHECK_COMMAND`・失敗時ロールバック・出力サニタイズ |
 | [停止条件とリカバリ](operations/stop-and-recovery.md) | 正常/強制/異常停止・停止コメント・`/restart-review` による再実行手順 |
 | [リリース手順](operations/releasing.md) | `vX.Y.Z` タグ運用・moving `v1` 張り替え・リリース前ガード・配布手順 |
-| [外部 adopter E2E runbook](operations/adopter-e2e-runbook.md) | 公開 `@v1` + 生成 caller での導入受け入れ検証手順・pre-flight・観測ポイント・human-required ゲート |
 
 ## 読み方ガイド
 
