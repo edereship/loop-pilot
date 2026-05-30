@@ -30,6 +30,12 @@ jobs:
       - name: Typecheck (tests)
         run: npm run typecheck:test
 
+      # The CLI (cli/, TY-346) is typechecked separately — vitest/esbuild
+      # transform CLI tests without type-checking, so this is the gate that
+      # catches CLI type errors in CI.
+      - name: Typecheck (cli)
+        run: npm run typecheck:cli
+
       - name: Test
         run: npm test
 
