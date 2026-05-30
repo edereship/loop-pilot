@@ -27,6 +27,7 @@ P0/P1/P2/P3 をすべて自動修正対象とし（default `P3`、`LOOPPILOT_SEV
 | [システム概要](architecture/system-overview.md) | 目的・基本方針・役割分担・設定パラメータ |
 | [推奨フローと状態管理](architecture/flow-and-state.md) | 詳細フロー・状態スキーマ・hidden comment・シーケンス図・状態遷移図 |
 | [イベント設計](architecture/event-design.md) | Workflow A/B のトリガー・`issue_comment` の注意点・デバウンス・concurrency・重複防止 |
+| [ADR-0001: CLI 配布設計](architecture/adr-0001-cli-distribution.md) | `gh looppilot` の配布方式（`gh` extension / 専用 repo）・repo 境界・Action `@v1` と CLI release の責務分離 |
 
 ### Specs — コンポーネント仕様
 
