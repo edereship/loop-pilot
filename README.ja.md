@@ -78,7 +78,7 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 
 | Secret | 必須か | 用途 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` または `CLAUDE_CODE_OAUTH_TOKEN` | 必須。ちょうど一方だけ | `claude-code-action` が修正を行うため。 |
+| `ANTHROPIC_API_KEY` または `CLAUDE_CODE_OAUTH_TOKEN` | 必須（いずれか一方のみ） | `claude-code-action` が修正を行うため。 |
 | `CODEX_REVIEW_REQUEST_TOKEN` | 必須 | Codex 連携済みユーザーとして `@codex review` を投稿するため。 |
 | `LOOPPILOT_PUSH_TOKEN` | 必須 | `GITHUB_TOKEN` 以外の actor として repair commit を push し、required checks を再実行させるため。 |
 | `GITHUB_TOKEN` | 自動 | GitHub Actions が注入します。作成・保存は不要です。 |
@@ -108,8 +108,8 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 注意:
 
 - `CODEX_REVIEW_REQUEST_TOKEN` は GitHub アカウントが Codex と連携済みのユーザーで発行してください。連携していないと `@codex review` がレビューを起動しません。
-- `LOOPPILOT_PUSH_TOKEN` は `GITHUB_TOKEN` 以外の actor（専用 machine user または GitHub App token を推奨）に属している必要があります。これにより push が required checks を再起動します。
-- 2 つのトークンは分離してください。レビュー依頼用トークンに push 権限を持たせないこと。
+- `LOOPPILOT_PUSH_TOKEN` は `GITHUB_TOKEN` 以外の actor（専用 machine user または GitHub App token を推奨）で発行してください。その actor による push でないと required checks が再実行されません。
+- 2 つのトークンは分けてください。レビュー依頼用トークンには push 権限を付与しないでください。
 
 トークン権限とセキュリティの詳細は [docs/operations/security.md](docs/operations/security.md) を参照してください。
 
