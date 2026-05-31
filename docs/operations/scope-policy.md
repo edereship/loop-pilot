@@ -92,7 +92,7 @@ LOOPPILOT_BLOCK_PATHS = secrets/,infra/terraform/,!Makefile
 | `LOOPPILOT_SCOPE_MAX_FILES` | `scope-max-files` | 20 |
 | `LOOPPILOT_SCOPE_MAX_LINES` | `scope-max-lines` | 1000 |
 
-`0` または空文字を渡すとデフォルトが使われる。action input を `"0"` 明示すると `core.getInput` が「設定済み」と解釈して Repository variable のフォールバックを上書きしてしまうため、Repository variable 主導で運用する場合は input を空のまま（`with:` で渡さない / 空文字を渡す）にする。
+`0` または空文字を渡すとデフォルトが使われる。`@v1` の `loop.yml` は `scope-max-files: ${{ vars.LOOPPILOT_SCOPE_MAX_FILES }}` のように Repository variable を**素のまま** action input に転送する（未設定なら空文字になり、上記 default にフォールバックする）。`"0"` を明示すると `core.getInput` が「設定済み」と解釈して env-var フォールバックを上書きしてしまうため、転送時に `|| '0'` のようなデフォルトは付けない（TY-350）。
 
 ## `BUILD_COMMAND` と build 後 scope 再 check
 

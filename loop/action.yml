@@ -205,6 +205,16 @@ runs:
         auto-merge-timeout-minutes: ${{ inputs.auto-merge-timeout-minutes }}
         severity-threshold: ${{ inputs.severity-threshold }}
         looppilot-state-comment-authors: ${{ inputs.looppilot-state-comment-authors }}
+        # TY-350: pre-fix builds the repair prompt's `## Scope Policy` section
+        # from these (main-pre-fix.ts `buildScopePolicy`), so Claude sees the
+        # operator's effective block-list / size budget up front and avoids
+        # producing diffs that post-fix would only revert. The post-fix step
+        # below receives the same three inputs for the authoritative
+        # enforcement check; forwarding them to BOTH keeps prompt and
+        # enforcement in sync (TY-350).
+        looppilot-block-paths: ${{ inputs.looppilot-block-paths }}
+        scope-max-files: ${{ inputs.scope-max-files }}
+        scope-max-lines: ${{ inputs.scope-max-lines }}
 
     - name: Claude Code Action (repo-level repair)
       id: claude
