@@ -105,6 +105,9 @@ describe("loadInitConfig — integer input range validation (TY-267 #15)", () =>
       DEBOUNCE_SECONDS: undefined,
       STABILIZE_INTERVAL_SECONDS: undefined,
       STABILIZE_COUNT: undefined,
+      LOOPPILOT_AUTO_MERGE: undefined,
+      LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES: undefined,
+      LOOPPILOT_AUTO_MERGE_POLL_SECONDS: undefined,
     });
   });
 
@@ -145,6 +148,109 @@ describe("loadInitConfig — integer input range validation (TY-267 #15)", () =>
   it("rejects STABILIZE_COUNT=0", () => {
     process.env.STABILIZE_COUNT = "0";
     expect(() => loadInitConfig()).toThrow(/stabilize-count.*must be >= 1/);
+  });
+
+  // TY-357: individual upper-bound caps (TY-331/TY-333). loop-pilot's intInput
+  // gained the `max` arg in TY-334 but these four call sites never received the
+  // PoC's caps, so an oversized value could sleep past the 30-min job timeout →
+  // cancel → wedge (and a spurious "🛑 crashed" #2B notice). Lock each cap.
+  it("TY-331: rejects DEBOUNCE_SECONDS above the 600s cap", () => {
+    process.env.DEBOUNCE_SECONDS = "601";
+    expect(() => loadInitConfig()).toThrow(/debounce-seconds.*must be <= 600/);
+  });
+
+  it("TY-331: accepts DEBOUNCE_SECONDS exactly at the 600s cap", () => {
+    process.env.DEBOUNCE_SECONDS = "600";
+    expect(loadInitConfig().debounceSeconds).toBe(600);
+  });
+
+  it("TY-331: rejects STABILIZE_INTERVAL_SECONDS above the 300s cap", () => {
+    process.env.STABILIZE_INTERVAL_SECONDS = "301";
+    expect(() => loadInitConfig()).toThrow(/stabilize-interval-seconds.*must be <= 300/);
+  });
+
+  it("TY-333: rejects LOOPPILOT_AUTO_MERGE_POLL_SECONDS above the 300s cap", () => {
+    process.env.LOOPPILOT_AUTO_MERGE_POLL_SECONDS = "301";
+    expect(() => loadInitConfig()).toThrow(/auto-merge-poll-seconds.*must be <= 300/);
+  });
+
+  it("TY-333: rejects LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES above the 25min cap", () => {
+    process.env.LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES = "26";
+    expect(() => loadInitConfig()).toThrow(/auto-merge-timeout-minutes.*must be <= 25/);
+  });
+
+  // TY-336: STABILIZE_COUNT had no upper bound, so a large count reached the
+  // same job-timeout wedge TY-331 closed via the interval/debounce caps — the
+  // stabilization window is interval × count (consumed even on a successful
+  // early-break). Guard the product, not just the individual values.
+  it("TY-336 #A: rejects a STABILIZE_COUNT large enough to exceed the window cap", () => {
+    process.env.STABILIZE_COUNT = "200"; // 200 × 10 (default interval) = 2000s
+    expect(() => loadInitConfig()).toThrow(
+      /STABILIZE_INTERVAL_SECONDS × STABILIZE_COUNT .*= 2000s\) must be <= 900s/,
+    );
+  });
+
+  it("TY-336 #B: rejects an interval × count product over the cap", () => {
+    process.env.STABILIZE_INTERVAL_SECONDS = "300";
+    process.env.STABILIZE_COUNT = "10"; // 300 × 10 = 3000s
+    expect(() => loadInitConfig()).toThrow(/= 3000s\) must be <= 900s/);
+  });
+
+  it("TY-336 #C: accepts the default window (10 × 3 = 30s)", () => {
+    const config = loadInitConfig();
+    expect(config.stabilizeIntervalSeconds).toBe(10);
+    expect(config.stabilizeCount).toBe(3);
+  });
+
+  it("TY-336: accepts the product exactly at the 900s cap (300 × 3)", () => {
+    process.env.STABILIZE_INTERVAL_SECONDS = "300";
+    process.env.STABILIZE_COUNT = "3"; // 300 × 3 = 900s (boundary)
+    const config = loadInitConfig();
+    expect(config.stabilizeIntervalSeconds).toBe(300);
+    expect(config.stabilizeCount).toBe(3);
+  });
+
+  // BUG-1 (TY-331 follow-up): DEBOUNCE_SECONDS and
+  // LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES are each capped in isolation, but on the
+  // done/no_findings branch they run back-to-back in the same 30-min job
+  // (debounce, worst case 2×, then the auto-merge CI wait). Their individual
+  // maxima sum to 2×600 + 25×60 = 2700s, so a slow auto-merge would be cancelled
+  // mid-poll and trip the "Auto-review crashed" fail-safe on an already-done PR.
+  // The combined budget must be validated when auto-merge is on.
+  it("BUG-1: rejects DEBOUNCE_SECONDS + auto-merge timeout that together exceed the job budget", () => {
+    process.env.LOOPPILOT_AUTO_MERGE = "true";
+    process.env.DEBOUNCE_SECONDS = "600";
+    process.env.LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES = "25";
+    expect(() => loadInitConfig()).toThrow(
+      /2 × 600 \+ 25 × 60 = 2700s\) must be <= 1500s when LOOPPILOT_AUTO_MERGE is enabled/,
+    );
+  });
+
+  it("BUG-1: allows the same large values when auto-merge is disabled (the wait never runs)", () => {
+    process.env.LOOPPILOT_AUTO_MERGE = "false";
+    process.env.DEBOUNCE_SECONDS = "600";
+    process.env.LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES = "25";
+    const config = loadInitConfig();
+    expect(config.debounceSeconds).toBe(600);
+    expect(config.autoMergeTimeoutMinutes).toBe(25);
+  });
+
+  it("BUG-1: accepts an auto-merge config whose combined budget fits (boundary 1500s)", () => {
+    process.env.LOOPPILOT_AUTO_MERGE = "true";
+    process.env.DEBOUNCE_SECONDS = "150"; // 2×150 = 300
+    process.env.LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES = "20"; // 1200; total 1500 (== budget)
+    const config = loadInitConfig();
+    expect(config.autoMergeOnClean).toBe(true);
+    expect(config.debounceSeconds).toBe(150);
+    expect(config.autoMergeTimeoutMinutes).toBe(20);
+  });
+
+  it("BUG-1: accepts the defaults with auto-merge enabled", () => {
+    process.env.LOOPPILOT_AUTO_MERGE = "true";
+    const config = loadInitConfig();
+    expect(config.autoMergeOnClean).toBe(true);
+    expect(config.debounceSeconds).toBe(90);
+    expect(config.autoMergeTimeoutMinutes).toBe(10);
   });
 });
 

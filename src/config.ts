@@ -279,19 +279,72 @@ function loadBaseConfig(): BaseConfig {
     }
   }
 
+  // TY-336: read the stabilization tuning up front so the *product* can be
+  // validated. The stabilization wall-clock window is `intervalMs × stablePolls`
+  // (consumed even on a successful early-break — see review-collector.ts), so
+  // capping interval (300s) and debounce (600s) individually as TY-331 did is
+  // not enough: a large STABILIZE_COUNT (e.g. 200) reaches the same
+  // job-timeout wedge TY-331 closed (200 × 10 = 2000s > 1800s). Cap the product
+  // at 900s, which leaves room for the max 600s debounce (900 + 600 = 1500s <
+  // the 1800s loop job timeout), matching the TY-331 interval-cap reasoning.
+  const stabilizeIntervalSeconds = intInput(
+    "stabilize-interval-seconds",
+    "STABILIZE_INTERVAL_SECONDS",
+    10,
+    1,
+    300,
+  );
+  const stabilizeCount = intInput("stabilize-count", "STABILIZE_COUNT", 3, 1);
+  const STABILIZE_WINDOW_MAX_SECONDS = 900;
+  if (stabilizeIntervalSeconds * stabilizeCount > STABILIZE_WINDOW_MAX_SECONDS) {
+    throw new Error(
+      `STABILIZE_INTERVAL_SECONDS × STABILIZE_COUNT (${stabilizeIntervalSeconds} × ${stabilizeCount} = ${stabilizeIntervalSeconds * stabilizeCount}s) must be <= ${STABILIZE_WINDOW_MAX_SECONDS}s so the stabilization window cannot exceed the 30-min job timeout. Lower STABILIZE_COUNT or STABILIZE_INTERVAL_SECONDS.`,
+    );
+  }
+
+  // TY-331: DEBOUNCE_SECONDS is consumed twice on a single pre-fix run — once
+  // as the explicit debounce sleep and once as `maxWaitMs` for
+  // stabilizeReviewComments — so the worst-case debounce wall-clock is
+  // 2 × debounceSeconds. The 600s individual cap keeps that at ≤ 1200s.
+  const debounceSeconds = intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0, 600);
+  const autoMergeOnClean = boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false);
+  const autoMergeTimeoutMinutes = intInput(
+    "auto-merge-timeout-minutes",
+    "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES",
+    10,
+    1,
+    25,
+  );
+  // DEBOUNCE_SECONDS (≤600s) and LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES (≤25min)
+  // are each capped in isolation, but on the `done / no_findings` branch they
+  // run *sequentially in the same job*: the debounce (worst case
+  // 2 × debounceSeconds) precedes `mergeIfChecksPass` (autoMergeTimeoutMinutes).
+  // Their individual maxima sum to 2×600 + 25×60 = 2700s — far past the 30-min
+  // (1800s) job timeout — so a slow auto-merge would be cancelled mid-poll and
+  // trip the workflow #2B fail-safe into posting "🛑 Auto-review crashed" on a
+  // PR whose hidden state is already `done` (a contradictory operator signal).
+  // Validate the *sum* (mirroring the STABILIZE product cap above) so that
+  // contradiction cannot occur. Only enforced when auto-merge is enabled —
+  // mergeIfChecksPass does not run otherwise and the 2×debounce bound alone
+  // (≤1200s) stays under the budget.
+  if (autoMergeOnClean) {
+    const DONE_PATH_BUDGET_SECONDS = 1500; // 30-min job timeout minus a 5-min margin for API round-trips
+    const worstCaseSeconds = 2 * debounceSeconds + autoMergeTimeoutMinutes * 60;
+    if (worstCaseSeconds > DONE_PATH_BUDGET_SECONDS) {
+      throw new Error(
+        `2 × DEBOUNCE_SECONDS + LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES (2 × ${debounceSeconds} + ${autoMergeTimeoutMinutes} × 60 = ${worstCaseSeconds}s) must be <= ${DONE_PATH_BUDGET_SECONDS}s when LOOPPILOT_AUTO_MERGE is enabled, so the done/no_findings branch (debounce + auto-merge CI wait) cannot exceed the 30-min job timeout and trip the "Auto-review crashed" fail-safe on an already-done PR. Lower DEBOUNCE_SECONDS or LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES.`,
+      );
+    }
+  }
+
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
-    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
+    debounceSeconds,
     checkCommand,
     buildCommand,
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
-    stabilizeIntervalSeconds: intInput(
-      "stabilize-interval-seconds",
-      "STABILIZE_INTERVAL_SECONDS",
-      10,
-      1,
-    ),
-    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
+    stabilizeIntervalSeconds,
+    stabilizeCount,
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
     // TY-334: 0 disables ACK polling. Max bounds keep the worst-case
     // timeout × (maxReposts + 1) at 120 × 4 = 480s — under the bumped 10-min
@@ -338,19 +391,20 @@ function loadBaseConfig(): BaseConfig {
     ),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
-    autoMergeOnClean: boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false),
+    autoMergeOnClean,
+    // TY-333 #3: cap so an oversized auto-merge wait cannot push the
+    // `done`-branch poll loop (mergeIfChecksPass, run from main-pre-fix) past
+    // the 30-min job timeout. The poll interval is bounded (≤300s) so a single
+    // poll cannot consume the whole window; the combined budget check above
+    // (when auto-merge is enabled) bounds debounce + wait together.
     autoMergePollSeconds: intInput(
       "auto-merge-poll-seconds",
       "LOOPPILOT_AUTO_MERGE_POLL_SECONDS",
       15,
       1,
+      300,
     ),
-    autoMergeTimeoutMinutes: intInput(
-      "auto-merge-timeout-minutes",
-      "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES",
-      10,
-      1,
-    ),
+    autoMergeTimeoutMinutes,
     severityThreshold: severityThresholdInput(
       "severity-threshold",
       "LOOPPILOT_SEVERITY_THRESHOLD",

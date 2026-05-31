@@ -19333,14 +19333,30 @@ function loadBaseConfig() {
       throw new Error(`BUILD_COMMAND ${JSON.stringify(buildCommand)} was rejected by check-command-allowlist: ${buildCommandValidation.reason}. See docs/operations/security.md (CHECK_COMMAND validation) for the allowlist; multi-step builds should be wrapped in a package.json script or Makefile target rather than chained with shell operators.`);
     }
   }
+  const stabilizeIntervalSeconds = intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1, 300);
+  const stabilizeCount = intInput("stabilize-count", "STABILIZE_COUNT", 3, 1);
+  const STABILIZE_WINDOW_MAX_SECONDS = 900;
+  if (stabilizeIntervalSeconds * stabilizeCount > STABILIZE_WINDOW_MAX_SECONDS) {
+    throw new Error(`STABILIZE_INTERVAL_SECONDS \xD7 STABILIZE_COUNT (${stabilizeIntervalSeconds} \xD7 ${stabilizeCount} = ${stabilizeIntervalSeconds * stabilizeCount}s) must be <= ${STABILIZE_WINDOW_MAX_SECONDS}s so the stabilization window cannot exceed the 30-min job timeout. Lower STABILIZE_COUNT or STABILIZE_INTERVAL_SECONDS.`);
+  }
+  const debounceSeconds = intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0, 600);
+  const autoMergeOnClean = boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false);
+  const autoMergeTimeoutMinutes = intInput("auto-merge-timeout-minutes", "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1, 25);
+  if (autoMergeOnClean) {
+    const DONE_PATH_BUDGET_SECONDS = 1500;
+    const worstCaseSeconds = 2 * debounceSeconds + autoMergeTimeoutMinutes * 60;
+    if (worstCaseSeconds > DONE_PATH_BUDGET_SECONDS) {
+      throw new Error(`2 \xD7 DEBOUNCE_SECONDS + LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES (2 \xD7 ${debounceSeconds} + ${autoMergeTimeoutMinutes} \xD7 60 = ${worstCaseSeconds}s) must be <= ${DONE_PATH_BUDGET_SECONDS}s when LOOPPILOT_AUTO_MERGE is enabled, so the done/no_findings branch (debounce + auto-merge CI wait) cannot exceed the 30-min job timeout and trip the "Auto-review crashed" fail-safe on an already-done PR. Lower DEBOUNCE_SECONDS or LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES.`);
+    }
+  }
   return {
     maxReviewIterations: intInput("max-review-iterations", "MAX_REVIEW_ITERATIONS", 20, 1),
-    debounceSeconds: intInput("debounce-seconds", "DEBOUNCE_SECONDS", 90, 0),
+    debounceSeconds,
     checkCommand,
     buildCommand,
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
-    stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1),
-    stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
+    stabilizeIntervalSeconds,
+    stabilizeCount,
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
     // TY-334: 0 disables ACK polling. Max bounds keep the worst-case
     // timeout × (maxReposts + 1) at 120 × 4 = 480s — under the bumped 10-min
@@ -19365,9 +19381,14 @@ function loadBaseConfig() {
     autoReviewRestartRoles: input("looppilot-restart-roles", "LOOPPILOT_RESTART_ROLES", "author,write,maintain,admin"),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
-    autoMergeOnClean: boolInput("auto-merge-on-clean", "LOOPPILOT_AUTO_MERGE", false),
-    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "LOOPPILOT_AUTO_MERGE_POLL_SECONDS", 15, 1),
-    autoMergeTimeoutMinutes: intInput("auto-merge-timeout-minutes", "LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES", 10, 1),
+    autoMergeOnClean,
+    // TY-333 #3: cap so an oversized auto-merge wait cannot push the
+    // `done`-branch poll loop (mergeIfChecksPass, run from main-pre-fix) past
+    // the 30-min job timeout. The poll interval is bounded (≤300s) so a single
+    // poll cannot consume the whole window; the combined budget check above
+    // (when auto-merge is enabled) bounds debounce + wait together.
+    autoMergePollSeconds: intInput("auto-merge-poll-seconds", "LOOPPILOT_AUTO_MERGE_POLL_SECONDS", 15, 1, 300),
+    autoMergeTimeoutMinutes,
     severityThreshold: severityThresholdInput("severity-threshold", "LOOPPILOT_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
     autoReviewBlockPaths: input("looppilot-block-paths", "LOOPPILOT_BLOCK_PATHS", ""),
     scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
