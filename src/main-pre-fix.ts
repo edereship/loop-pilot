@@ -258,6 +258,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       restartRoles: config.autoReviewRestartRoles,
       githubToken: config.githubToken,
       codexReviewRequestToken: config.codexReviewRequestToken,
+      codexBotLogin: config.codexBotLogin,
+      codexAckTimeoutSeconds: config.codexAckTimeoutSeconds,
+      codexAckPollIntervalSeconds: config.codexAckPollIntervalSeconds,
+      codexAckMaxReposts: config.codexAckMaxReposts,
       stateResult,
     });
     if (restartResult.handled) {

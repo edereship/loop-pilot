@@ -11,8 +11,13 @@ import {
 import {
   postCodexReviewRequest,
   postInitialStatusComment,
+  postStopComment,
+  deriveIterationProgress,
 } from "./comment-poster.js";
+import { ensureCodexAck } from "./codex-ack.js";
+import type { CodexAckParams, CodexAckResult } from "./codex-ack.js";
 import type { BaseConfig } from "./config.js";
+import type { ReviewState } from "./types.js";
 import { registerAllSecrets } from "./secrets.js";
 
 type ReadState = typeof readState;
@@ -20,6 +25,7 @@ type CreateStateComment = typeof createStateComment;
 type UpdateStateComment = typeof updateStateComment;
 type PostCodexReviewRequest = typeof postCodexReviewRequest;
 type PostInitialStatusComment = typeof postInitialStatusComment;
+type PostStopComment = typeof postStopComment;
 
 export interface InitDeps {
   readState: ReadState;
@@ -27,6 +33,9 @@ export interface InitDeps {
   updateStateComment: UpdateStateComment;
   postCodexReviewRequest: PostCodexReviewRequest;
   postInitialStatusComment: PostInitialStatusComment;
+  postStopComment: PostStopComment;
+  // TY-334: injected so tests can drive ACK / no-ACK without real polling.
+  ensureCodexAck: (params: CodexAckParams) => Promise<CodexAckResult>;
   setSecret: (secret: string) => void;
   info: (message: string) => void;
   warning: (message: string) => void;
@@ -39,6 +48,8 @@ const defaultDeps: InitDeps = {
   updateStateComment,
   postCodexReviewRequest,
   postInitialStatusComment,
+  postStopComment,
+  ensureCodexAck: (params) => ensureCodexAck(params),
   // TY-276 #4: wrap @actions/core methods in arrows for symmetry with
   // main-pre-fix / main-post-fix. The direct-reference form works today
   // because `@actions/core` does not use `this`, but a future version that
@@ -144,6 +155,9 @@ export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps):
   }
 
   let reviewRequestId: number;
+  // TY-334: capture before posting so any Codex activity that arrives between
+  // the post and this timestamp is not excluded by the `since` filter.
+  const codexRequestedAt = new Date().toISOString();
   try {
     reviewRequestId = await deps.postCodexReviewRequest(
       config.repoOwner,
@@ -220,11 +234,17 @@ export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps):
     status: "waiting_codex",
     lastCodexRequestCommentId: reviewRequestId,
   };
+  // TY-334: updatedAt of the latest confirmed `waiting_codex` write, used as
+  // the optimistic lock for the ACK-failure demotion below. Stays undefined
+  // when the 2nd write cannot be confirmed, in which case ACK polling is
+  // skipped (we cannot safely mutate state we do not have a lock for).
+  let ackLockUpdatedAt: string | undefined;
   try {
-    await deps.updateStateComment(
+    const secondWriteResult = await deps.updateStateComment(
       config.repoOwner, config.repoName, commentId, state, config.githubToken,
       { expectedUpdatedAt: firstWriteResult.updatedAt },
     );
+    ackLockUpdatedAt = secondWriteResult.updatedAt;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     deps.warning(
@@ -241,10 +261,11 @@ export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps):
     // lastCodexRequestCommentId and takes the early-return rather than re-posting.
     if (!(error instanceof StateUpdateConflictError)) {
       try {
-        await deps.updateStateComment(
+        const retryResult = await deps.updateStateComment(
           config.repoOwner, config.repoName, commentId, state, config.githubToken,
           { expectedUpdatedAt: firstWriteResult.updatedAt },
         );
+        ackLockUpdatedAt = retryResult.updatedAt;
       } catch (retryError) {
         if (retryError instanceof StateUpdateConflictError) {
           deps.warning(
@@ -258,6 +279,87 @@ export async function runInit(config: BaseConfig, deps: InitDeps = defaultDeps):
               "A Workflow A rerun may re-post @codex review.",
           );
         }
+      }
+    }
+  }
+
+  // TY-334: poll for a Codex ACK (👀 reaction or new Codex activity) while
+  // this job is still alive. If Codex silently drops the request, repost up to
+  // CODEX_ACK_MAX_REPOSTS times, then demote to stopped/codex_request_failed so
+  // the loop is not wedged at waiting_codex with no restart trigger. Only runs
+  // when the 2nd write was confirmed (ackLockUpdatedAt set) so demotion has a
+  // valid optimistic lock.
+  if (ackLockUpdatedAt !== undefined) {
+    const ack = await deps.ensureCodexAck({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      pr: config.prNumber,
+      commentId: reviewRequestId,
+      requestedAt: codexRequestedAt,
+      codexBotLogin: config.codexBotLogin,
+      readToken: config.githubToken,
+      token: config.codexReviewRequestToken,
+      timeoutSeconds: config.codexAckTimeoutSeconds,
+      pollIntervalSeconds: config.codexAckPollIntervalSeconds,
+      maxReposts: config.codexAckMaxReposts,
+    });
+    if (!ack.acked) {
+      const stoppedState: ReviewState = {
+        ...state,
+        lastCodexRequestCommentId: ack.lastCommentId,
+        status: "stopped",
+        stopReason: "codex_request_failed",
+      };
+      try {
+        await deps.updateStateComment(
+          config.repoOwner, config.repoName, commentId, stoppedState, config.githubToken,
+          { expectedUpdatedAt: ackLockUpdatedAt },
+        );
+        try {
+          await deps.postStopComment(
+            config.repoOwner,
+            config.repoName,
+            config.prNumber,
+            "codex_request_failed",
+            config.triggerCommentId,
+            0,
+            `Codex did not acknowledge the @codex review request after ${config.codexAckMaxReposts} repost(s) (≈${config.codexAckTimeoutSeconds}s per attempt). Run /restart-review once Codex is reachable to resume.`,
+            config.githubToken,
+            deriveIterationProgress(stoppedState, config.maxReviewIterations),
+          );
+        } catch (notifyError) {
+          const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+          deps.warning(`[init] Demoted to stopped/codex_request_failed but failed to post the stop notification: ${msg}.`);
+        }
+      } catch (demoteError) {
+        if (demoteError instanceof StateUpdateConflictError) {
+          deps.warning(
+            "[init] ACK-failure demotion skipped: Workflow B advanced the state during ACK polling.",
+          );
+        } else {
+          const msg = demoteError instanceof Error ? demoteError.message : String(demoteError);
+          deps.warning(
+            `[init] Failed to demote to stopped/codex_request_failed after no Codex ACK: ${msg}. ` +
+              "State remains waiting_codex; /restart-review required.",
+          );
+        }
+      }
+      deps.setOutput("comment-id", String(commentId));
+      return;
+    } else if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestId) {
+      // Best-effort: record the latest @codex review comment id after reposts.
+      try {
+        await deps.updateStateComment(
+          config.repoOwner, config.repoName, commentId,
+          { ...state, lastCodexRequestCommentId: ack.lastCommentId }, config.githubToken,
+          { expectedUpdatedAt: ackLockUpdatedAt },
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        deps.warning(
+          `[init] Failed to persist reposted Codex review request id ${ack.lastCommentId}: ${msg}. ` +
+            "State remains waiting_codex; the next Codex review trigger will reconcile.",
+        );
       }
     }
   }

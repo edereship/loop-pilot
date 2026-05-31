@@ -40,6 +40,9 @@ const baseConfig: Config = {
   autoReviewBlockPaths: "",
   scopeMaxFiles: 0,
   scopeMaxLines: 0,
+  codexAckTimeoutSeconds: 90,
+  codexAckPollIntervalSeconds: 15,
+  codexAckMaxReposts: 2,
 };
 
 function makeState(overrides: Partial<ReviewState> = {}): ReviewState {
@@ -53,6 +56,13 @@ function makeDeps(readResult: ReadStateResult) {
     updateStateComment: vi.fn().mockResolvedValue({ updatedAt: "2026-05-15T00:00:01Z" }),
     postCodexReviewRequest: vi.fn().mockResolvedValue(67890),
     postInitialStatusComment: vi.fn().mockResolvedValue(54321),
+    postStopComment: vi.fn().mockResolvedValue(99999),
+    ensureCodexAck: vi.fn().mockResolvedValue({
+      acked: true,
+      reason: "eyes",
+      reposts: 0,
+      lastCommentId: 67890,
+    }),
     setSecret: vi.fn(),
     info: vi.fn(),
     warning: vi.fn(),
@@ -237,6 +247,32 @@ describe("runInit", () => {
       "github-token",
       { expectedUpdatedAt: "2026-05-15T00:00:01Z" },
     );
+  });
+
+  it("TY-334: demotes to stopped/codex_request_failed and notifies when Codex never ACKs the init review", async () => {
+    const deps = makeDeps({ found: false, corrupted: false, commentId: null });
+    deps.ensureCodexAck = vi.fn().mockResolvedValue({
+      acked: false,
+      reason: "exhausted",
+      reposts: 2,
+      lastCommentId: 777,
+    });
+
+    await runInit(baseConfig, deps);
+
+    const writes = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock
+      .calls as unknown as Array<[string, string, number, ReviewState, string]>;
+    const stoppedWrite = writes.find(
+      (c) => c[3]?.status === "stopped" && c[3]?.stopReason === "codex_request_failed",
+    );
+    expect(stoppedWrite).toBeDefined();
+    expect(stoppedWrite?.[3].lastCodexRequestCommentId).toBe(777);
+
+    const stopCalls = (deps.postStopComment as ReturnType<typeof vi.fn>).mock
+      .calls as unknown as Array<[string, string, number, string, number, number, string]>;
+    const stopCall = stopCalls.find((c) => c[3] === "codex_request_failed");
+    expect(stopCall).toBeDefined();
+    expect(stopCall?.[6]).toContain("did not acknowledge");
   });
 
   it("TY-303 #D: corrupted state recovery → overwrite + 1st-write → post → 2nd-write", async () => {

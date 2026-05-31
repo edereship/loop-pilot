@@ -43,6 +43,9 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     autoReviewBlockPaths: "",
     scopeMaxFiles: 0,
     scopeMaxLines: 0,
+    codexAckTimeoutSeconds: 90,
+    codexAckPollIntervalSeconds: 15,
+    codexAckMaxReposts: 2,
     ...overrides,
   };
 }

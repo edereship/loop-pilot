@@ -19208,6 +19208,12 @@ function loadBaseConfig() {
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
+    // TY-334: 0 disables ACK polling. Max bounds keep the worst-case
+    // timeout × (maxReposts + 1) at 120 × 4 = 480s — under the bumped 10-min
+    // init job timeout and well under the 30-min loop budget.
+    codexAckTimeoutSeconds: intInput("codex-ack-timeout-seconds", "CODEX_ACK_TIMEOUT_SECONDS", 90, 0, 120),
+    codexAckPollIntervalSeconds: intInput("codex-ack-poll-interval-seconds", "CODEX_ACK_POLL_INTERVAL_SECONDS", 15, 1, 60),
+    codexAckMaxReposts: intInput("codex-ack-max-reposts", "CODEX_ACK_MAX_REPOSTS", 2, 0, 3),
     githubToken,
     codexReviewRequestToken,
     autoReviewPushToken,
@@ -19262,7 +19268,7 @@ function boolInput(inputName, envName, defaultValue) {
     return false;
   throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
-function intInput(inputName, envName, defaultValue, min) {
+function intInput(inputName, envName, defaultValue, min, max) {
   const raw = input(inputName, envName, "");
   if (raw === "")
     return defaultValue;
@@ -19273,6 +19279,9 @@ function intInput(inputName, envName, defaultValue, min) {
   }
   if (min !== void 0 && parsed < min) {
     throw new Error(`Input ${inputName} / env ${envName} must be >= ${min}, got: ${parsed}`);
+  }
+  if (max !== void 0 && parsed > max) {
+    throw new Error(`Input ${inputName} / env ${envName} must be <= ${max}, got: ${parsed}`);
   }
   return parsed;
 }
@@ -21019,6 +21028,122 @@ function parseGitNumstat(output) {
   return files;
 }
 
+// dist/codex-ack.js
+var defaultCodexAckDeps = {
+  getEyesReactors: async (owner, repo, commentId, token) => {
+    const out = await ghApi([
+      "api",
+      "--paginate",
+      `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
+      "-H",
+      "Accept: application/vnd.github+json",
+      "--jq",
+      '.[] | select(.content == "eyes") | .user.login'
+    ], token);
+    return out.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+  },
+  hasNewCodexActivity: async (owner, repo, pr, codexBotLogin, sinceIso, token) => {
+    const commentsOut = await ghApi([
+      "api",
+      "--paginate",
+      `repos/${owner}/${repo}/issues/${pr}/comments?since=${encodeURIComponent(sinceIso)}`,
+      "--jq",
+      '.[] | .user.login + "|" + (.created_at // "")'
+    ], token);
+    if (commentsOut.split("\n").map((s) => s.trim()).filter((s) => s.length > 0).some((line) => {
+      const pipeIdx = line.indexOf("|");
+      if (pipeIdx === -1)
+        return false;
+      const login = line.slice(0, pipeIdx);
+      const createdAt = line.slice(pipeIdx + 1);
+      return login === codexBotLogin && new Date(createdAt).getTime() >= new Date(sinceIso).getTime();
+    })) {
+      return true;
+    }
+    const reviewsOut = await ghApi([
+      "api",
+      "--paginate",
+      `repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100`,
+      "--jq",
+      '.[] | .user.login + "|" + (.submitted_at // "")'
+    ], token);
+    return reviewsOut.split("\n").map((s) => s.trim()).filter((s) => s.length > 0).some((line) => {
+      const pipeIdx = line.indexOf("|");
+      if (pipeIdx === -1)
+        return false;
+      const login = line.slice(0, pipeIdx);
+      const submittedAt = line.slice(pipeIdx + 1);
+      return login === codexBotLogin && new Date(submittedAt).getTime() >= new Date(sinceIso).getTime();
+    });
+  },
+  postCodexReviewRequest,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: () => Date.now(),
+  info: (message) => info(message),
+  warning: (message) => warning(message)
+};
+async function waitForAckWindow(params, deps, commentId, requestedAt, pollIntervalMs) {
+  const deadline = deps.now() + params.timeoutSeconds * 1e3;
+  for (; ; ) {
+    try {
+      const reactors = await deps.getEyesReactors(params.owner, params.repo, commentId, params.readToken);
+      if (reactors.includes(params.codexBotLogin)) {
+        return "eyes";
+      }
+    } catch (error2) {
+      deps.warning(`[codex-ack] Failed to read reactions on comment ${commentId}: ${error2 instanceof Error ? error2.message : String(error2)}. Treating as no ACK yet.`);
+    }
+    try {
+      if (await deps.hasNewCodexActivity(params.owner, params.repo, params.pr, params.codexBotLogin, requestedAt, params.readToken)) {
+        return "new_activity";
+      }
+    } catch (error2) {
+      deps.warning(`[codex-ack] Failed to check for new Codex activity: ${error2 instanceof Error ? error2.message : String(error2)}. Treating as no ACK yet.`);
+    }
+    const remaining = deadline - deps.now();
+    if (remaining <= 0) {
+      return null;
+    }
+    await deps.sleep(Math.min(pollIntervalMs, remaining));
+  }
+}
+async function ensureCodexAck(params, deps = defaultCodexAckDeps) {
+  if (params.timeoutSeconds <= 0) {
+    deps.info("[codex-ack] ACK polling disabled (CODEX_ACK_TIMEOUT_SECONDS <= 0); skipping.");
+    return {
+      acked: true,
+      reason: "disabled",
+      reposts: 0,
+      lastCommentId: params.commentId
+    };
+  }
+  const pollIntervalMs = Math.max(1, params.pollIntervalSeconds) * 1e3;
+  let commentId = params.commentId;
+  let requestedAt = params.requestedAt;
+  let reposts = 0;
+  for (; ; ) {
+    const reason = await waitForAckWindow(params, deps, commentId, requestedAt, pollIntervalMs);
+    if (reason !== null) {
+      deps.info(`[codex-ack] Codex acknowledged the review request (${reason}) after ${reposts} repost(s).`);
+      return { acked: true, reason, reposts, lastCommentId: commentId };
+    }
+    if (reposts >= params.maxReposts) {
+      deps.warning(`[codex-ack] No Codex ACK after ${params.timeoutSeconds}s and ${reposts} repost(s) (max ${params.maxReposts}). Giving up.`);
+      return { acked: false, reason: "exhausted", reposts, lastCommentId: commentId };
+    }
+    const newRequestedAt = new Date(deps.now()).toISOString();
+    try {
+      commentId = await deps.postCodexReviewRequest(params.owner, params.repo, params.pr, params.token);
+    } catch (error2) {
+      deps.warning(`[codex-ack] Failed to repost @codex review: ${error2 instanceof Error ? error2.message : String(error2)}. Giving up.`);
+      return { acked: false, reason: "exhausted", reposts, lastCommentId: commentId };
+    }
+    requestedAt = newRequestedAt;
+    reposts += 1;
+    deps.info(`[codex-ack] No ACK within ${params.timeoutSeconds}s; reposted @codex review (attempt ${reposts}/${params.maxReposts}), new comment ${commentId}.`);
+  }
+}
+
 // dist/main-post-fix.js
 var defaultDeps3 = {
   readState,
@@ -21027,6 +21152,7 @@ var defaultDeps3 = {
   runBuildCommand,
   postClaudeCodeActionFixSummary,
   postCodexReviewRequest,
+  ensureCodexAck: (params) => ensureCodexAck(params),
   postStopComment,
   postTestFailureComment,
   postTerminalNotification,
@@ -21790,6 +21916,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   deps.info("[post-fix] Posting @codex review request...");
+  const codexRequestedAt = (/* @__PURE__ */ new Date()).toISOString();
   try {
     const reviewRequestId = await deps.postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
     const updatedWaitingState = {
@@ -21803,7 +21930,54 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     })) {
       return;
     }
-    deps.info(`[post-fix] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`);
+    const ack = await deps.ensureCodexAck({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      pr: config.prNumber,
+      commentId: reviewRequestId,
+      requestedAt: codexRequestedAt,
+      codexBotLogin: config.codexBotLogin,
+      readToken: config.githubToken,
+      token: config.codexReviewRequestToken,
+      timeoutSeconds: config.codexAckTimeoutSeconds,
+      pollIntervalSeconds: config.codexAckPollIntervalSeconds,
+      maxReposts: config.codexAckMaxReposts
+    });
+    if (!ack.acked) {
+      const stoppedState = {
+        ...updatedWaitingState,
+        lastCodexRequestCommentId: ack.lastCommentId,
+        status: "stopped",
+        stopReason: "codex_request_failed"
+      };
+      if (!await updateStateCommentLocked(stoppedState, "Could not record codex_request_failed stop after no Codex ACK.", {
+        onConflict: async (detail) => {
+          deps.warning(`[post-fix] ${detail} State was advanced by a concurrent run; ACK-demotion write skipped.`);
+        }
+      })) {
+        return;
+      }
+      try {
+        await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Codex did not acknowledge the @codex review request after ${config.codexAckMaxReposts} repost(s) (\u2248${config.codexAckTimeoutSeconds}s per attempt). The repair commit is preserved on the branch; run /restart-review once Codex is reachable to resume.`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
+      } catch (notifyError) {
+        const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+        deps.warning(`[post-fix] Demoted to stopped/codex_request_failed after no Codex ACK but failed to post the stop notification: ${msg}.`);
+      }
+      return;
+    }
+    if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestId) {
+      try {
+        await updateStateCommentLocked({ ...updatedWaitingState, lastCodexRequestCommentId: ack.lastCommentId }, "Could not persist the reposted Codex review request comment id.", {
+          onConflict: async (detail) => {
+            deps.warning(`[post-fix] ${detail} Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
+          }
+        });
+      } catch (repostWriteError) {
+        const msg = repostWriteError instanceof Error ? repostWriteError.message : String(repostWriteError);
+        deps.warning(`[post-fix] Failed to persist the reposted Codex review request id ${ack.lastCommentId}: ${msg}. Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
+      }
+    }
+    deps.info(`[post-fix] Phase 4 complete. Status: waiting_codex. Review request: ${ack.lastCommentId}`);
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);
     deps.error(`[post-fix] Failed to post Codex review request: ${message}. Downgrading to stopped/codex_request_failed.`);

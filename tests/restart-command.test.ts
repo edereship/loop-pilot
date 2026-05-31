@@ -54,6 +54,12 @@ function makeDeps() {
     postCodexReviewRequest: vi.fn<RestartCommandDeps["postCodexReviewRequest"]>(
       async () => 45678,
     ),
+    ensureCodexAck: vi.fn<RestartCommandDeps["ensureCodexAck"]>(async () => ({
+      acked: true,
+      reason: "eyes",
+      reposts: 0,
+      lastCommentId: 45678,
+    })),
     addRestartReaction: vi.fn<RestartCommandDeps["addRestartReaction"]>(async () => undefined),
     warning: vi.fn<RestartCommandDeps["warning"]>(),
   };
@@ -426,6 +432,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(state),
       },
       deps,
@@ -510,6 +520,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(state),
       },
       deps,
@@ -545,6 +559,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(state),
       },
       deps,
@@ -575,6 +593,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(state),
       },
       deps,
@@ -608,6 +630,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(state),
       },
       deps,
@@ -646,6 +672,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -669,6 +699,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -698,6 +732,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -737,6 +775,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -771,6 +813,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -830,6 +876,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(
           makeState({
             status: "waiting_codex",
@@ -882,6 +932,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -910,6 +964,10 @@ describe("handleRestartCommand", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -922,6 +980,143 @@ describe("handleRestartCommand", () => {
     expect(deps.postComment.mock.calls[0][3]).toContain(
       "❌ Restart rejected: insufficient permission.",
     );
+  });
+});
+
+describe("handleRestartCommand — Codex ACK polling (TY-334)", () => {
+  it("demotes to stopped/codex_request_failed and skips the success audit when Codex never ACKs", async () => {
+    const deps = makeDeps();
+    deps.ensureCodexAck = vi.fn<RestartCommandDeps["ensureCodexAck"]>(async () => ({
+      acked: false,
+      reason: "exhausted",
+      reposts: 2,
+      lastCommentId: 88888,
+    }));
+    const state = makeState({ status: "waiting_codex", stopReason: null });
+
+    const result = await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(state),
+      },
+      deps,
+    );
+
+    expect(result).toEqual({ handled: true });
+    const stoppedWrite = deps.updateStateComment.mock.calls.find(
+      (c) =>
+        c[3]?.status === "stopped" && c[3]?.stopReason === "codex_request_failed",
+    );
+    expect(stoppedWrite).toBeDefined();
+    expect(stoppedWrite?.[3].lastCodexRequestCommentId).toBe(88888);
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "test-auto-ai-review",
+      18,
+      "codex_request_failed",
+      777,
+      0,
+      expect.stringContaining("did not acknowledge"),
+      "token",
+    );
+    // Must NOT advertise a successful restart.
+    const advertisedSuccess = deps.postComment.mock.calls.some((c) =>
+      String(c[3]).includes("🟢 Auto-review restarted"),
+    );
+    expect(advertisedSuccess).toBe(false);
+  });
+
+  it("stays handled (no throw) when postStopComment fails after ACK exhaustion — best-effort warn-only", async () => {
+    const deps = makeDeps();
+    deps.ensureCodexAck = vi.fn<RestartCommandDeps["ensureCodexAck"]>(async () => ({
+      acked: false,
+      reason: "exhausted",
+      reposts: 2,
+      lastCommentId: 88888,
+    }));
+    deps.postStopComment.mockRejectedValueOnce(new Error("503 Service Unavailable"));
+    const state = makeState({ status: "waiting_codex", stopReason: null });
+
+    const result = await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(state),
+      },
+      deps,
+    );
+
+    // Must resolve (not throw) even though the stop notification failed.
+    expect(result).toEqual({ handled: true });
+    // State was already persisted; the stop-comment failure is warn-only.
+    const stoppedWrite = deps.updateStateComment.mock.calls.find(
+      (c) => c[3]?.status === "stopped" && c[3]?.stopReason === "codex_request_failed",
+    );
+    expect(stoppedWrite).toBeDefined();
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining("failed to post the stop notification"),
+    );
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining("503 Service Unavailable"),
+    );
+  });
+
+  it("records the latest reposted comment id in the success audit when Codex ACKs after a repost", async () => {
+    const deps = makeDeps();
+    deps.ensureCodexAck = vi.fn<RestartCommandDeps["ensureCodexAck"]>(async () => ({
+      acked: true,
+      reason: "eyes",
+      reposts: 1,
+      lastCommentId: 99999,
+    }));
+
+    await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "test-auto-ai-review",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    expect(deps.postComment.mock.calls[0][3]).toContain(
+      "reviewRequestCommentId: 99999",
+    );
+    expect(deps.postStopComment).not.toHaveBeenCalled();
   });
 });
 
@@ -951,6 +1146,10 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: corruptedState,
       },
       deps,
@@ -987,6 +1186,10 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: corruptedState,
       },
       deps,
@@ -1026,6 +1229,10 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: corruptedState,
       },
       deps,
@@ -1052,6 +1259,10 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
         restartRoles: "author,write,maintain,admin",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -1085,6 +1296,10 @@ describe("LOOPPILOT_RESTART_ROLES validation (TY-275 #2)", () => {
         restartRoles: "admins,write",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,
@@ -1110,6 +1325,10 @@ describe("LOOPPILOT_RESTART_ROLES validation (TY-275 #2)", () => {
         restartRoles: "admins,maintainers,authorr",
         githubToken: "token",
         codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
         stateResult: foundState(makeState()),
       },
       deps,

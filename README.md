@@ -137,6 +137,8 @@ Set these as GitHub Actions repository variables in the target repository.
 | `LOOPPILOT_BLOCK_PATHS` | empty | You want to block extra paths from auto-fix changes. |
 | `LOOPPILOT_SCOPE_MAX_FILES` | `20` | A faithful repair legitimately needs to touch more files than the default. |
 | `LOOPPILOT_SCOPE_MAX_LINES` | `1000` | A faithful repair legitimately needs more changed lines than the default. |
+| `CODEX_ACK_TIMEOUT_SECONDS` | `90` | Tune how long LoopPilot waits for Codex to acknowledge an `@codex review` (👀) before re-requesting; `0` disables the ACK watchdog. |
+| `CODEX_ACK_MAX_REPOSTS` | `2` | Tune how many times LoopPilot re-requests `@codex review` when Codex does not respond, before stopping with `codex_request_failed`. |
 
 All inputs are documented in [loop/action.yml](loop/action.yml) and [init/action.yml](init/action.yml).
 

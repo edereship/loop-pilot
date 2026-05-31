@@ -10,6 +10,20 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+### Added
+- In-job `@codex review` acknowledgement watchdog (TY-334, ported from the
+  upstream PoC). After posting `@codex review`, init / post-fix / `/restart-review`
+  now poll for Codex's 👀 reaction (or any new Codex activity) for up to
+  `CODEX_ACK_TIMEOUT_SECONDS` (default 90, `0` disables) and re-request the
+  review up to `CODEX_ACK_MAX_REPOSTS` times (default 2) before stopping with
+  `codex_request_failed`. Previously, if Codex silently dropped the request (no
+  reaction, no review), the loop wedged at `waiting_codex` indefinitely until an
+  operator ran `/restart-review`. Reposts are authored by the request token (not
+  the Codex bot) so they cannot self-trigger the loop; bounds keep
+  `timeout × (reposts + 1)` under the job budget (the init job timeout is raised
+  5 → 10 min). New tunables: `CODEX_ACK_TIMEOUT_SECONDS`,
+  `CODEX_ACK_POLL_INTERVAL_SECONDS`, `CODEX_ACK_MAX_REPOSTS`.
+
 ## [1.1.0] - 2026-05-31
 
 ### Fixed

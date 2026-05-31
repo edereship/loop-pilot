@@ -250,6 +250,43 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
   });
 });
 
+describe("loadInitConfig — codex ACK polling (TY-334)", () => {
+  let restore: (() => void) | null = null;
+
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  it("defaults to 90s timeout / 15s interval / 2 reposts", () => {
+    restore = withEnv({
+      ...REQUIRED_ENV,
+      CODEX_ACK_TIMEOUT_SECONDS: undefined,
+      CODEX_ACK_POLL_INTERVAL_SECONDS: undefined,
+      CODEX_ACK_MAX_REPOSTS: undefined,
+    });
+    const config = loadInitConfig();
+    expect(config.codexAckTimeoutSeconds).toBe(90);
+    expect(config.codexAckPollIntervalSeconds).toBe(15);
+    expect(config.codexAckMaxReposts).toBe(2);
+  });
+
+  it("allows 0 timeout to disable ACK polling", () => {
+    restore = withEnv({ ...REQUIRED_ENV, CODEX_ACK_TIMEOUT_SECONDS: "0" });
+    expect(loadInitConfig().codexAckTimeoutSeconds).toBe(0);
+  });
+
+  it("rejects a timeout above the job-budget cap (120s)", () => {
+    restore = withEnv({ ...REQUIRED_ENV, CODEX_ACK_TIMEOUT_SECONDS: "600" });
+    expect(() => loadInitConfig()).toThrow(/must be <= 120/);
+  });
+
+  it("rejects more than 3 reposts", () => {
+    restore = withEnv({ ...REQUIRED_ENV, CODEX_ACK_MAX_REPOSTS: "10" });
+    expect(() => loadInitConfig()).toThrow(/must be <= 3/);
+  });
+});
+
 describe("loadInitConfig — CHECK_COMMAND validation (TY-274 #2)", () => {
   let restore: (() => void) | null = null;
 
