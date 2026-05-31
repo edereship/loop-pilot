@@ -22,7 +22,6 @@ const crashConfig: Config = {
   codexBotLogin: "codex",
   stabilizeIntervalSeconds: 10,
   stabilizeCount: 3,
-  codexReviewMarker: "Codex Review",
   codexReviewRequestToken: "codex-token",
   autoReviewPushToken: "",
   anthropicApiKey: "",

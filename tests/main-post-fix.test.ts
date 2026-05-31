@@ -25,7 +25,6 @@ const baseConfig: Config = {
   codexBotLogin: "chatgpt-codex-connector[bot]",
   stabilizeIntervalSeconds: 1,
   stabilizeCount: 1,
-  codexReviewMarker: "Codex Review",
   codexReviewRequestToken: "codex-token",
   autoReviewPushToken: "",
   anthropicApiKey: "",

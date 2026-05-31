@@ -16,7 +16,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     codexBotLogin: "codex",
     stabilizeIntervalSeconds: 1,
     stabilizeCount: 1,
-    codexReviewMarker: "Codex Review",
     codexReviewRequestToken: "codex-secret",
     autoReviewPushToken: "push-secret",
     anthropicApiKey: "anth-secret",

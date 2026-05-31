@@ -28,7 +28,6 @@ export interface BaseConfig {
   codexBotLogin: string;
   stabilizeIntervalSeconds: number;
   stabilizeCount: number;
-  codexReviewMarker: string;
   /**
    * TY-334: in-job `@codex review` ACK polling. After posting the request,
    * init / post-fix poll for a 👀 reaction (or new Codex activity) for up to
@@ -345,7 +344,6 @@ function loadBaseConfig(): BaseConfig {
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
     stabilizeIntervalSeconds,
     stabilizeCount,
-    codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
     // TY-334: 0 disables ACK polling. Max bounds keep the worst-case
     // timeout × (maxReposts + 1) at 120 × 4 = 480s — under the bumped 10-min
     // init job timeout and well under the 30-min loop budget.

@@ -75,10 +75,6 @@ inputs:
     description: "TY-334: hard cap on @codex review reposts when no ACK arrives during /restart-review. Default 2, max 3."
     required: false
     default: "2"
-  codex-review-marker:
-    description: "Text marker in Codex summary comment"
-    required: false
-    default: "Codex Review"
   stabilize-interval-seconds:
     description: "Polling interval (seconds) for comment count stabilization safeguard"
     required: false

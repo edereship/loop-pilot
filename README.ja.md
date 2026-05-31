@@ -135,6 +135,11 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 | `LOOPPILOT_SEVERITY_THRESHOLD` | `P3` | 低 severity の Codex 指摘を対象外にしたい。 |
 | `LOOPPILOT_AUTO_MERGE` | `false` | `done / no_findings` 到達時に squash merge したい。 |
 | `LOOPPILOT_BLOCK_PATHS` | 空 | 自動修正で触らせたくない path を追加したい。 |
+| `LOOPPILOT_SCOPE_MAX_FILES` | `20` | 正当な修正がデフォルトより多くのファイルを変更する必要がある。 |
+| `LOOPPILOT_SCOPE_MAX_LINES` | `1000` | 正当な修正がデフォルトより多くの行を変更する必要がある。 |
+| `CODEX_ACK_TIMEOUT_SECONDS` | `90` | Codex の `@codex review` 承認（👀）待ち時間を調整したい。`0` で ACK ウォッチドッグを無効化。 |
+| `CODEX_ACK_MAX_REPOSTS` | `2` | Codex が応答しないときに `@codex review` を再依頼する回数を調整したい（超過で `codex_request_failed` 停止）。 |
+| `CLAUDE_CODE_MAX_TURNS` | `40` | 1 回の修正あたりの最大エージェントターン数を調整したい（claude-code-action の `--max-turns`）。 |
 
 すべての input は [loop/action.yml](loop/action.yml) と [init/action.yml](init/action.yml) にまとまっています。
 

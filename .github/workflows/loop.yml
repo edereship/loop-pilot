@@ -282,7 +282,6 @@ jobs:
           check-command: ${{ vars.CHECK_COMMAND || 'npm run check' }}
           build-command: ${{ vars.BUILD_COMMAND || '' }}
           codex-bot-login: ${{ vars.CODEX_BOT_LOGIN || 'chatgpt-codex-connector[bot]' }}
-          codex-review-marker: ${{ vars.CODEX_REVIEW_MARKER || 'Codex Review' }}
           # TY-334: in-job @codex review ACK polling. 0 disables; defaults keep
           # timeout × (max-reposts + 1) well under the 30-min job timeout.
           codex-ack-timeout-seconds: ${{ vars.CODEX_ACK_TIMEOUT_SECONDS || '90' }}

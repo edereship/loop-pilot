@@ -19252,7 +19252,6 @@ function loadBaseConfig() {
     codexBotLogin: input("codex-bot-login", "CODEX_BOT_LOGIN", "chatgpt-codex-connector[bot]"),
     stabilizeIntervalSeconds,
     stabilizeCount,
-    codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
     // TY-334: 0 disables ACK polling. Max bounds keep the worst-case
     // timeout × (maxReposts + 1) at 120 × 4 = 480s — under the bumped 10-min
     // init job timeout and well under the 30-min loop budget.

@@ -89,10 +89,6 @@ inputs:
     description: "TY-334: hard cap on @codex review reposts when no ACK arrives. After this many, post-fix demotes to stopped/codex_request_failed. Default 2, max 3."
     required: false
     default: "2"
-  codex-review-marker:
-    description: "Text marker in Codex summary comment"
-    required: false
-    default: "Codex Review"
   stabilize-interval-seconds:
     description: "Polling interval (seconds) for comment count stabilization safeguard"
     required: false
@@ -196,7 +192,6 @@ runs:
         codex-ack-timeout-seconds: ${{ inputs.codex-ack-timeout-seconds }}
         codex-ack-poll-interval-seconds: ${{ inputs.codex-ack-poll-interval-seconds }}
         codex-ack-max-reposts: ${{ inputs.codex-ack-max-reposts }}
-        codex-review-marker: ${{ inputs.codex-review-marker }}
         stabilize-interval-seconds: ${{ inputs.stabilize-interval-seconds }}
         stabilize-count: ${{ inputs.stabilize-count }}
         looppilot-label: ${{ inputs.looppilot-label }}

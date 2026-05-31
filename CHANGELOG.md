@@ -10,6 +10,31 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+### Removed
+- Dead `codex-review-marker` action input and `codexReviewMarker` config field
+  (config-wiring audit, CW-1). The value was wired through every layer into
+  `config.codexReviewMarker` but read by no entrypoint or helper; in-job Codex
+  detection matches on `CODEX_BOT_LOGIN` (comment author), not marker text. The
+  `CODEX_REVIEW_MARKER` Repository variable still works as the workflow trigger
+  gate (`if:` in loop.yml), exactly as documented in event-design.md — so this
+  is not an adopter-facing behavior change.
+
+### Fixed
+- `docs/operations/security.md` (CW-2): the nested-dotfile remediation no longer
+  points operators at the removed `scope-additional-hard-block-prefixes` input
+  (removed in v1.1.0, TY-350); it now recommends the live `LOOPPILOT_BLOCK_PATHS`.
+
+### Added
+- `CLAUDE_CODE_MAX_TURNS` documented in README.md / README.ja.md (F2 — it was
+  wired and functional but undocumented).
+- README.ja.md variable table brought to parity with README.md (CW-3):
+  `LOOPPILOT_SCOPE_MAX_FILES` / `_LINES`, `CODEX_ACK_TIMEOUT_SECONDS`,
+  `CODEX_ACK_MAX_REPOSTS`.
+- `tests/config-wiring.test.ts`: matrix-completeness CI guards (no dead config
+  field, composite forwards every operator input, docs never cite removed
+  inputs, EN/JA README tables stay in sync) so the recurring config-wiring
+  regression class (TY-335 / TY-337 / TY-350) fails CI going forward.
+
 ## [1.3.0] - 2026-05-31
 
 Backfill of the PoC #137–#160 fix/security wave that the initial extraction

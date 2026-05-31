@@ -13,7 +13,6 @@ const baseConfig: Config = {
   codexBotLogin: "chatgpt-codex-connector[bot]",
   stabilizeIntervalSeconds: 10,
   stabilizeCount: 3,
-  codexReviewMarker: "Codex Review",
   codexReviewRequestToken: "codex-token",
   autoReviewPushToken: "github-token",
   anthropicApiKey: "",

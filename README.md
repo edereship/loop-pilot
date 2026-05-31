@@ -139,6 +139,7 @@ Set these as GitHub Actions repository variables in the target repository.
 | `LOOPPILOT_SCOPE_MAX_LINES` | `1000` | A faithful repair legitimately needs more changed lines than the default. |
 | `CODEX_ACK_TIMEOUT_SECONDS` | `90` | Tune how long LoopPilot waits for Codex to acknowledge an `@codex review` (👀) before re-requesting; `0` disables the ACK watchdog. |
 | `CODEX_ACK_MAX_REPOSTS` | `2` | Tune how many times LoopPilot re-requests `@codex review` when Codex does not respond, before stopping with `codex_request_failed`. |
+| `CLAUDE_CODE_MAX_TURNS` | `40` | Tune the max agent turns per fix attempt, forwarded to claude-code-action's `--max-turns`. |
 
 All inputs are documented in [loop/action.yml](loop/action.yml) and [init/action.yml](init/action.yml).
 
