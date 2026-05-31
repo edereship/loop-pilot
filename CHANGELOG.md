@@ -10,6 +10,13 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-31
+
+Config-wiring audit follow-ups (#29). The end-to-end config chain was found
+intact (TY-335/337/350 confirmed fixed); these close the remaining gaps and add
+CI guards so the regression class cannot silently return. Touches the
+`@v1`-consumed surface (no adopter-facing behavior change).
+
 ### Removed
 - Dead `codex-review-marker` action input and `codexReviewMarker` config field
   (config-wiring audit, CW-1). The value was wired through every layer into
