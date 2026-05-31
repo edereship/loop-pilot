@@ -622,6 +622,11 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
           doneState,
           config.maxReviewIterations,
         ),
+        // BUG-01: surface dropped (unparseable-severity) Codex comments on the
+        // completion comment so an all-unparseable review is not silently
+        // reported as a clean `done`. Log-only previously (`skipped.unparseable`
+        // warning above).
+        unparseableComments: skipped.unparseable,
       },
     );
     if (config.autoMergeOnClean) {
@@ -636,26 +641,45 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
         runId !== ""
           ? `${serverUrl}/${config.repoOwner}/${config.repoName}/actions/runs/${runId}`
           : `${serverUrl}/${config.repoOwner}/${config.repoName}/actions`;
-      await deps.mergeIfChecksPass(
-        config.repoOwner,
-        config.repoName,
-        config.prNumber,
-        config.githubToken,
-        { info: deps.info, warning: deps.warning },
-        {
-          pollIntervalMs: config.autoMergePollSeconds * 1000,
-          timeoutMs: config.autoMergeTimeoutMinutes * 60 * 1000,
-          postSkipNotification: (kind) =>
-            deps.postAutoMergeSkipNotification(
-              config.repoOwner,
-              config.repoName,
-              config.prNumber,
-              kind,
-              runUrl,
-              config.githubToken,
-            ),
-        },
-      );
+      if (skipped.unparseable > 0) {
+        // BUG-01 follow-up: the `done / no_findings` result is uncertain when
+        // some Codex comments could not be parsed for severity. Withhold
+        // auto-merge and notify so an operator reviews the skipped comment(s)
+        // before the PR merges — a Codex output-format drift must not silently
+        // auto-merge a PR with un-triaged findings.
+        deps.warning(
+          `[pre-fix] Withholding auto-merge: ${skipped.unparseable} unparseable Codex comment(s) on a no-findings result.`,
+        );
+        await deps.postAutoMergeSkipNotification(
+          config.repoOwner,
+          config.repoName,
+          config.prNumber,
+          { kind: "unparseable_findings", count: skipped.unparseable },
+          runUrl,
+          config.githubToken,
+        );
+      } else {
+        await deps.mergeIfChecksPass(
+          config.repoOwner,
+          config.repoName,
+          config.prNumber,
+          config.githubToken,
+          { info: deps.info, warning: deps.warning },
+          {
+            pollIntervalMs: config.autoMergePollSeconds * 1000,
+            timeoutMs: config.autoMergeTimeoutMinutes * 60 * 1000,
+            postSkipNotification: (kind) =>
+              deps.postAutoMergeSkipNotification(
+                config.repoOwner,
+                config.repoName,
+                config.prNumber,
+                kind,
+                runUrl,
+                config.githubToken,
+              ),
+          },
+        );
+      }
     }
     return;
   }

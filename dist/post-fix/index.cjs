@@ -20049,12 +20049,16 @@ function buildStatusCommentPermalink(owner, name, pr, statusCommentId) {
 }
 function buildTerminalNotificationBody(kind, permalink) {
   switch (kind.kind) {
-    case "done":
-      return [
-        `\u2705 **LoopPilot completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
-        "",
-        `See the [status comment](${permalink}) for the full history.`
-      ].join("\n");
+    case "done": {
+      const lines = [
+        `\u2705 **LoopPilot completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`
+      ];
+      if (kind.unparseableComments !== void 0 && kind.unparseableComments > 0) {
+        lines.push("", `\u26A0\uFE0F ${kind.unparseableComments} Codex comment(s) could not be parsed for severity and were skipped \u2014 review them manually in case a finding was missed (possible Codex output-format drift).`);
+      }
+      lines.push("", `See the [status comment](${permalink}) for the full history.`);
+      return lines.join("\n");
+    }
     case "stopped": {
       const label = STOP_REASON_LABELS[kind.stopReason];
       const actionLine = kind.remainingFindings !== void 0 ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.` : "Manual intervention required.";

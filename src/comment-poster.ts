@@ -175,7 +175,7 @@ export function nextActionForStopReason(reason: StopReason): string {
  * stay aggregated in the status comment (TY-228 / TY-259).
  */
 export type TerminalNotificationKind =
-  | { kind: "done"; iterations: number }
+  | { kind: "done"; iterations: number; unparseableComments?: number }
   | { kind: "stopped"; stopReason: StopReason; remainingFindings?: number }
   | { kind: "init_incomplete" };
 
@@ -202,12 +202,24 @@ export function buildTerminalNotificationBody(
   permalink: string,
 ): string {
   switch (kind.kind) {
-    case "done":
-      return [
+    case "done": {
+      const lines = [
         `✅ **LoopPilot completed** — no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
-        "",
-        `See the [status comment](${permalink}) for the full history.`,
-      ].join("\n");
+      ];
+      // BUG-01: when Codex posted inline comments the severity parser could not
+      // classify, `filterAndParseComments` drops them and the loop reports
+      // `done / no_findings`. Surface the dropped count here (not log-only) so a
+      // Codex output-format drift cannot silently report a clean PR while real
+      // findings were skipped.
+      if (kind.unparseableComments !== undefined && kind.unparseableComments > 0) {
+        lines.push(
+          "",
+          `⚠️ ${kind.unparseableComments} Codex comment(s) could not be parsed for severity and were skipped — review them manually in case a finding was missed (possible Codex output-format drift).`,
+        );
+      }
+      lines.push("", `See the [status comment](${permalink}) for the full history.`);
+      return lines.join("\n");
+    }
     case "stopped": {
       const label = STOP_REASON_LABELS[kind.stopReason];
       const actionLine =
@@ -295,7 +307,13 @@ export type AutoMergeSkipKind =
   | { kind: "ci_failed"; failures: ReadonlyArray<{ name: string; conclusion: string }> }
   | { kind: "timeout_no_runs"; timeoutMinutes: number }
   | { kind: "timeout_pending"; timeoutMinutes: number; pending: ReadonlyArray<string> }
-  | { kind: "merge_call_failed"; detail: string };
+  | { kind: "merge_call_failed"; detail: string }
+  // BUG-01 follow-up: not emitted by `mergeIfChecksPass`. Pre-fix posts this
+  // (instead of calling the merger at all) when the `done / no_findings` result
+  // is based on a review where some Codex comments could not be parsed for
+  // severity — auto-merging an uncertain "clean" result would defeat the manual
+  // review the dropped comments warrant.
+  | { kind: "unparseable_findings"; count: number };
 
 /**
  * Marker prefix used by every auto-merge skip notification. Operators can
@@ -377,6 +395,14 @@ export function buildAutoMergeSkipBody(
         `${AUTO_MERGE_SKIP_PREFIX} — \`gh pr merge\` was rejected: ${kind.detail}.`,
         "",
         "Most common cause: Repository Settings → General → \"Allow auto-merge\" is disabled (TY-288). Enable it and re-run, or merge manually. Branch protection rules can also reject the merge — check the workflow run logs for the exact gh error.",
+        "",
+        `Workflow run: ${runUrl}`,
+      ].join("\n");
+    case "unparseable_findings":
+      return [
+        `${AUTO_MERGE_SKIP_PREFIX} — ${kind.count} Codex comment(s) could not be parsed for severity.`,
+        "",
+        "LoopPilot found no parseable findings, but because some Codex comments could not be classified this \"clean\" result is uncertain. Auto-merge was withheld. Review the unparseable comment(s) manually and merge if appropriate (possible Codex output-format drift).",
         "",
         `Workflow run: ${runUrl}`,
       ].join("\n");
@@ -525,12 +551,37 @@ export async function postCompletionComment(
   pr: number,
   iterations: number,
   token: string,
-  options?: { autoMergeOnClean?: boolean; progress?: IterationProgress },
+  options?: {
+    autoMergeOnClean?: boolean;
+    progress?: IterationProgress;
+    /**
+     * BUG-01: count of Codex inline comments whose severity the parser could
+     * not classify (`skipped.unparseable`). When > 0 the completion comment
+     * surfaces a caution so an all-unparseable review (Codex format drift) is
+     * not silently reported as a clean `done`. The state transition is
+     * unchanged — this only adds operator-visible context.
+     */
+    unparseableComments?: number;
+  },
 ): Promise<number> {
   const autoMergeOnClean = options?.autoMergeOnClean ?? false;
-  const nextAction = autoMergeOnClean
-    ? "Auto-merge will be attempted — the PR will squash-merge once all other CI checks pass; merge manually if it does not."
-    : "Review the changes and merge manually.";
+  const unparseableComments = options?.unparseableComments ?? 0;
+  // When unparseable comments are present, auto-merge is withheld (main-pre-fix
+  // calls postAutoMergeSkipNotification instead of mergeIfChecksPass), so the
+  // nextAction must always instruct manual merge in that case regardless of the
+  // autoMergeOnClean setting.
+  const baseNextAction =
+    autoMergeOnClean && unparseableComments === 0
+      ? "Auto-merge will be attempted — the PR will squash-merge once all other CI checks pass; merge manually if it does not."
+      : "Review the changes and merge manually.";
+  const nextAction =
+    unparseableComments > 0
+      ? `${unparseableComments} Codex comment(s) could not be parsed for severity and were skipped — review them manually before relying on this result. ${baseNextAction}`
+      : baseNextAction;
+  const completionBody =
+    unparseableComments > 0
+      ? `All parseable in-scope findings (at or above the configured severity threshold) have been resolved.\n\n⚠️ ${unparseableComments} Codex comment(s) could not be parsed for severity and were skipped — review them manually in case a finding was missed (possible Codex output-format drift).`
+      : "All in-scope findings (at or above the configured severity threshold) have been resolved.";
   const statusCommentId = await applyStatusUpdate(
     owner,
     name,
@@ -543,7 +594,7 @@ export async function postCompletionComment(
       newEntry: entry(
         "completed",
         `LoopPilot completed (${iterations} iterations)`,
-        "All in-scope findings (at or above the configured severity threshold) have been resolved.",
+        completionBody,
       ),
     },
     token,
@@ -553,7 +604,11 @@ export async function postCompletionComment(
     name,
     pr,
     statusCommentId,
-    { kind: "done", iterations },
+    {
+      kind: "done",
+      iterations,
+      unparseableComments: unparseableComments > 0 ? unparseableComments : undefined,
+    },
     token,
   );
   return statusCommentId;

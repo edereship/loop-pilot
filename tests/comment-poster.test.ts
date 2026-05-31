@@ -100,6 +100,28 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
     expect(body).not.toContain("1 iterations");
   });
 
+  it("BUG-01: surfaces dropped unparseable Codex comments on the done body", () => {
+    const body = buildTerminalNotificationBody(
+      { kind: "done", iterations: 2, unparseableComments: 3 },
+      permalink,
+    );
+    expect(body).toContain("✅");
+    expect(body).toContain("3 Codex comment(s) could not be parsed");
+    expect(body).toContain("review them manually");
+  });
+
+  it("BUG-01: omits the unparseable caution when the count is zero / absent", () => {
+    expect(
+      buildTerminalNotificationBody(
+        { kind: "done", iterations: 2, unparseableComments: 0 },
+        permalink,
+      ),
+    ).not.toContain("could not be parsed");
+    expect(
+      buildTerminalNotificationBody({ kind: "done", iterations: 2 }, permalink),
+    ).not.toContain("could not be parsed");
+  });
+
   it("renders the stopped body with the reason label and remaining count", () => {
     const body = buildTerminalNotificationBody(
       {
@@ -522,6 +544,66 @@ describe("postCompletionComment (TY-291 #4)", () => {
     };
     expect(update.nextAction).toBe("Review the changes and merge manually.");
   });
+
+  it("BUG-01: surfaces unparseable Codex comments in the entry body, nextAction, and top-level notification", async () => {
+    await postCompletionComment(
+      "team-yubune",
+      "loop-pilot",
+      65,
+      2,
+      "token",
+      { autoMergeOnClean: false, unparseableComments: 2 },
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as {
+      nextAction: string;
+      newEntry: { body: string };
+    };
+    expect(update.nextAction).toContain(
+      "2 Codex comment(s) could not be parsed for severity",
+    );
+    expect(update.newEntry.body).toContain("could not be parsed for severity");
+    // The top-level notification (GitHub inbox) must also carry the caution so
+    // it is not log-only.
+    const { body } = expectPostCommentInvocation(mockedGhApi.mock.calls[0]);
+    expect(body).toContain("2 Codex comment(s) could not be parsed");
+  });
+
+  it("BUG-01: leaves the completion comment unchanged when no comments were unparseable", async () => {
+    await postCompletionComment(
+      "team-yubune",
+      "loop-pilot",
+      65,
+      2,
+      "token",
+      { autoMergeOnClean: false, unparseableComments: 0 },
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as {
+      nextAction: string;
+      newEntry: { body: string };
+    };
+    expect(update.nextAction).toBe("Review the changes and merge manually.");
+    expect(update.newEntry.body).not.toContain("could not be parsed");
+  });
+
+  it("Finding 1: uses manual-merge nextAction when autoMergeOnClean=true but unparseableComments > 0", async () => {
+    // Auto-merge is withheld by main-pre-fix when unparseable comments exist,
+    // so the completion comment must not tell operators that auto-merge will be
+    // attempted — that would be contradictory and cause indefinite waiting.
+    await postCompletionComment(
+      "team-yubune",
+      "loop-pilot",
+      65,
+      2,
+      "token",
+      { autoMergeOnClean: true, unparseableComments: 3 },
+    );
+    const update = mockedUpsertStatusComment.mock.calls[0]![3] as {
+      nextAction: string;
+    };
+    expect(update.nextAction).not.toContain("Auto-merge will be attempted");
+    expect(update.nextAction).toContain("merge manually");
+    expect(update.nextAction).toContain("3 Codex comment(s) could not be parsed");
+  });
 });
 
 describe("postStopComment (TY-291 #4)", () => {
@@ -627,12 +709,23 @@ describe("buildAutoMergeSkipBody (TY-295)", () => {
       { kind: "timeout_no_runs", timeoutMinutes: 10 },
       { kind: "timeout_pending", timeoutMinutes: 10, pending: ["ci"] },
       { kind: "merge_call_failed", detail: "x" },
+      { kind: "unparseable_findings", count: 1 },
     ];
     for (const kind of kinds) {
       const body = buildAutoMergeSkipBody(kind, RUN_URL);
       expect(body.startsWith(AUTO_MERGE_SKIP_PREFIX)).toBe(true);
       expect(body).toContain(`Workflow run: ${RUN_URL}`);
     }
+  });
+
+  it("BUG-01: unparseable_findings explains the withheld auto-merge and the manual-review next step", () => {
+    const body = buildAutoMergeSkipBody(
+      { kind: "unparseable_findings", count: 3 },
+      RUN_URL,
+    );
+    expect(body).toContain("3 Codex comment(s) could not be parsed for severity");
+    expect(body).toContain("Auto-merge was withheld");
+    expect(body).toContain("Review the unparseable comment(s) manually");
   });
 
   it("ci_failed lists every failed run with its name and conclusion (operator decides /restart-review vs manual fix)", () => {

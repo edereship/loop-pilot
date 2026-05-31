@@ -20398,12 +20398,16 @@ function buildStatusCommentPermalink(owner, name, pr, statusCommentId) {
 }
 function buildTerminalNotificationBody(kind, permalink) {
   switch (kind.kind) {
-    case "done":
-      return [
-        `\u2705 **LoopPilot completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
-        "",
-        `See the [status comment](${permalink}) for the full history.`
-      ].join("\n");
+    case "done": {
+      const lines = [
+        `\u2705 **LoopPilot completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`
+      ];
+      if (kind.unparseableComments !== void 0 && kind.unparseableComments > 0) {
+        lines.push("", `\u26A0\uFE0F ${kind.unparseableComments} Codex comment(s) could not be parsed for severity and were skipped \u2014 review them manually in case a finding was missed (possible Codex output-format drift).`);
+      }
+      lines.push("", `See the [status comment](${permalink}) for the full history.`);
+      return lines.join("\n");
+    }
     case "stopped": {
       const label = STOP_REASON_LABELS[kind.stopReason];
       const actionLine = kind.remainingFindings !== void 0 ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.` : "Manual intervention required.";
@@ -20500,6 +20504,14 @@ function buildAutoMergeSkipBody(kind, runUrl) {
         "",
         `Workflow run: ${runUrl}`
       ].join("\n");
+    case "unparseable_findings":
+      return [
+        `${AUTO_MERGE_SKIP_PREFIX} \u2014 ${kind.count} Codex comment(s) could not be parsed for severity.`,
+        "",
+        'LoopPilot found no parseable findings, but because some Codex comments could not be classified this "clean" result is uncertain. Auto-merge was withheld. Review the unparseable comment(s) manually and merge if appropriate (possible Codex output-format drift).',
+        "",
+        `Workflow run: ${runUrl}`
+      ].join("\n");
   }
 }
 async function recentAutoMergeSkipExists(owner, name, pr, token) {
@@ -20545,15 +20557,24 @@ async function postAutoMergeSkipNotification(owner, name, pr, kind, runUrl, toke
 }
 async function postCompletionComment(owner, name, pr, iterations, token, options) {
   const autoMergeOnClean = options?.autoMergeOnClean ?? false;
-  const nextAction = autoMergeOnClean ? "Auto-merge will be attempted \u2014 the PR will squash-merge once all other CI checks pass; merge manually if it does not." : "Review the changes and merge manually.";
+  const unparseableComments = options?.unparseableComments ?? 0;
+  const baseNextAction = autoMergeOnClean && unparseableComments === 0 ? "Auto-merge will be attempted \u2014 the PR will squash-merge once all other CI checks pass; merge manually if it does not." : "Review the changes and merge manually.";
+  const nextAction = unparseableComments > 0 ? `${unparseableComments} Codex comment(s) could not be parsed for severity and were skipped \u2014 review them manually before relying on this result. ${baseNextAction}` : baseNextAction;
+  const completionBody = unparseableComments > 0 ? `All parseable in-scope findings (at or above the configured severity threshold) have been resolved.
+
+\u26A0\uFE0F ${unparseableComments} Codex comment(s) could not be parsed for severity and were skipped \u2014 review them manually in case a finding was missed (possible Codex output-format drift).` : "All in-scope findings (at or above the configured severity threshold) have been resolved.";
   const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
     current: "Completed",
     openFindings: 0,
     nextAction,
     ...progressUpdate(options?.progress),
-    newEntry: entry("completed", `LoopPilot completed (${iterations} iterations)`, "All in-scope findings (at or above the configured severity threshold) have been resolved.")
+    newEntry: entry("completed", `LoopPilot completed (${iterations} iterations)`, completionBody)
   }, token);
-  await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "done", iterations }, token);
+  await postTerminalNotification(owner, name, pr, statusCommentId, {
+    kind: "done",
+    iterations,
+    unparseableComments: unparseableComments > 0 ? unparseableComments : void 0
+  }, token);
   return statusCommentId;
 }
 async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token, progress) {
@@ -22069,17 +22090,27 @@ async function runPreFix(config, deps = defaultDeps3) {
       return;
     await deps.postCompletionComment(config.repoOwner, config.repoName, config.prNumber, doneState.iterationCount, config.githubToken, {
       autoMergeOnClean: config.autoMergeOnClean,
-      progress: deriveIterationProgress(doneState, config.maxReviewIterations)
+      progress: deriveIterationProgress(doneState, config.maxReviewIterations),
+      // BUG-01: surface dropped (unparseable-severity) Codex comments on the
+      // completion comment so an all-unparseable review is not silently
+      // reported as a clean `done`. Log-only previously (`skipped.unparseable`
+      // warning above).
+      unparseableComments: skipped.unparseable
     });
     if (config.autoMergeOnClean) {
       const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
       const runId = process.env.GITHUB_RUN_ID || "";
       const runUrl = runId !== "" ? `${serverUrl}/${config.repoOwner}/${config.repoName}/actions/runs/${runId}` : `${serverUrl}/${config.repoOwner}/${config.repoName}/actions`;
-      await deps.mergeIfChecksPass(config.repoOwner, config.repoName, config.prNumber, config.githubToken, { info: deps.info, warning: deps.warning }, {
-        pollIntervalMs: config.autoMergePollSeconds * 1e3,
-        timeoutMs: config.autoMergeTimeoutMinutes * 60 * 1e3,
-        postSkipNotification: (kind) => deps.postAutoMergeSkipNotification(config.repoOwner, config.repoName, config.prNumber, kind, runUrl, config.githubToken)
-      });
+      if (skipped.unparseable > 0) {
+        deps.warning(`[pre-fix] Withholding auto-merge: ${skipped.unparseable} unparseable Codex comment(s) on a no-findings result.`);
+        await deps.postAutoMergeSkipNotification(config.repoOwner, config.repoName, config.prNumber, { kind: "unparseable_findings", count: skipped.unparseable }, runUrl, config.githubToken);
+      } else {
+        await deps.mergeIfChecksPass(config.repoOwner, config.repoName, config.prNumber, config.githubToken, { info: deps.info, warning: deps.warning }, {
+          pollIntervalMs: config.autoMergePollSeconds * 1e3,
+          timeoutMs: config.autoMergeTimeoutMinutes * 60 * 1e3,
+          postSkipNotification: (kind) => deps.postAutoMergeSkipNotification(config.repoOwner, config.repoName, config.prNumber, kind, runUrl, config.githubToken)
+        });
+      }
     }
     return;
   }

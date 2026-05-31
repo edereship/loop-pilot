@@ -379,6 +379,47 @@ describe("runPreFix", () => {
     );
   });
 
+  it("BUG-01 follow-up: withholds auto-merge and notifies when the no-findings result has unparseable Codex comments", async () => {
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      [
+        {
+          id: 300,
+          user: { login: "chatgpt-codex-connector[bot]" },
+          // No severity badge and no P0/P1 keyword → parseSeverity returns null
+          // → counted as skipped.unparseable, findings stays empty.
+          body: "General observation about naming conventions.",
+          path: "src/x.ts",
+          line: 5,
+          createdAt: "2026-05-14T11:30:00Z",
+        },
+      ],
+    );
+
+    await runPreFix({ ...baseConfig, autoMergeOnClean: true }, deps);
+
+    // State transition is unchanged — still done/no_findings.
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "loop-pilot",
+      100,
+      expect.objectContaining({ status: "done", stopReason: "no_findings" }),
+      "github-token",
+      expect.any(Object),
+    );
+    // ...but auto-merge is withheld and the operator is notified instead.
+    expect(deps.mergeIfChecksPass).not.toHaveBeenCalled();
+    expect(deps.postAutoMergeSkipNotification).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(deps.postAutoMergeSkipNotification).mock.calls[0]!;
+    expect(call[3]).toEqual({ kind: "unparseable_findings", count: 1 });
+  });
+
   it("plumbs postAutoMergeSkipNotification through to mergeIfChecksPass via the postSkipNotification hook (TY-295)", async () => {
     // Invoking the bound hook must call postAutoMergeSkipNotification with
     // the PR triple, the kind, a non-empty runUrl (operator follow-up
