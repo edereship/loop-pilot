@@ -4,7 +4,7 @@ import {
   PREVIOUS_CHECK_FAILURE_MAX_CHARS,
   truncatePreviousCheckFailure,
 } from "./claude-code-repair-request.js";
-import type { ReviewState } from "./types.js";
+import { STOP_REASON_LABELS, type ReviewState } from "./types.js";
 
 /**
  * Safety-margin upper bound for `previousCheckFailure` length on the read
@@ -31,6 +31,30 @@ const STATE_COMMENT_VISIBLE_TEXT = "LoopPilot state is stored in this comment.";
 const MAX_HISTORY_ENTRIES = 20;
 const MAX_SERIALIZED_BYTES = 65000;
 const VALID_STATUSES = new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+const VALID_STOP_REASONS = new Set<string>(Object.keys(STOP_REASON_LABELS));
+
+// TY-339 #1: `serializeState`'s step-3 floor (drop `previousCheckFailure` to
+// null) only really "guarantees the body fits" if every *other* string field
+// is bounded too. `validateState` already caps `previousCheckFailure`
+// (PREVIOUS_CHECK_FAILURE_READ_LIMIT) but left `lastClaudeCommitSha`,
+// `lastFindingsHash`, and `findingsHashHistory[].hash` length-unbounded, so a
+// hand-edited / tampered state could pass validation and still push the floor
+// body past GitHub's 65,536-char comment-body limit. Cap them generously above
+// any legitimate value: a git SHA is 40 hex (64 for SHA-256) and the findings
+// hash is the 16-hex prefix produced by `computeFindingsHash`.
+const LAST_CLAUDE_COMMIT_SHA_MAX_CHARS = 64;
+const FINDINGS_HASH_MAX_CHARS = 64;
+
+// TY-339 #1 follow-up: the `serializeState` step-3 floor keeps these two
+// timestamp fields verbatim (it only nulls `previousCheckFailure` and trims
+// history to one entry), so they must be length-bounded for the floor's
+// "body fits under MAX_SERIALIZED_BYTES" guarantee to actually hold — the same
+// reasoning that capped `lastClaudeCommitSha` / `lastFindingsHash` /
+// `findingsHashHistory[].hash` above. The loop only ever writes short ISO-8601
+// strings (~24 chars); 64 leaves generous headroom so every legitimate /
+// legacy value passes and only a tampered oversized blob is rejected
+// (→ `state_corrupted`, symmetric with the SHA / hash fields).
+const TIMESTAMP_MAX_CHARS = 64;
 
 // TY-272 #A: trust-boundary author filter for the hidden state comment.
 //
@@ -107,11 +131,43 @@ function validateState(obj: unknown): obj is ReviewState {
   ) {
     return false;
   }
-  if (s.lastClaudeCommitSha !== null && typeof s.lastClaudeCommitSha !== "string") return false;
+  // TY-339 #1: bound the length so a tampered SHA cannot break the
+  // serializeState step-3 floor guarantee.
+  if (
+    s.lastClaudeCommitSha !== null &&
+    (typeof s.lastClaudeCommitSha !== "string" ||
+      s.lastClaudeCommitSha.length > LAST_CLAUDE_COMMIT_SHA_MAX_CHARS)
+  ) {
+    return false;
+  }
   if (s.lastCodexRequestCommentId !== null && typeof s.lastCodexRequestCommentId !== "number") return false;
-  if (s.lastCodexReviewReceivedAt !== null && typeof s.lastCodexReviewReceivedAt !== "string") return false;
-  if (s.lastFindingsHash !== null && typeof s.lastFindingsHash !== "string") return false;
-  if (s.stopReason !== null && typeof s.stopReason !== "string") return false;
+  // TY-339 #1 follow-up: bound the length (see TIMESTAMP_MAX_CHARS) so a
+  // tampered timestamp cannot break the serializeState step-3 floor guarantee.
+  if (
+    s.lastCodexReviewReceivedAt !== null &&
+    (typeof s.lastCodexReviewReceivedAt !== "string" ||
+      s.lastCodexReviewReceivedAt.length > TIMESTAMP_MAX_CHARS)
+  ) {
+    return false;
+  }
+  // TY-339 #1: same length bound for the findings hash (16 hex in normal use).
+  if (
+    s.lastFindingsHash !== null &&
+    (typeof s.lastFindingsHash !== "string" ||
+      s.lastFindingsHash.length > FINDINGS_HASH_MAX_CHARS)
+  ) {
+    return false;
+  }
+  // TY-339 #1: validate `stopReason` against the `StopReason` union (symmetric
+  // with the `lastProcessedTriggerSource` / `modelTier` enum checks) rather
+  // than accepting any string. This bounds its length for the serialize floor
+  // and stops a forged state from smuggling in an arbitrary stopReason.
+  if (
+    s.stopReason !== null &&
+    (typeof s.stopReason !== "string" || !VALID_STOP_REASONS.has(s.stopReason))
+  ) {
+    return false;
+  }
   // previousCheckFailure was added after the initial release; tolerate both
   // missing and explicit-null/string shapes. Missing is normalized to null below.
   if (
@@ -137,7 +193,10 @@ function validateState(obj: unknown): obj is ReviewState {
   if (
     "fixingStartedAt" in s &&
     s.fixingStartedAt !== null &&
-    typeof s.fixingStartedAt !== "string"
+    (typeof s.fixingStartedAt !== "string" ||
+      // TY-339 #1 follow-up: same length bound as lastCodexReviewReceivedAt —
+      // the step-3 floor keeps fixingStartedAt verbatim too.
+      s.fixingStartedAt.length > TIMESTAMP_MAX_CHARS)
   ) {
     return false;
   }
@@ -146,7 +205,15 @@ function validateState(obj: unknown): obj is ReviewState {
   for (const entry of s.findingsHashHistory) {
     if (typeof entry !== "object" || entry === null) return false;
     const e = entry as Record<string, unknown>;
-    if (typeof e.iteration !== "number" || typeof e.hash !== "string") return false;
+    // TY-339 #1: bound `hash` length (16 hex in normal use) so a tampered
+    // history entry cannot break the serializeState step-3 floor guarantee.
+    if (
+      typeof e.iteration !== "number" ||
+      typeof e.hash !== "string" ||
+      e.hash.length > FINDINGS_HASH_MAX_CHARS
+    ) {
+      return false;
+    }
     // modelTier was added by TY-243. Missing is tolerated for backward
     // compatibility (treated as `"escalated"` by `loop-detector`); present
     // values must be one of the known tiers.

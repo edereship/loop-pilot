@@ -19401,6 +19401,25 @@ function truncatePreviousCheckFailure(output, maxChars = PREVIOUS_CHECK_FAILURE_
   return head + leadingNewline + marker + tail;
 }
 
+// dist/types.js
+var STOP_REASON_LABELS = {
+  no_findings: "no findings at or above the severity threshold \u2014 done",
+  max_iterations: "max iterations reached \u2014 `/restart-review --hard` to retry",
+  loop_detected: "same findings repeated at escalated tier \u2014 review the finding manually",
+  test_failure: "CHECK_COMMAND failed after the repair \u2014 fix the failure and `/restart-review`",
+  state_corrupted: "hidden state JSON corrupted \u2014 see docs/operations/stop-and-recovery.md",
+  state_conflict: "hidden state changed concurrently \u2014 wait, then `/restart-review`",
+  workflow_crashed: "auto-fix workflow crashed \u2014 `/restart-review` to resume",
+  action_timeout: "Claude Code Action timed out \u2014 `/restart-review` to retry",
+  action_failure: "Claude Code Action exited non-zero \u2014 check the workflow run",
+  scope_violation: "repair touched blocked paths \u2014 adjust `LOOPPILOT_BLOCK_PATHS` or revert",
+  max_turns_exceeded: "Claude Code Action hit `--max-turns` \u2014 `/restart-review` escalates tier",
+  codex_usage_limit: "Codex quota exhausted \u2014 wait for reset, then `/restart-review`",
+  codex_request_failed: "could not re-post `@codex review` \u2014 fix Codex auth, then `/restart-review`",
+  secret_leak_suspected: "auto-fix output looks like a secret \u2014 review, then `/restart-review --hard`",
+  action_no_op: "Claude Code Action made no file changes \u2014 review the findings manually"
+};
+
 // dist/state-manager.js
 var PREVIOUS_CHECK_FAILURE_READ_LIMIT = PREVIOUS_CHECK_FAILURE_MAX_CHARS * 2;
 var STATE_MARKER = "looppilot-state";
@@ -19410,6 +19429,10 @@ var STATE_COMMENT_VISIBLE_TEXT = "LoopPilot state is stored in this comment.";
 var MAX_HISTORY_ENTRIES = 20;
 var MAX_SERIALIZED_BYTES = 65e3;
 var VALID_STATUSES = /* @__PURE__ */ new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
+var VALID_STOP_REASONS = new Set(Object.keys(STOP_REASON_LABELS));
+var LAST_CLAUDE_COMMIT_SHA_MAX_CHARS = 64;
+var FINDINGS_HASH_MAX_CHARS = 64;
+var TIMESTAMP_MAX_CHARS = 64;
 var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
 var TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 function getTrustedStateCommentAuthors(env = process.env) {
@@ -19439,31 +19462,38 @@ function validateState(obj) {
   if ("lastProcessedTriggerSource" in s && s.lastProcessedTriggerSource !== null && s.lastProcessedTriggerSource !== "comment" && s.lastProcessedTriggerSource !== "review") {
     return false;
   }
-  if (s.lastClaudeCommitSha !== null && typeof s.lastClaudeCommitSha !== "string")
+  if (s.lastClaudeCommitSha !== null && (typeof s.lastClaudeCommitSha !== "string" || s.lastClaudeCommitSha.length > LAST_CLAUDE_COMMIT_SHA_MAX_CHARS)) {
     return false;
+  }
   if (s.lastCodexRequestCommentId !== null && typeof s.lastCodexRequestCommentId !== "number")
     return false;
-  if (s.lastCodexReviewReceivedAt !== null && typeof s.lastCodexReviewReceivedAt !== "string")
+  if (s.lastCodexReviewReceivedAt !== null && (typeof s.lastCodexReviewReceivedAt !== "string" || s.lastCodexReviewReceivedAt.length > TIMESTAMP_MAX_CHARS)) {
     return false;
-  if (s.lastFindingsHash !== null && typeof s.lastFindingsHash !== "string")
+  }
+  if (s.lastFindingsHash !== null && (typeof s.lastFindingsHash !== "string" || s.lastFindingsHash.length > FINDINGS_HASH_MAX_CHARS)) {
     return false;
-  if (s.stopReason !== null && typeof s.stopReason !== "string")
+  }
+  if (s.stopReason !== null && (typeof s.stopReason !== "string" || !VALID_STOP_REASONS.has(s.stopReason))) {
     return false;
+  }
   if ("previousCheckFailure" in s && s.previousCheckFailure !== null && typeof s.previousCheckFailure !== "string") {
     return false;
   }
   if (typeof s.previousCheckFailure === "string" && s.previousCheckFailure.length > PREVIOUS_CHECK_FAILURE_READ_LIMIT) {
     return false;
   }
-  if ("fixingStartedAt" in s && s.fixingStartedAt !== null && typeof s.fixingStartedAt !== "string") {
+  if ("fixingStartedAt" in s && s.fixingStartedAt !== null && (typeof s.fixingStartedAt !== "string" || // TY-339 #1 follow-up: same length bound as lastCodexReviewReceivedAt —
+  // the step-3 floor keeps fixingStartedAt verbatim too.
+  s.fixingStartedAt.length > TIMESTAMP_MAX_CHARS)) {
     return false;
   }
   for (const entry2 of s.findingsHashHistory) {
     if (typeof entry2 !== "object" || entry2 === null)
       return false;
     const e = entry2;
-    if (typeof e.iteration !== "number" || typeof e.hash !== "string")
+    if (typeof e.iteration !== "number" || typeof e.hash !== "string" || e.hash.length > FINDINGS_HASH_MAX_CHARS) {
       return false;
+    }
     if ("modelTier" in e && e.modelTier !== void 0 && e.modelTier !== "base" && e.modelTier !== "escalated") {
       return false;
     }
@@ -19929,25 +19959,6 @@ async function upsertStatusComment(owner, name, pr, update, token, deps = defaul
   await deps.updateStatusComment(owner, name, existing.id, body, token);
   return existing.id;
 }
-
-// dist/types.js
-var STOP_REASON_LABELS = {
-  no_findings: "no findings at or above the severity threshold \u2014 done",
-  max_iterations: "max iterations reached \u2014 `/restart-review --hard` to retry",
-  loop_detected: "same findings repeated at escalated tier \u2014 review the finding manually",
-  test_failure: "CHECK_COMMAND failed after the repair \u2014 fix the failure and `/restart-review`",
-  state_corrupted: "hidden state JSON corrupted \u2014 see docs/operations/stop-and-recovery.md",
-  state_conflict: "hidden state changed concurrently \u2014 wait, then `/restart-review`",
-  workflow_crashed: "auto-fix workflow crashed \u2014 `/restart-review` to resume",
-  action_timeout: "Claude Code Action timed out \u2014 `/restart-review` to retry",
-  action_failure: "Claude Code Action exited non-zero \u2014 check the workflow run",
-  scope_violation: "repair touched blocked paths \u2014 adjust `LOOPPILOT_BLOCK_PATHS` or revert",
-  max_turns_exceeded: "Claude Code Action hit `--max-turns` \u2014 `/restart-review` escalates tier",
-  codex_usage_limit: "Codex quota exhausted \u2014 wait for reset, then `/restart-review`",
-  codex_request_failed: "could not re-post `@codex review` \u2014 fix Codex auth, then `/restart-review`",
-  secret_leak_suspected: "auto-fix output looks like a secret \u2014 review, then `/restart-review --hard`",
-  action_no_op: "Claude Code Action made no file changes \u2014 review the findings manually"
-};
 
 // dist/comment-poster.js
 function nowIso() {

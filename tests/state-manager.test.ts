@@ -211,6 +211,47 @@ describe("serializeState", () => {
     // happened to fit it.
     expect(restored!.previousCheckFailure?.length ?? 0).toBeLessThan(35_000);
   });
+
+  it("TY-339 #1: serialize stays ≤ 65,000 chars AND round-trips with every retained string field at its validateState cap", () => {
+    // The fallback chain's floor claims dropping previousCheckFailure
+    // "guarantees the body fits" because every *other* field is bounded. That
+    // only holds once validateState caps lastClaudeCommitSha / lastFindingsHash
+    // / history hashes / the two retained timestamps (TY-339 #1 + follow-up).
+    // Construct a valid state with all of those at their accepted maxima plus an
+    // oversized previousCheckFailure (forces the fallback path) and assert the
+    // body fits and still deserializes — i.e. the capped fields pass
+    // validateState, so the floor guarantee is real.
+    const state = makeState({
+      status: "stopped",
+      stopReason: "max_iterations",
+      lastClaudeCommitSha: "a".repeat(64),
+      lastFindingsHash: "b".repeat(64),
+      findingsHashHistory: Array.from({ length: 20 }, (_, i) => ({
+        iteration: i + 1,
+        hash: "c".repeat(64),
+        modelTier: "escalated" as const,
+      })),
+      // TY-339 #1 follow-up: the floor also keeps these two timestamps verbatim,
+      // so include them at their validateState cap to assert the guarantee holds
+      // for every retained string field, not just the SHA / hash ones.
+      lastCodexReviewReceivedAt: "d".repeat(64),
+      fixingStartedAt: "e".repeat(64),
+      previousCheckFailure: "Z".repeat(200_000),
+    });
+
+    const serialized = serializeState(state);
+
+    expect(serialized.length).toBeLessThanOrEqual(65_000);
+    const restored = deserializeState(serialized);
+    expect(restored).not.toBeNull();
+    // The fallback bounded previousCheckFailure (Step 2 re-truncate or Step 3
+    // null); the capped non-trimmed fields survived validation intact.
+    expect(restored!.previousCheckFailure?.length ?? 0).toBeLessThan(35_000);
+    expect(restored!.lastClaudeCommitSha).toBe("a".repeat(64));
+    expect(restored!.lastFindingsHash).toBe("b".repeat(64));
+    expect(restored!.lastCodexReviewReceivedAt).toBe("d".repeat(64));
+    expect(restored!.fixingStartedAt).toBe("e".repeat(64));
+  });
 });
 
 describe("deserializeState", () => {
@@ -246,6 +287,94 @@ describe("deserializeState", () => {
       '"iterationCount": 1.5',
     );
     expect(deserializeState(body)).toBeNull();
+  });
+
+  it("rejects an oversized lastClaudeCommitSha (TY-339 #1)", () => {
+    // A tampered/legacy state with a giant SHA would otherwise pass validation
+    // and defeat the serializeState step-3 floor (which keeps this field).
+    const body = serializeState(makeState()).replace(
+      /"lastClaudeCommitSha":\s*null/,
+      `"lastClaudeCommitSha": ${JSON.stringify("a".repeat(65))}`,
+    );
+    expect(deserializeState(body)).toBeNull();
+  });
+
+  it("accepts a full-length (64-char) lastClaudeCommitSha at the cap boundary (TY-339 #1)", () => {
+    const sha = "a".repeat(64);
+    const restored = deserializeState(serializeState(makeState({ lastClaudeCommitSha: sha })));
+    expect(restored).not.toBeNull();
+    expect(restored!.lastClaudeCommitSha).toBe(sha);
+  });
+
+  it("rejects an oversized lastFindingsHash (TY-339 #1)", () => {
+    const restored = deserializeState(
+      serializeState(makeState({ lastFindingsHash: "y".repeat(65) })),
+    );
+    expect(restored).toBeNull();
+  });
+
+  it("rejects an oversized findingsHashHistory[].hash (TY-339 #1)", () => {
+    const restored = deserializeState(
+      serializeState(
+        makeState({ findingsHashHistory: [{ iteration: 1, hash: "x".repeat(65) }] }),
+      ),
+    );
+    expect(restored).toBeNull();
+  });
+
+  it("rejects an oversized lastCodexReviewReceivedAt (TY-339 #1 follow-up)", () => {
+    // The serializeState step-3 floor keeps this timestamp verbatim, so a
+    // tampered/legacy state with a giant value would otherwise pass validation
+    // and push the floor body past GitHub's 65,536-char comment-body limit.
+    const restored = deserializeState(
+      serializeState(makeState({ lastCodexReviewReceivedAt: "z".repeat(65) })),
+    );
+    expect(restored).toBeNull();
+  });
+
+  it("accepts a full-length (64-char) lastCodexReviewReceivedAt at the cap boundary (TY-339 #1 follow-up)", () => {
+    const value = "z".repeat(64);
+    const restored = deserializeState(
+      serializeState(makeState({ lastCodexReviewReceivedAt: value })),
+    );
+    expect(restored).not.toBeNull();
+    expect(restored!.lastCodexReviewReceivedAt).toBe(value);
+  });
+
+  it("rejects an oversized fixingStartedAt (TY-339 #1 follow-up)", () => {
+    // Like lastCodexReviewReceivedAt, fixingStartedAt is kept verbatim by the
+    // step-3 floor, so it must be length-bounded for the floor guarantee.
+    const restored = deserializeState(
+      serializeState(makeState({ status: "fixing", fixingStartedAt: "z".repeat(65) })),
+    );
+    expect(restored).toBeNull();
+  });
+
+  it("accepts a full-length (64-char) fixingStartedAt at the cap boundary (TY-339 #1 follow-up)", () => {
+    const value = "z".repeat(64);
+    const restored = deserializeState(
+      serializeState(makeState({ status: "fixing", fixingStartedAt: value })),
+    );
+    expect(restored).not.toBeNull();
+    expect(restored!.fixingStartedAt).toBe(value);
+  });
+
+  it("rejects a stopReason outside the StopReason union (TY-339 #1)", () => {
+    // Symmetric with the lastProcessedTriggerSource / modelTier enum checks:
+    // a forged state cannot smuggle in an arbitrary stopReason string.
+    const body = serializeState(makeState({ status: "stopped" })).replace(
+      /"stopReason":\s*null/,
+      `"stopReason": "not_a_real_reason"`,
+    );
+    expect(deserializeState(body)).toBeNull();
+  });
+
+  it("accepts a valid StopReason key (TY-339 #1)", () => {
+    const restored = deserializeState(
+      serializeState(makeState({ status: "stopped", stopReason: "max_iterations" })),
+    );
+    expect(restored).not.toBeNull();
+    expect(restored!.stopReason).toBe("max_iterations");
   });
 
   it("rejects previousCheckFailure exceeding 2x PREVIOUS_CHECK_FAILURE_MAX_CHARS (TY-275 #9)", () => {
