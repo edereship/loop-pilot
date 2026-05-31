@@ -120,6 +120,29 @@ describe("scanForSecrets — hard-fail patterns", () => {
     );
   });
 
+  it("detects the base64 git checkout credential (.git/config x-access-token blob)", () => {
+    // base64("x-access-token:ghs_<token>") — the form actions/checkout persists
+    // into .git/config; an IPI-driven agent could read it and commit it to
+    // exfiltrate the workflow GITHUB_TOKEN past the raw-prefix patterns.
+    const leaked = Buffer.from(
+      "x-access-token:ghs_AbCdEf1234567890AbCdEf1234567890",
+    ).toString("base64");
+    const result = scanForSecrets([
+      { path: "src/leak.ts", content: `const h = "AUTHORIZATION: basic ${leaked}";` },
+    ]);
+    expect(result.hardFailures.map((f) => f.pattern)).toContain(
+      "git-checkout-basic-auth",
+    );
+  });
+
+  it("does not hard-fail on unrelated base64 that is not an x-access-token credential", () => {
+    const benign = Buffer.from("hello world this is just some text").toString("base64");
+    const result = scanForSecrets([{ path: "src/ok.ts", content: `const b = "${benign}";` }]);
+    expect(result.hardFailures.map((f) => f.pattern)).not.toContain(
+      "git-checkout-basic-auth",
+    );
+  });
+
   it("does not hard-fail on clean source code", () => {
     const clean = `
       import { foo } from "./bar.js";
