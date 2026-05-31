@@ -4,9 +4,10 @@
 # does NOT match `v*.*.*`, so moving it from inside this job cannot re-trigger
 # the workflow (no recursion).
 #
-# Steps: rebuild the bundle and fail on dist/ drift (never ship a stale dist),
-# verify the composite action's sub-action `@vMAJOR` refs match this tag, move
-# the moving major tag to this commit, and create the GitHub Release.
+# Steps: verify package.json version matches the tag, rebuild the bundle and
+# fail on dist/ drift (never ship a stale dist), verify the composite action's
+# sub-action `@vMAJOR` refs match this tag, move the moving major tag to this
+# commit, and create the GitHub Release.
 name: Release
 
 on:
@@ -33,6 +34,17 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify package.json version matches the tag
+        run: |
+          set -euo pipefail
+          EXPECTED="${GITHUB_REF_NAME#v}" # v1.2.3 -> 1.2.3
+          ACTUAL="$(node -p "require('./package.json').version")"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::package.json version ($ACTUAL) does not match release tag ${GITHUB_REF_NAME} (expected $EXPECTED). Bump package.json to $EXPECTED, commit, and retag — releasing now would ship a version-mismatched artifact."
+            exit 1
+          fi
+          echo "OK: package.json version $ACTUAL matches ${GITHUB_REF_NAME}"
 
       - name: Verify dist/ is in sync with src/ at the tag
         run: |
