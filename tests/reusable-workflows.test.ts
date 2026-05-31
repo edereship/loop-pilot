@@ -221,6 +221,37 @@ describe("reusable workflows forward the Codex ACK-poll wiring to the actions (T
   });
 });
 
+describe("agent tool hardening: block the comment tools that could forge hidden state (TY-353 / PoC #156 SEC-01)", () => {
+  // The agent runs as `github-actions[bot]` — the SAME identity the hidden-state
+  // trust filter (TY-272 #A, buildTrustedAuthorJqFilter in src/state-manager.ts)
+  // treats as the sole authoritative writer of the `looppilot-state` comment.
+  // claude-code-action's `github_comment` / `github_inline_comment` base tools
+  // post / update comments under that bot identity, so an IPI-influenced or
+  // compromised agent could rewrite its tracking comment to begin with the
+  // looppilot-state header + marker and forge the hidden state JSON; readState
+  // adopts the newest trusted match (src/state-manager.ts), so the forgery would
+  // win and corrupt loop accounting (iteration count / loop detection →
+  // unbounded re-review cost). The loop posts every status / `@codex review`
+  // comment itself from pre-/post-fix, so the agent never needs comment tools —
+  // blocking them closes the forgery vector at the source without affecting the
+  // repair. Regression guard for the porting gap: these two entries were missing
+  // from loop-pilot's --disallowedTools (present in PoC #156, commit 94510cd).
+
+  it("disallows the github_comment / github_inline_comment MCP tools in loop/action.yml", () => {
+    // Anchor on the literal `--disallowedTools "` arg, NOT the backtick-quoted
+    // `github_comment` / `github_inline_comment` mentions in the comment block
+    // above it (those reference the base-tool names, not the full MCP tool IDs).
+    const disallowIdx = loopComposite.indexOf('--disallowedTools "');
+    expect(disallowIdx).toBeGreaterThan(0);
+    const disallowLine = loopComposite.slice(
+      disallowIdx,
+      loopComposite.indexOf("\n", disallowIdx),
+    );
+    expect(disallowLine).toContain("mcp__github_comment__update_claude_comment");
+    expect(disallowLine).toContain("mcp__github_inline_comment__create_inline_comment");
+  });
+});
+
 describe("README documents the cross-org adopter caller", () => {
   it("references the reusable workflows by tagged path", () => {
     expect(readme).toContain("team-yubune/loop-pilot/.github/workflows/init.yml@v1");
