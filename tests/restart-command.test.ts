@@ -680,9 +680,11 @@ describe("handleRestartCommand", () => {
 
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
     expect(deps.updateStateComment).not.toHaveBeenCalled();
-    expect(deps.postComment.mock.calls[0][3]).toContain(
-      "❌ Restart cannot apply: current review status is not restartable.",
-    );
+    // BUG-2: the fixing soft-restart rejection must point operators at the only
+    // working recovery (`--hard`) instead of the dead-end generic message.
+    const body = deps.postComment.mock.calls[0][3];
+    expect(body).toContain("a fix is currently in progress (`fixing`)");
+    expect(body).toContain("/restart-review --hard");
   });
 
   it("hard-restarts fixing states", async () => {

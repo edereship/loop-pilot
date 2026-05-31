@@ -296,6 +296,11 @@ runs:
         pr-title: ${{ inputs.pr-title }}
         comment-id: ${{ steps.pre.outputs.comment_id }}
         iteration: ${{ steps.pre.outputs.iteration }}
+        # TY-337: forward the iteration cap so post-fix's status-comment
+        # **Iterations** header shows the operator-configured cap instead of
+        # the default 20 (workflow → composite is already wired at
+        # loop.yml `max-review-iterations`).
+        max-review-iterations: ${{ inputs.max-review-iterations }}
         trigger-comment-id: ${{ steps.pre.outputs.trigger_comment_id }}
         check-command: ${{ steps.pre.outputs.check_command }}
         build-command: ${{ inputs.build-command }}

@@ -28,7 +28,7 @@ const STATE_COMMENT_VISIBLE_TEXT = "LoopPilot state is stored in this comment.";
 // every iteration at the base tier until `max_iterations`. 1 entry is ~70
 // bytes; 20 entries fit comfortably under MAX_SERIALIZED_BYTES (65,000) even
 // alongside a full `previousCheckFailure` payload.
-const MAX_HISTORY_ENTRIES = 20;
+export const MAX_HISTORY_ENTRIES = 20;
 const MAX_SERIALIZED_BYTES = 65000;
 const VALID_STATUSES = new Set(["initialized", "waiting_codex", "fixing", "done", "stopped"]);
 const VALID_STOP_REASONS = new Set<string>(Object.keys(STOP_REASON_LABELS));

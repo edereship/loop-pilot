@@ -29,6 +29,10 @@ inputs:
   iteration:
     description: "Iteration count (output of pre-fix)"
     required: true
+  max-review-iterations:
+    description: "Maximum number of review-fix iterations. Forwarded from the loop composite (TY-337) so the status comment's **Iterations** header shows the operator-configured cap, matching pre-fix / init. Without it post-fix falls back to the default 20 and the header diverges from vars.MAX_REVIEW_ITERATIONS."
+    required: false
+    default: "20"
   trigger-comment-id:
     description: "Trigger comment id (output of pre-fix)"
     required: false

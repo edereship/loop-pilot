@@ -451,13 +451,32 @@ async function recentAutoMergeSkipExists(
         // the range, so no `per_page` is needed.
         `repos/${owner}/${name}/issues/${pr}/comments?since=${encodeURIComponent(sinceIso)}`,
         "--paginate",
+        // `@json` emits each comment body as a single JSON-encoded line, so a
+        // multi-line body can never be split across output lines. The prefix
+        // test below then runs against the *decoded body's start* rather than
+        // an arbitrary physical line: a comment that merely quotes
+        // `AUTO_MERGE_SKIP_PREFIX` somewhere in the middle of its body (e.g. a
+        // GitHub blockquote of an earlier skip notification) no longer
+        // false-matches and suppresses a legitimately-new notification. The
+        // plain `.[].body` form let those interior lines match.
         "--jq",
-        ".[].body",
+        ".[].body | @json",
       ],
       token,
     );
     for (const line of stdout.split("\n")) {
-      if (line.startsWith(AUTO_MERGE_SKIP_PREFIX)) return true;
+      const trimmed = line.trim();
+      if (trimmed === "") continue;
+      let body: unknown;
+      try {
+        body = JSON.parse(trimmed);
+      } catch {
+        // Not a JSON-encoded body line (defensive); skip it.
+        continue;
+      }
+      if (typeof body === "string" && body.startsWith(AUTO_MERGE_SKIP_PREFIX)) {
+        return true;
+      }
     }
     return false;
   } catch (error) {

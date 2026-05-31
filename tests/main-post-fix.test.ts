@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config } from "../src/config.js";
 import {
   countUntrackedAddedLines,
+  decodeLsFilesPath,
   logSecretScanWarnings,
   runPostFix,
   SECRET_WARN_LOG_CAP,
@@ -964,6 +965,40 @@ describe("runPostFix", () => {
     expect(stopCall?.[6]).toContain("did not acknowledge");
   });
 
+  it("renders the operator-configured iteration cap in the fix-summary status comment (TY-337)", async () => {
+    // Guards the plumbing fixed in TY-337: post-fix must use
+    // config.maxReviewIterations (forwarded from the loop composite) for the
+    // status comment's **Iterations** header, not the hard-coded default 20.
+    // baseConfig pins 20, so a distinct cap proves the value flows from config
+    // through deriveIterationProgress into the posted summary.
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: () => "5\t2\tsrc/foo.ts\n",
+        gitListUntracked: () => "",
+      },
+    );
+
+    await runPostFix({ ...baseConfig, maxReviewIterations: 5 }, deps, baseInputs);
+
+    expect(deps.postClaudeCodeActionFixSummary).toHaveBeenCalledWith(
+      "team-yubune",
+      "loop-pilot",
+      99,
+      2,
+      expect.any(Array),
+      expect.any(String),
+      "github-token",
+      expect.objectContaining({ maxIterations: 5 }),
+    );
+  });
+
   it("flags binary new files via readWorkingTreeFile=null and stops with binary scope violation", async () => {
     const deps = makeDeps(
       {
@@ -1733,6 +1768,76 @@ describe("runPostFix", () => {
       expect.stringContaining("HTTP 403: forbidden"),
       "github-token",
     expect.any(Object),
+    );
+  });
+
+  // A transient status-comment failure after the repair is committed + pushed
+  // must NOT propagate (which would reach demoteFixingOnCrash via onError, roll
+  // back the pushed iteration, and falsely report workflow_crashed). The run
+  // should warn and still advance to waiting_codex + re-request Codex review.
+  it("does not crash or roll back when postClaudeCodeActionFixSummary throws after push", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState(),
+    });
+    (deps.postClaudeCodeActionFixSummary as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("HTTP 502: bad gateway"),
+    );
+
+    // Must resolve (no propagated throw → no false crash recovery).
+    await expect(runPostFix(baseConfig, deps, baseInputs)).resolves.toBeUndefined();
+
+    // The repair commit + push already happened before the status update.
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.pushCalls.length).toBe(1);
+    // The run still advances to waiting_codex and re-requests Codex review.
+    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const waitingWrite = calls.find((c) => c[3]?.status === "waiting_codex");
+    expect(waitingWrite).toBeDefined();
+    // iterationCount is NOT rolled back — the pushed iteration counts.
+    expect(waitingWrite?.[3]?.iterationCount).toBe(2);
+    // No write demotes to a stopped state.
+    expect(calls.find((c) => c[3]?.status === "stopped")).toBeUndefined();
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to update the auto-fix status comment"),
+    );
+  });
+
+  // A non-412 failure on the *informational* lastCodexRequestCommentId write
+  // (after @codex review was already posted) must NOT be misattributed to a
+  // failed @codex review post and demote a healthy waiting_codex loop to
+  // stopped/codex_request_failed.
+  it("does not demote to codex_request_failed when recording the review-request id fails (non-412)", async () => {
+    const update = vi
+      .fn()
+      .mockResolvedValueOnce({ updatedAt: "2026-05-14T12:30:00Z" }) // waitingState write OK
+      .mockRejectedValueOnce(new Error("HTTP 500: internal server error")); // id-record write fails (non-412)
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      { updateStateComment: update },
+    );
+
+    await expect(runPostFix(baseConfig, deps, baseInputs)).resolves.toBeUndefined();
+
+    // @codex review WAS posted before the failing id-record write.
+    expect(deps.postCodexReviewRequest).toHaveBeenCalledTimes(1);
+    // The loop is healthy: no stop comment, no stopped-state write.
+    expect(deps.postStopComment).not.toHaveBeenCalled();
+    expect(update.mock.calls.find((c) => c[3]?.status === "stopped")).toBeUndefined();
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Failed to persist the Codex review request comment id (non-conflict error)",
+      ),
     );
   });
 
@@ -2796,5 +2901,31 @@ describe("countUntrackedAddedLines", () => {
 
   it("counts a single trailing-newline line as 1", () => {
     expect(countUntrackedAddedLines("a\n")).toBe(1);
+  });
+});
+
+// BUG-3: `git ls-files --others` C-quotes paths with control characters even
+// under `core.quotepath=false`. The untracked builders must decode those the
+// same way `parseGitNumstat` does for tracked paths (TY-306 #2); otherwise the
+// quoted literal hits `readWorkingTreeFile` → ENOENT → marked binary → spurious
+// scope_violation.
+describe("decodeLsFilesPath", () => {
+  it("returns ordinary unquoted paths unchanged (no-op)", () => {
+    expect(decodeLsFilesPath("src/foo.ts")).toBe("src/foo.ts");
+    expect(decodeLsFilesPath("tests/fixtures/a b.json")).toBe(
+      "tests/fixtures/a b.json",
+    );
+  });
+
+  it("leaves an unquoted name containing ' => ' intact", () => {
+    // ls-files never emits rename notation; ' => ' is a legitimate filename
+    // substring and must not be touched.
+    expect(decodeLsFilesPath("src/arrow => fn.ts")).toBe("src/arrow => fn.ts");
+  });
+
+  it("decodes a C-quoted path with embedded tab / newline / quote", () => {
+    expect(decodeLsFilesPath('"src/foo\\tbar.ts"')).toBe("src/foo\tbar.ts");
+    expect(decodeLsFilesPath('"src/foo\\nbar.ts"')).toBe("src/foo\nbar.ts");
+    expect(decodeLsFilesPath('"a\\"b.ts"')).toBe('a"b.ts');
   });
 });

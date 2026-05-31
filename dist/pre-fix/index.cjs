@@ -20557,12 +20557,30 @@ async function recentAutoMergeSkipExists(owner, name, pr, token) {
       // the range, so no `per_page` is needed.
       `repos/${owner}/${name}/issues/${pr}/comments?since=${encodeURIComponent(sinceIso)}`,
       "--paginate",
+      // `@json` emits each comment body as a single JSON-encoded line, so a
+      // multi-line body can never be split across output lines. The prefix
+      // test below then runs against the *decoded body's start* rather than
+      // an arbitrary physical line: a comment that merely quotes
+      // `AUTO_MERGE_SKIP_PREFIX` somewhere in the middle of its body (e.g. a
+      // GitHub blockquote of an earlier skip notification) no longer
+      // false-matches and suppresses a legitimately-new notification. The
+      // plain `.[].body` form let those interior lines match.
       "--jq",
-      ".[].body"
+      ".[].body | @json"
     ], token);
     for (const line of stdout.split("\n")) {
-      if (line.startsWith(AUTO_MERGE_SKIP_PREFIX))
+      const trimmed = line.trim();
+      if (trimmed === "")
+        continue;
+      let body;
+      try {
+        body = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (typeof body === "string" && body.startsWith(AUTO_MERGE_SKIP_PREFIX)) {
         return true;
+      }
     }
     return false;
   } catch (error2) {
@@ -21539,7 +21557,15 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   }
   const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
   if (!preflight.ok) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, restartRejectionMessage(preflight.reason), context.githubToken);
+    const rejection = preflight.reason === "unsupported_status" && context.stateResult.state.status === "fixing" && command.mode !== "hard" ? [
+      "\u274C Restart cannot apply: a fix is currently in progress (`fixing`).",
+      "",
+      "If a Workflow B run is still active for this PR, wait for it to finish \u2014 it returns the loop to `waiting_codex` on its own.",
+      "If the previous run crashed or was cancelled (e.g. a job timeout) and left the state stuck at `fixing`, a soft `/restart-review` cannot recover it. Confirm no auto-fix run is active, then use `/restart-review --hard` to clear iteration history and resume.",
+      "",
+      "See docs/operations/stop-and-recovery.md (`fixing` \u306E\u307E\u307E\u505C\u6B62\u3057\u3066\u3044\u308B\u5834\u5408)."
+    ].join("\n") : restartRejectionMessage(preflight.reason);
+    await deps.postComment(context.owner, context.repo, context.prNumber, rejection, context.githubToken);
     return { handled: true };
   }
   const updateStateCommentLocked = createLockedStateUpdater({
@@ -22136,7 +22162,13 @@ async function runPreFix(config, deps = defaultDeps3) {
     // (id: old review_id, source: new "comment") cross-namespace garbage
     // that defeats the (id, source) dedup.
     lastProcessedTriggerSource: triggerCommentId !== 0 ? currentTriggerSource ?? state.lastProcessedTriggerSource : state.lastProcessedTriggerSource,
-    lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString()
+    // Second-truncate the now() fallback so this field stays second-precision
+    // like GitHub's `createdAt`. review-collector compares it lexicographically
+    // (filterAndParseComments / countRelevantBotComments); a millisecond-precision
+    // value (`…00.123Z`) sorts before a same-second `createdAt` (`…00Z`, since
+    // 'Z' > '.'), which would re-process an already-seen comment after a
+    // /restart-review that preserves this timestamp.
+    lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString().replace(/\.\d{3}Z$/, "Z")
   };
   if (findings.length === 0) {
     deps.info("[pre-fix] No findings. Marking done.");
@@ -22190,6 +22222,9 @@ async function runPreFix(config, deps = defaultDeps3) {
       return;
     await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "max_iterations", triggerCommentId, findings.length, `Reached MAX_REVIEW_ITERATIONS (${config.maxReviewIterations})`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
     return;
+  }
+  if (config.maxReviewIterations > MAX_HISTORY_ENTRIES) {
+    deps.warning(`[pre-fix] MAX_REVIEW_ITERATIONS (${config.maxReviewIterations}) exceeds the findings-hash history cap (${MAX_HISTORY_ENTRIES}); oscillation loops with a cycle length greater than ${MAX_HISTORY_ENTRIES} will not be detected and will run to max_iterations instead. Period-2 oscillations are still caught. See docs/specs/loop-detection.md.`);
   }
   if (isLoop(findings, state.findingsHashHistory)) {
     deps.info("[pre-fix] Loop detected. Stopping.");
