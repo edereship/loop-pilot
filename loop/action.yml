@@ -145,18 +145,6 @@ inputs:
     description: "Max total added+deleted lines allowed in a single auto-fix diff. Empty / 0 keeps the default of 1000. Leave empty so `LOOPPILOT_SCOPE_MAX_LINES` Repository variable can override."
     required: false
     default: ""
-  looppilot-hard-block-override:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` with the `!path` syntax. Existing values are folded into the new spec as removals, but emit a warning."
-    required: false
-    default: ""
-  scope-allowed-path-prefixes:
-    description: "[DEPRECATED — TY-271, removed in next minor] The allow-list concept is gone; values are ignored with a warning. The scope check is now a pure block-list."
-    required: false
-    default: ""
-  scope-additional-hard-block-prefixes:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` instead. Existing values are folded into the new spec as additions, but emit a warning."
-    required: false
-    default: ""
   looppilot-state-comment-authors:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false
@@ -205,6 +193,16 @@ runs:
         auto-merge-timeout-minutes: ${{ inputs.auto-merge-timeout-minutes }}
         severity-threshold: ${{ inputs.severity-threshold }}
         looppilot-state-comment-authors: ${{ inputs.looppilot-state-comment-authors }}
+        # TY-350: pre-fix builds the repair prompt's `## Scope Policy` section
+        # from these (main-pre-fix.ts `buildScopePolicy`), so Claude sees the
+        # operator's effective block-list / size budget up front and avoids
+        # producing diffs that post-fix would only revert. The post-fix step
+        # below receives the same three inputs for the authoritative
+        # enforcement check; forwarding them to BOTH keeps prompt and
+        # enforcement in sync (TY-350).
+        looppilot-block-paths: ${{ inputs.looppilot-block-paths }}
+        scope-max-files: ${{ inputs.scope-max-files }}
+        scope-max-lines: ${{ inputs.scope-max-lines }}
 
     - name: Claude Code Action (repo-level repair)
       id: claude
@@ -276,7 +274,4 @@ runs:
         looppilot-block-paths: ${{ inputs.looppilot-block-paths }}
         scope-max-files: ${{ inputs.scope-max-files }}
         scope-max-lines: ${{ inputs.scope-max-lines }}
-        looppilot-hard-block-override: ${{ inputs.looppilot-hard-block-override }}
-        scope-allowed-path-prefixes: ${{ inputs.scope-allowed-path-prefixes }}
-        scope-additional-hard-block-prefixes: ${{ inputs.scope-additional-hard-block-prefixes }}
         looppilot-state-comment-authors: ${{ inputs.looppilot-state-comment-authors }}

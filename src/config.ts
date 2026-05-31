@@ -98,22 +98,6 @@ export interface BaseConfig {
   autoReviewBlockPaths: string;
   scopeMaxFiles: number;
   scopeMaxLines: number;
-  /**
-   * @deprecated TY-271. Folded into the block-list as removals (legacy
-   * `!path` shape). Emit a warning when set and migrate the operator to
-   * `LOOPPILOT_BLOCK_PATHS`. Removed in the next minor.
-   */
-  hardBlockOverride: readonly string[];
-  /**
-   * @deprecated TY-271. The allow-list concept is gone; values are accepted
-   * but ignored with a warning. Removed in the next minor.
-   */
-  scopeAllowedPathPrefixes: readonly string[];
-  /**
-   * @deprecated TY-271. Folded into the block-list as additions. Removed
-   * in the next minor.
-   */
-  scopeAdditionalHardBlockPrefixes: readonly string[];
 }
 
 /**
@@ -343,32 +327,7 @@ function loadBaseConfig(): BaseConfig {
     ),
     scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
     scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0),
-    hardBlockOverride: stringListInput(
-      "looppilot-hard-block-override",
-      "LOOPPILOT_HARD_BLOCK_OVERRIDE",
-    ),
-    scopeAllowedPathPrefixes: stringListInput(
-      "scope-allowed-path-prefixes",
-      "LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES",
-    ),
-    scopeAdditionalHardBlockPrefixes: stringListInput(
-      "scope-additional-hard-block-prefixes",
-      "LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES",
-    ),
   };
-}
-
-/**
- * カンマ区切りのパスリストを読み出す。前後の空白はトリムし、空エントリは捨てる。
- * 未設定 / 空文字は空配列を返す。
- */
-function stringListInput(inputName: string, envName: string): readonly string[] {
-  const raw = input(inputName, envName, "");
-  if (raw === "") return [];
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
 }
 
 /**

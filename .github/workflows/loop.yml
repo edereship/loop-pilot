@@ -26,9 +26,14 @@
 # gate change ships to every adopter via a single `@v1.x` retag.
 #
 # `vars.*` and the `github` context resolve to the CALLER repository (GitHub
-# semantics for reusable workflows), so every operator-tunable Repository
-# variable documented in the README keeps working unchanged from the adopter's
-# own repo — the thin caller does not re-plumb them.
+# semantics for reusable workflows), so the thin caller never has to re-plumb
+# anything from its own repo. NOTE (TY-350): a Repository variable only takes
+# effect if THIS workflow forwards it. Variables the workflow reads directly
+# (e.g. the gate label in `if:`) work as-is, but variables consumed by the
+# composite `loop` action must be passed through its `with:` block below —
+# GitHub does NOT auto-export `vars.*` into the action's process env, so adding
+# an operator variable to the README without also wiring it into `with:` here
+# silently drops it (that omission was the TY-350 scope-policy bug).
 #
 # Sub-action refs MUST be `team-yubune/loop-pilot/loop@v1` (NOT `./loop`): a `./`
 # ref inside a reusable workflow resolves against the CALLER's checkout, which
@@ -296,6 +301,19 @@ jobs:
           # back to `github-actions[bot]`. Set the Repository variable when
           # state comments are authored by a GitHub App / machine user.
           looppilot-state-comment-authors: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}
+          # TY-350: scope-policy Repository variables. These reach the composite
+          # ONLY as action inputs — `vars.*` are not auto-exported to the
+          # action's process env, so an omitted input silently ignores the
+          # operator's setting (and post-fix's scope_violation / too_many_*
+          # recovery hints then point at variables that do nothing). The
+          # scope-max-* values are passed BARE (no `|| '0'`): an unset variable
+          # yields '' so the composite's empty-string default and the
+          # LOOPPILOT_SCOPE_MAX_* env-var fallback still apply, whereas a literal
+          # '0' would be treated as set by core.getInput and shadow that
+          # fallback. See docs/operations/scope-policy.md.
+          looppilot-block-paths: ${{ vars.LOOPPILOT_BLOCK_PATHS }}
+          scope-max-files: ${{ vars.LOOPPILOT_SCOPE_MAX_FILES }}
+          scope-max-lines: ${{ vars.LOOPPILOT_SCOPE_MAX_LINES }}
 
       # TY-282 #2B: workflow-level fail-safe. If the composite `loop` action
       # ends in `failure` or `cancelled` we cannot rely on `postStopComment`

@@ -51,7 +51,7 @@ export interface BlockPattern {
   readonly locked: boolean;
   /**
    * When true, the pattern was explicitly added by the operator via
-   * `LOOPPILOT_BLOCK_PATHS` (or legacy `additionalHardBlockPrefixes`).
+   * `LOOPPILOT_BLOCK_PATHS`.
    * `checkScopeBuildMode` enforces user-added patterns even when their path
    * matches a default-unlocked entry, so operators can re-block paths like
    * `dist/` or `package.json` in build mode.
@@ -187,43 +187,6 @@ export interface ScopePolicyOverrides {
   blockPathsSpec?: string;
   maxFiles?: number;
   maxLines?: number;
-  /**
-   * @deprecated Use `blockPathsSpec` additions (e.g. `secrets/`) instead.
-   * Existing values are folded into the additions list for backwards compat.
-   */
-  additionalHardBlockPrefixes?: readonly string[];
-  /**
-   * @deprecated Use `blockPathsSpec` removals (e.g. `!package.json`) instead.
-   * Existing values are folded into the removals list for backwards compat.
-   * `.github/` entries are still ignored.
-   */
-  hardBlockOverride?: readonly string[];
-}
-
-function legacyAdditionsToPatterns(values: readonly string[]): BlockPattern[] {
-  return values
-    .map((v) => v.trim())
-    .map((v) => (v.startsWith("/") ? v.slice(1) : v))
-    .filter((v) => v.length > 0)
-    .map((path) => ({
-      path,
-      isDirectory: path.endsWith("/"),
-      locked: false,
-      userAdded: true,
-    }));
-}
-
-function legacyRemovalsToPatterns(values: readonly string[]): BlockPattern[] {
-  return values
-    .map((v) => v.trim())
-    .map((v) => (v.startsWith("/") ? v.slice(1) : v))
-    .filter((v) => v.length > 0)
-    .filter((v) => v !== ".github/" && !v.startsWith(".github/"))
-    .map((path) => ({
-      path,
-      isDirectory: path.endsWith("/"),
-      locked: false,
-    }));
 }
 
 /**
@@ -231,24 +194,17 @@ function legacyRemovalsToPatterns(values: readonly string[]): BlockPattern[] {
  *
  * Resolution order:
  *   1. Start from `DEFAULT_BLOCK_PATTERNS`.
- *   2. Apply removals from the spec (and legacy `hardBlockOverride`) — but
- *      only for unlocked entries; `.github/` survives any removal attempt.
- *   3. Append additions from the spec (and legacy
- *      `additionalHardBlockPrefixes`).
+ *   2. Apply removals from the spec — but only for unlocked entries;
+ *      `.github/` survives any removal attempt.
+ *   3. Append additions from the spec.
  *
  * `maxFiles` / `maxLines` of 0 or undefined fall back to defaults.
  */
 export function buildScopePolicy(overrides: ScopePolicyOverrides): ScopeCheckPolicy {
   const spec = parseBlockPathsSpec(overrides.blockPathsSpec ?? "");
 
-  const removals: BlockPattern[] = [
-    ...spec.removals,
-    ...legacyRemovalsToPatterns(overrides.hardBlockOverride ?? []),
-  ];
-  const additions: BlockPattern[] = [
-    ...spec.additions,
-    ...legacyAdditionsToPatterns(overrides.additionalHardBlockPrefixes ?? []),
-  ];
+  const removals: BlockPattern[] = [...spec.removals];
+  const additions: BlockPattern[] = [...spec.additions];
 
   const removalKeys = new Set(removals.map((p) => p.path));
   const surviving: BlockPattern[] = DEFAULT_BLOCK_PATTERNS.filter(

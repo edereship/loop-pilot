@@ -847,8 +847,6 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       blockPathsSpec: config.autoReviewBlockPaths,
       maxFiles: config.scopeMaxFiles > 0 ? config.scopeMaxFiles : undefined,
       maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : undefined,
-      additionalHardBlockPrefixes: config.scopeAdditionalHardBlockPrefixes,
-      hardBlockOverride: config.hardBlockOverride,
     });
     scopePolicyForPrompt = {
       blockedPaths: effectivePolicy.blockPatterns.map((p) => ({

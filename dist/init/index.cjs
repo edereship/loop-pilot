@@ -19260,17 +19260,8 @@ function loadBaseConfig() {
     severityThreshold: severityThresholdInput("severity-threshold", "LOOPPILOT_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
     autoReviewBlockPaths: input("looppilot-block-paths", "LOOPPILOT_BLOCK_PATHS", ""),
     scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
-    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0),
-    hardBlockOverride: stringListInput("looppilot-hard-block-override", "LOOPPILOT_HARD_BLOCK_OVERRIDE"),
-    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES"),
-    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
+    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0)
   };
-}
-function stringListInput(inputName, envName) {
-  const raw = input(inputName, envName, "");
-  if (raw === "")
-    return [];
-  return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 function severityThresholdInput(inputName, envName, defaultValue) {
   const raw = input(inputName, envName, "").trim().toUpperCase();

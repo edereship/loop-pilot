@@ -398,14 +398,6 @@ describe("buildScopePolicy (TY-271)", () => {
     ).toBe(false);
   });
 
-  it("folds legacy additionalHardBlockPrefixes into the block list (deprecated)", () => {
-    const policy = buildScopePolicy({
-      additionalHardBlockPrefixes: ["scripts/", "Justfile"],
-    });
-    expect(checkScope([file("scripts/x.sh", 1, 0)], policy).ok).toBe(false);
-    expect(checkScope([file("Justfile", 1, 0)], policy).ok).toBe(false);
-  });
-
   it("allows a root dotfile when !<file> is in the spec", () => {
     const policy = buildScopePolicy({ blockPathsSpec: "!.gitignore" });
     expect(checkScope([file(".gitignore", 1, 0)], policy).ok).toBe(true);
@@ -428,30 +420,6 @@ describe("buildScopePolicy (TY-271)", () => {
     expect(checkScope([file("dist/bundle.js", 1, 0)], policy).ok).toBe(true);
   });
 
-  it("folds legacy hardBlockOverride into the block list as removals (deprecated)", () => {
-    const policy = buildScopePolicy({
-      hardBlockOverride: ["package.json", "tsconfig.json"],
-    });
-    // package.json / tsconfig.json now pass — equivalent to LOOPPILOT_BLOCK_PATHS=!package.json,!tsconfig.json.
-    expect(checkScope([file("package.json", 1, 0)], policy).ok).toBe(true);
-    expect(checkScope([file("tsconfig.json", 1, 0)], policy).ok).toBe(true);
-    // package-lock.json (not overridden) still blocked.
-    expect(checkScope([file("package-lock.json", 1, 0)], policy).ok).toBe(
-      false,
-    );
-  });
-
-  it("legacy hardBlockOverride cannot unlock .github/", () => {
-    const policy = buildScopePolicy({
-      hardBlockOverride: [".github/workflows/ci.yml"],
-    });
-    const result = checkScope(
-      [file(".github/workflows/ci.yml", 1, 0)],
-      policy,
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("hard_block_path");
-  });
 });
 
 describe("real-world PR scenarios (TY-271 fixtures)", () => {

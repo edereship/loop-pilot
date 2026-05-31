@@ -65,18 +65,6 @@ inputs:
     description: "Max total added+deleted lines allowed in a single auto-fix diff. Empty / 0 keeps the default of 1000. Leave empty so `LOOPPILOT_SCOPE_MAX_LINES` Repository variable can override."
     required: false
     default: ""
-  looppilot-hard-block-override:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` with the `!path` syntax. Existing values are folded into the new spec as removals, but emit a warning."
-    required: false
-    default: ""
-  scope-allowed-path-prefixes:
-    description: "[DEPRECATED — TY-271, removed in next minor] The allow-list concept is gone; values are ignored with a warning. The scope check is now a pure block-list."
-    required: false
-    default: ""
-  scope-additional-hard-block-prefixes:
-    description: "[DEPRECATED — TY-271, removed in next minor] Use `looppilot-block-paths` instead. Existing values are folded into the new spec as additions, but emit a warning."
-    required: false
-    default: ""
   looppilot-state-comment-authors:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false

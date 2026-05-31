@@ -10,6 +10,32 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+### Fixed
+- The reusable `loop.yml` workflow now forwards the `LOOPPILOT_BLOCK_PATHS`,
+  `LOOPPILOT_SCOPE_MAX_FILES`, and `LOOPPILOT_SCOPE_MAX_LINES` repository
+  variables to the composite `loop` action. Previously these documented
+  scope-policy variables were silently ignored — GitHub `vars.*` are not
+  auto-exported to an action's process env, and the workflow never passed them
+  as inputs — so custom block paths and size budgets had no effect and the
+  `scope_violation` / `too_many_files` / `too_many_lines` stop-comment recovery
+  hints pointed at variables that did nothing. The values are also forwarded to
+  pre-fix so the repair prompt's `## Scope Policy` section reflects the
+  operator's configuration. Built-in default block paths (`.github/` locked,
+  `dist/`, `package.json`, …) and the default budgets were always enforced
+  regardless, so this was a configuration/UX gap, not a protection bypass
+  (TY-350).
+
+### Removed
+- The deprecated scope variables `LOOPPILOT_HARD_BLOCK_OVERRIDE`,
+  `LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES`, and
+  `LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES` (and their
+  `looppilot-hard-block-override` / `scope-allowed-path-prefixes` /
+  `scope-additional-hard-block-prefixes` action inputs) are removed, as
+  announced in TY-271. They were never forwarded from `loop.yml` to the
+  composite action, so they had no effect through `@v1` regardless. Migrate to
+  `LOOPPILOT_BLOCK_PATHS` (use the `!path` syntax to un-block defaults); see
+  [docs/operations/scope-policy.md](docs/operations/scope-policy.md).
+
 ## [1.0.0] - 2026-05-30
 
 ### Added

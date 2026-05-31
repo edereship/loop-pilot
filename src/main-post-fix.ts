@@ -887,25 +887,6 @@ export async function runPostFix(
     return;
   }
 
-  // TY-271: deprecation warnings for the three superseded scope variables.
-  // Old values still flow through `buildScopePolicy` (folded into the new
-  // block spec) so existing repos keep working until the next minor.
-  if (config.scopeAllowedPathPrefixes.length > 0) {
-    deps.warning(
-      "[scope-check] LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES / scope-allowed-path-prefixes is deprecated (TY-271). The allow-list concept has been removed; the value is ignored. The scope check now blocks only paths matching LOOPPILOT_BLOCK_PATHS (or the built-in defaults). Remove this variable.",
-    );
-  }
-  if (config.scopeAdditionalHardBlockPrefixes.length > 0) {
-    deps.warning(
-      `[scope-check] LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES / scope-additional-hard-block-prefixes is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS, e.g. LOOPPILOT_BLOCK_PATHS="${config.scopeAdditionalHardBlockPrefixes.join(",")}".`,
-    );
-  }
-  if (config.hardBlockOverride.length > 0) {
-    deps.warning(
-      `[scope-check] LOOPPILOT_HARD_BLOCK_OVERRIDE / looppilot-hard-block-override is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS with the ! prefix, e.g. LOOPPILOT_BLOCK_PATHS="${config.hardBlockOverride.map((p) => `!${p}`).join(",")}".`,
-    );
-  }
-
   const blockSpec = parseBlockPathsSpec(config.autoReviewBlockPaths);
   for (const ignored of blockSpec.ignoredRemovals) {
     deps.warning(
@@ -917,8 +898,6 @@ export async function runPostFix(
     blockPathsSpec: config.autoReviewBlockPaths,
     maxFiles: config.scopeMaxFiles > 0 ? config.scopeMaxFiles : undefined,
     maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : undefined,
-    additionalHardBlockPrefixes: config.scopeAdditionalHardBlockPrefixes,
-    hardBlockOverride: config.hardBlockOverride,
   });
 
   if (config.autoReviewBlockPaths !== "") {

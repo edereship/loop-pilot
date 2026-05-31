@@ -135,6 +135,8 @@ Set these as GitHub Actions repository variables in the target repository.
 | `LOOPPILOT_SEVERITY_THRESHOLD` | `P3` | You want to skip lower-severity Codex findings. |
 | `LOOPPILOT_AUTO_MERGE` | `false` | You want LoopPilot to squash-merge when it reaches `done / no_findings`. |
 | `LOOPPILOT_BLOCK_PATHS` | empty | You want to block extra paths from auto-fix changes. |
+| `LOOPPILOT_SCOPE_MAX_FILES` | `20` | A faithful repair legitimately needs to touch more files than the default. |
+| `LOOPPILOT_SCOPE_MAX_LINES` | `1000` | A faithful repair legitimately needs more changed lines than the default. |
 
 All inputs are documented in [loop/action.yml](loop/action.yml) and [init/action.yml](init/action.yml).
 

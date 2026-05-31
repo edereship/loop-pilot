@@ -119,6 +119,18 @@ inputs:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false
     default: ""
+  looppilot-block-paths:
+    description: "`.gitignore`-style block-path spec (TY-271). Forwarded so the repair prompt's `## Scope Policy` section reflects the operator's effective block-list (TY-350). Empty default keeps the built-in `DEFAULT_BLOCK_PATTERNS`. See docs/operations/scope-policy.md."
+    required: false
+    default: ""
+  scope-max-files:
+    description: "Max files allowed in a single auto-fix diff, surfaced in the repair prompt's Scope Policy section (TY-350). Empty / 0 keeps the default of 20. Leave empty so `LOOPPILOT_SCOPE_MAX_FILES` can override; `core.getInput` treats `\"0\"` as non-empty and would shadow the env-var fallback."
+    required: false
+    default: ""
+  scope-max-lines:
+    description: "Max total added+deleted lines allowed in a single auto-fix diff, surfaced in the repair prompt's Scope Policy section (TY-350). Empty / 0 keeps the default of 1000. Leave empty so `LOOPPILOT_SCOPE_MAX_LINES` can override."
+    required: false
+    default: ""
 
 outputs:
   should_run:

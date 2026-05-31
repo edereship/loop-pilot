@@ -8,6 +8,8 @@ const loopReusable = readFileSync(".github/workflows/loop.yml", "utf8");
 const initCaller = readFileSync(".github/workflows/looppilot-init.yml", "utf8");
 const loopCaller = readFileSync(".github/workflows/looppilot-loop.yml", "utf8");
 const readme = readFileSync("README.md", "utf8");
+const loopComposite = readFileSync("loop/action.yml", "utf8");
+const preFixAction = readFileSync("loop/pre-fix/action.yml", "utf8");
 
 describe("reusable workflows: workflow_call surface", () => {
   it("both reusable workflows are workflow_call entrypoints", () => {
@@ -120,6 +122,55 @@ describe("thin dogfooding callers", () => {
       s.split("\n").filter((l) => l.trim() !== "" && !l.trim().startsWith("#")).length;
     expect(nonComment(initCaller)).toBeLessThanOrEqual(22);
     expect(nonComment(loopCaller)).toBeLessThanOrEqual(24);
+  });
+});
+
+describe("reusable loop forwards operator scope-policy variables to the composite (TY-350)", () => {
+  // TY-350 regression guard. The reusable loop.yml never forwarded these three
+  // scope inputs, so an operator who set the documented LOOPPILOT_BLOCK_PATHS /
+  // LOOPPILOT_SCOPE_MAX_FILES / LOOPPILOT_SCOPE_MAX_LINES repository variables had
+  // them SILENTLY ignored: GitHub `vars.*` are not auto-exported to a step's
+  // process.env, so unless loop.yml passes them as action inputs they never reach
+  // the composite — which DOES declare and consume them (loop/action.yml,
+  // src/config.ts). The scope-max-* vars must be passed BARE (no `|| '0'`
+  // fallback) because core.getInput treats "0" as set and would shadow the
+  // env-var fallback (see loop/action.yml input descriptions + scope-policy.md).
+
+  it("loop.yml maps LOOPPILOT_BLOCK_PATHS to the looppilot-block-paths composite input", () => {
+    expect(loopReusable).toContain("looppilot-block-paths: ${{ vars.LOOPPILOT_BLOCK_PATHS }}");
+  });
+
+  it("loop.yml maps LOOPPILOT_SCOPE_MAX_FILES to scope-max-files (bare, no '0' default)", () => {
+    expect(loopReusable).toContain("scope-max-files: ${{ vars.LOOPPILOT_SCOPE_MAX_FILES }}");
+    expect(loopReusable).not.toContain("vars.LOOPPILOT_SCOPE_MAX_FILES || '0'");
+  });
+
+  it("loop.yml maps LOOPPILOT_SCOPE_MAX_LINES to scope-max-lines (bare, no '0' default)", () => {
+    expect(loopReusable).toContain("scope-max-lines: ${{ vars.LOOPPILOT_SCOPE_MAX_LINES }}");
+    expect(loopReusable).not.toContain("vars.LOOPPILOT_SCOPE_MAX_LINES || '0'");
+  });
+
+  it("the composite forwards each scope input to BOTH pre-fix and post-fix", () => {
+    // The repair prompt's `## Scope Policy` section is built in pre-fix from
+    // these values (main-pre-fix.ts buildScopePolicy), so the composite must
+    // forward them to the pre-fix step too — not only post-fix, which already
+    // had them. Each line therefore appears at least twice in loop/action.yml.
+    for (const input of ["looppilot-block-paths", "scope-max-files", "scope-max-lines"]) {
+      const needle = `${input}: \${{ inputs.${input} }}`;
+      const occurrences = loopComposite.split(needle).length - 1;
+      expect(occurrences).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("the pre-fix action declares the scope inputs so core.getInput can read them", () => {
+    expect(preFixAction).toContain("looppilot-block-paths:");
+    expect(preFixAction).toContain("scope-max-files:");
+    expect(preFixAction).toContain("scope-max-lines:");
+  });
+
+  it("documents LOOPPILOT_SCOPE_MAX_FILES / _LINES in the README configuration table", () => {
+    expect(readme).toContain("`LOOPPILOT_SCOPE_MAX_FILES`");
+    expect(readme).toContain("`LOOPPILOT_SCOPE_MAX_LINES`");
   });
 });
 

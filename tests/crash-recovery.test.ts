@@ -49,9 +49,6 @@ const crashConfig: Config = {
   autoReviewBlockPaths: "",
   scopeMaxFiles: 0,
   scopeMaxLines: 0,
-  hardBlockOverride: [],
-  scopeAllowedPathPrefixes: [],
-  scopeAdditionalHardBlockPrefixes: [],
 };
 
 function makeFixingState(): ReviewState {
