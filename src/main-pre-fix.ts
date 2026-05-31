@@ -5,6 +5,7 @@ import {
   type Config,
 } from "./config.js";
 import { runIfNotVitest } from "./entrypoint.js";
+import { ghApi } from "./gh.js";
 import { demoteFixingOnCrash, rollbackFixingClaim } from "./crash-recovery.js";
 import {
   createInitialState,
@@ -117,6 +118,21 @@ export interface PreFixDeps {
    * any future stub that silently swallows the failure will break that test.
    */
   checkoutBranch: (ref: string) => void;
+  /**
+   * Fetches the PR head repo `full_name` ("owner/repo"), or "" when the head
+   * repo is missing / deleted. Backstops the wrapping workflow's "Check fork
+   * PR" step: the composite action must refuse to invoke claude-code-action +
+   * commit/push against fork-controlled code even if a consumer's Workflow B
+   * omits that guard. `docs/operations/security.md` documents the
+   * claude-code-action step as double-guarded against forks; this dep makes
+   * that guarantee hold inside the action, not only in the reference YAML.
+   */
+  fetchPrHeadRepoFullName: (
+    owner: string,
+    repo: string,
+    pr: number,
+    token: string,
+  ) => Promise<string>;
 }
 
 const defaultDeps: PreFixDeps = {
@@ -141,6 +157,18 @@ const defaultDeps: PreFixDeps = {
   now: () => new Date(),
   readHeadSha: () => git.readHeadSha("pre-fix"),
   checkoutBranch: git.checkoutBranch,
+  fetchPrHeadRepoFullName: async (owner, repo, pr, token) => {
+    const stdout = await ghApi(
+      [
+        "api",
+        `repos/${owner}/${repo}/pulls/${pr}`,
+        "--jq",
+        ".head.repo.full_name // empty",
+      ],
+      token,
+    );
+    return stdout.trim();
+  },
 };
 
 /**
@@ -191,6 +219,34 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   deps.info(
     `[pre-fix] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`,
   );
+
+  // ─── Fork-PR backstop (defense-in-depth) ──────────────────────────────────
+  // The wrapping workflow's "Check fork PR" step is the primary guard, but the
+  // composite action must not invoke claude-code-action + commit/push (or even
+  // a /restart-review) against fork-controlled code if a consumer's Workflow B
+  // omits that step. Verify the PR head repo matches the base repo BEFORE any
+  // state mutation, restart handling, or agent invocation. Same-repo PRs always
+  // have head.repo.full_name === base repo; a fork PR (or a deleted head repo →
+  // empty) is refused. should_run is already false, so returning here keeps the
+  // claude-code-action and post-fix steps skipped. The comparison is
+  // case-insensitive because GitHub treats repo names case-insensitively, so a
+  // case-drifted but legitimate same-repo PR is never falsely blocked.
+  const headRepoFullName = await deps.fetchPrHeadRepoFullName(
+    config.repoOwner,
+    config.repoName,
+    config.prNumber,
+    config.githubToken,
+  );
+  const expectedRepo = `${config.repoOwner}/${config.repoName}`;
+  if (headRepoFullName.toLowerCase() !== expectedRepo.toLowerCase()) {
+    deps.error(
+      `[pre-fix] Refusing to run: PR #${config.prNumber} head repo ` +
+        `${headRepoFullName === "" ? "(unknown/deleted)" : `"${headRepoFullName}"`} ` +
+        `does not match base repo "${expectedRepo}". Auto-fix is disabled for fork PRs. ` +
+        `Ensure the workflow's "Check fork PR" guard is present (see docs/operations/security.md).`,
+    );
+    return;
+  }
 
   // ─── Phase 0: Label gate ──────────────────────────────────────────────────
   const isCommandTrigger = isRestartCommandLike(config.triggerCommentBody);

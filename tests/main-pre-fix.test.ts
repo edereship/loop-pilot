@@ -84,6 +84,9 @@ function makeDeps(
     now: () => new Date("2026-05-14T12:00:00Z"),
     readHeadSha: () => "deadbeef",
     checkoutBranch: vi.fn(),
+    fetchPrHeadRepoFullName: vi
+      .fn()
+      .mockResolvedValue("team-yubune/loop-pilot"),
     outputs,
   };
 }
@@ -91,6 +94,50 @@ function makeDeps(
 describe("runPreFix", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each([
+    ["attacker/loop-pilot", "fork head repo"],
+    ["", "deleted/unknown head repo"],
+  ])(
+    "refuses to run (should_run=false, no state mutation) for a %s",
+    async (headRepo) => {
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      });
+      deps.fetchPrHeadRepoFullName = vi.fn().mockResolvedValue(headRepo);
+
+      await runPreFix(baseConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("false");
+      expect(deps.updateStateComment).not.toHaveBeenCalled();
+      expect(deps.handleRestartCommand).not.toHaveBeenCalled();
+      expect(deps.fetchPrLabels).not.toHaveBeenCalled();
+      expect(deps.error).toHaveBeenCalled();
+    },
+  );
+
+  it("allows a case-drifted same-repo head repo (case-insensitive match)", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T11:00:00Z",
+      state: makeState({ status: "done" }),
+    });
+    deps.fetchPrHeadRepoFullName = vi
+      .fn()
+      .mockResolvedValue("Team-Yubune/Loop-Pilot");
+
+    await runPreFix(baseConfig, deps);
+
+    // Passes the fork guard; proceeds to the normal `done` skip (no error).
+    expect(deps.error).not.toHaveBeenCalled();
+    expect(deps.fetchPrLabels).toHaveBeenCalled();
   });
 
   it("emits should_run=false when the gate label is missing", async () => {

@@ -559,6 +559,21 @@ export async function mergeIfChecksPass(
         log.warning(
           `[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min waiting for the merge commit sha to settle.`,
         );
+      } else if (pending.length === 0) {
+        // others.length > 0 and pending is empty, yet the green-merge branch
+        // above did not fire — so `mergeShaLookupNull` must be true (GitHub has
+        // not produced a merge commit sha; the PR is likely unmergeable due to
+        // base-branch conflicts). Reporting `timeout_pending` here would emit a
+        // contradictory "0 CI run(s) still pending" message; surface the real
+        // blocker instead. The skip itself is correct — refusing to merge a PR
+        // with no settled merge commit is the safe outcome.
+        await deps.postSkipNotification?.({
+          kind: "merge_sha_unsettled",
+          timeoutMinutes,
+        });
+        log.warning(
+          `[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min — CI on HEAD is green but GitHub has not produced a merge commit (the PR may have base-branch conflicts).`,
+        );
       } else {
         const pendingNames = pending.map((r) => r.name);
         await deps.postSkipNotification?.({

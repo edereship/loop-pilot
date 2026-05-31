@@ -19777,9 +19777,30 @@ function decodePayload(raw) {
   }
 }
 function renderStatusCommentBody(snapshot) {
-  for (let count = snapshot.entries.length; count >= 0; count--) {
+  for (let count = snapshot.entries.length; count >= 1; count--) {
     const effective = count === snapshot.entries.length ? snapshot : { ...snapshot, entries: snapshot.entries.slice(0, count) };
     const body = renderStatusCommentBodyUnchecked(effective);
+    if (body.length <= GITHUB_COMMENT_BODY_LIMIT)
+      return body;
+  }
+  if (snapshot.entries.length > 0) {
+    const newest = snapshot.entries[0];
+    const renderWithBody = (body2) => renderStatusCommentBodyUnchecked({
+      ...snapshot,
+      entries: [{ ...newest, body: body2 }]
+    });
+    const withMarker = (charCount) => charCount < newest.body.length ? newest.body.slice(0, charCount) + ENTRY_BODY_TRUNCATION_MARKER : newest.body;
+    let lo = 0;
+    let hi = newest.body.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (renderWithBody(withMarker(mid)).length <= GITHUB_COMMENT_BODY_LIMIT) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const body = renderWithBody(withMarker(lo));
     if (body.length <= GITHUB_COMMENT_BODY_LIMIT)
       return body;
   }

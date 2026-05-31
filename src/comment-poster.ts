@@ -297,6 +297,10 @@ export async function postTerminalNotification(
  *   - `ci_failed`           — one or more non-self CI runs ended with a failed conclusion
  *   - `timeout_no_runs`     — the wait budget elapsed before any non-self CI run appeared
  *   - `timeout_pending`     — the wait budget elapsed with CI runs still pending
+ *   - `merge_sha_unsettled` — the wait budget elapsed with CI green but GitHub never produced a
+ *                             merge commit sha (PR likely has base-branch conflicts). Distinct
+ *                             from `timeout_pending` so the notification does not contradictorily
+ *                             claim "0 runs still pending".
  *   - `merge_call_failed`   — `gh pr merge --auto --squash` itself was rejected (commonly because
  *                             Repository Settings → "Allow auto-merge" is disabled — see TY-288)
  */
@@ -307,6 +311,7 @@ export type AutoMergeSkipKind =
   | { kind: "ci_failed"; failures: ReadonlyArray<{ name: string; conclusion: string }> }
   | { kind: "timeout_no_runs"; timeoutMinutes: number }
   | { kind: "timeout_pending"; timeoutMinutes: number; pending: ReadonlyArray<string> }
+  | { kind: "merge_sha_unsettled"; timeoutMinutes: number }
   | { kind: "merge_call_failed"; detail: string }
   // BUG-01 follow-up: not emitted by `mergeIfChecksPass`. Pre-fix posts this
   // (instead of calling the merger at all) when the `done / no_findings` result
@@ -355,6 +360,14 @@ export function buildAutoMergeSkipBody(
         `${kind.pending.length} CI run(s) still pending: ${kind.pending.map((n) => `\`${n}\``).join(", ")}.`,
         "",
         "Wait for CI to finish and merge manually, or bump `LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES` if your CI is consistently slow.",
+        "",
+        `Workflow run: ${runUrl}`,
+      ].join("\n");
+    case "merge_sha_unsettled":
+      return [
+        `${AUTO_MERGE_SKIP_PREFIX} — timed out after ${kind.timeoutMinutes} min: CI on HEAD is green but GitHub has not produced a merge commit for this PR.`,
+        "",
+        "GitHub reports no merge commit sha while a PR is unmergeable, so this usually means the PR has conflicts with its base branch (or mergeability is still being computed). Resolve the conflicts (or wait for mergeability to settle) and merge manually.",
         "",
         `Workflow run: ${runUrl}`,
       ].join("\n");

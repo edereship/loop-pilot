@@ -269,3 +269,33 @@ describe("README documents the cross-org adopter caller", () => {
     expect(readme).toContain("language:");
   });
 });
+
+describe("reusable loop: 2B crash-notice healthy-state gate (TY-358 / PoC #147)", () => {
+  // PoC #147 regression guard. The #2B fail-safe fires on conclusion
+  // failure|cancelled, but a `cancelled` that lands AFTER the loop advanced the
+  // hidden state to waiting_codex/done (long Codex-ACK poll or auto-merge wait)
+  // is NOT a crash. Without the gate, 2B posts "🛑 LoopPilot crashed →
+  // /restart-review --hard" on a healthy PR, misleading the operator into wiping
+  // iteration history + double-posting @codex review. The gate reads the hidden
+  // state on the `cancelled` path and skips the crash notice when it is healthy.
+
+  it("gates the crash notice on a healthy hidden state for the cancelled path only", () => {
+    // Restricted to `cancelled` (a genuine crash is conclusion=failure and must
+    // still post); reads the newest state comment and skips when waiting_codex/done.
+    expect(loopReusable).toContain('if [ "${LOOP_CONCLUSION:-}" = "cancelled" ]; then');
+    expect(loopReusable).toContain("skipping the crash notification");
+    expect(loopReusable).toMatch(
+      /STATE_STATUS:-\}" = "waiting_codex" \] \|\| \[ "\$\{STATE_STATUS:-\}" = "done"/,
+    );
+  });
+
+  it("reads state with the same trust filter / anchors as readState (rebranded), not a hardcoded bot", () => {
+    // Honors the operator's trusted-author var, anchors on the LoopPilot visible
+    // header + the looppilot-state marker (NOT the PoC auto-review-* strings).
+    expect(loopReusable).toContain("STATE_AUTHORS: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}");
+    expect(loopReusable).toContain('startswith(\\"LoopPilot state is stored in this comment.\\")');
+    expect(loopReusable).toContain('contains(\\"<!-- looppilot-state\\")');
+    expect(loopReusable).not.toContain("auto-review-state");
+    expect(loopReusable).not.toContain("AUTO_REVIEW_STATE_COMMENT_AUTHORS");
+  });
+});

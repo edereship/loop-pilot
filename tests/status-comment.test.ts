@@ -264,6 +264,43 @@ describe("applyStatusUpdate", () => {
     const body = renderStatusCommentBody(snap);
     expect(body.length).toBeLessThanOrEqual(65_536);
   });
+
+  it("retains a multi-byte (CJK) test_failure entry instead of dropping it (base64 byte-expansion regression, TY-339)", () => {
+    // The base64 data block encodes UTF-8 bytes: a multi-byte (CJK) body whose
+    // byte length blows past the limit would previously make the render
+    // fallback drop the entry (and all history) to zero. Step 2 now truncates
+    // the newest entry rather than dropping it, so the entry survives.
+    const cjk = "テストが失敗しました。アサーションエラー。\n".repeat(2000);
+    const snap = applyStatusUpdate(createInitialStatusSnapshot(), {
+      newEntry: entry({ kind: "test_failure", body: cjk }),
+    });
+    const rendered = renderStatusCommentBody(snap);
+    expect(rendered.length).toBeLessThanOrEqual(65_536);
+    const parsed = parseStatusCommentBody(rendered);
+    expect(parsed?.entries.length).toBe(1);
+    // Some of the actual failure text survives (not just an empty entry).
+    expect(parsed?.entries[0].body).toContain("テストが失敗しました");
+  });
+
+  it("an oversized multi-byte newest entry does not wipe prior history (truncates instead, TY-339)", () => {
+    let snap = createInitialStatusSnapshot();
+    for (const i of [1, 2, 3]) {
+      snap = applyStatusUpdate(snap, {
+        newEntry: entry({ kind: "auto_fix_applied", title: `iter ${i}`, body: `- src/f${i}.ts` }),
+      });
+    }
+    // A large multi-byte newest entry (~14k CJK chars → ~42k bytes) that the
+    // char-based per-entry cap does not catch.
+    snap = applyStatusUpdate(snap, {
+      newEntry: entry({ kind: "test_failure", title: "fail", body: "あ".repeat(14_000) }),
+    });
+    const rendered = renderStatusCommentBody(snap);
+    expect(rendered.length).toBeLessThanOrEqual(65_536);
+    const parsed = parseStatusCommentBody(rendered);
+    // At least the newest entry is retained (history is not wiped to zero).
+    expect(parsed?.entries.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(parsed?.entries[0].title).toBe("fail");
+  });
 });
 
 describe("upsertStatusComment", () => {

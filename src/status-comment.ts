@@ -10,9 +10,17 @@ const STATUS_COMMENT_DATA_OPEN = `<!-- ${STATUS_COMMENT_MARKER}-data`;
 const STATUS_COMMENT_DATA_CLOSE = "-->";
 const STATUS_COMMENT_VISIBLE_HEADER = "## LoopPilot status";
 const MAX_ENTRIES = 30;
-// GitHub issue-comment body limit is 65 536 bytes. Each entry body appears
+// GitHub issue-comment body limit is 65 536 characters. Each entry body appears
 // twice in the rendered comment (visible history + hidden JSON data block), so
 // we cap individual bodies to keep the total well within that limit.
+//
+// NOTE: the hidden data block base64-encodes the snapshot JSON, and base64
+// length tracks the body's UTF-8 BYTE length, NOT its character count. A
+// 16 000-character body of multi-byte (e.g. CJK) text is ~48 000 bytes →
+// ~64 000 base64 chars, which — alongside the raw copy in the visible history —
+// can push the rendered comment past `GITHUB_COMMENT_BODY_LIMIT`. To avoid
+// silently wiping the history in that case, `renderStatusCommentBody` truncates
+// (rather than drops) an over-budget newest entry as a backstop (TY-339).
 const MAX_ENTRY_BODY_LENGTH = 16_000;
 const ENTRY_BODY_TRUNCATION_MARKER = "\n\n_(output truncated — exceeded size limit)_";
 
@@ -156,11 +164,11 @@ function decodePayload(raw: string): string | null {
 }
 
 export function renderStatusCommentBody(snapshot: StatusSnapshot): string {
-  // Trim oldest entries (last in newest-first array) until the rendered body
-  // fits within GitHub's issue-comment character limit.  Each entry appears
+  // Step 1: trim oldest entries (last in newest-first array) until the rendered
+  // body fits within GitHub's issue-comment character limit.  Each entry appears
   // twice — once in visible history and once inside the JSON data block — so
   // the aggregate size can far exceed per-entry caps alone.
-  for (let count = snapshot.entries.length; count >= 0; count--) {
+  for (let count = snapshot.entries.length; count >= 1; count--) {
     const effective: StatusSnapshot =
       count === snapshot.entries.length
         ? snapshot
@@ -168,7 +176,44 @@ export function renderStatusCommentBody(snapshot: StatusSnapshot): string {
     const body = renderStatusCommentBodyUnchecked(effective);
     if (body.length <= GITHUB_COMMENT_BODY_LIMIT) return body;
   }
-  // Fallback: render with zero entries (header alone is always under the limit).
+
+  // Step 2: even the single newest entry does not fit at full body. This
+  // happens when an entry body is dominated by multi-byte (e.g. CJK) content:
+  // the base64 data block encodes UTF-8 bytes, so the rendered size grows
+  // faster than the char-based per-entry cap accounts for (see the note on
+  // MAX_ENTRY_BODY_LENGTH). Dropping to zero entries here would silently
+  // discard the newest entry — for a CHECK_COMMAND `test_failure` that is the
+  // failure diagnostics operators most need, and its companion top-level
+  // notification is link-only — AND every prior history entry. Instead, keep
+  // the newest entry and truncate its body to the largest char prefix whose
+  // single-entry render still fits.
+  if (snapshot.entries.length > 0) {
+    const newest = snapshot.entries[0];
+    const renderWithBody = (body: string): string =>
+      renderStatusCommentBodyUnchecked({
+        ...snapshot,
+        entries: [{ ...newest, body }],
+      });
+    const withMarker = (charCount: number): string =>
+      charCount < newest.body.length
+        ? newest.body.slice(0, charCount) + ENTRY_BODY_TRUNCATION_MARKER
+        : newest.body;
+    // Binary-search the largest char prefix that fits once rendered.
+    let lo = 0;
+    let hi = newest.body.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (renderWithBody(withMarker(mid)).length <= GITHUB_COMMENT_BODY_LIMIT) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const body = renderWithBody(withMarker(lo));
+    if (body.length <= GITHUB_COMMENT_BODY_LIMIT) return body;
+  }
+
+  // Step 3: floor — render with zero entries (header alone is always under the limit).
   return renderStatusCommentBodyUnchecked({ ...snapshot, entries: [] });
 }
 

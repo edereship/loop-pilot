@@ -1217,6 +1217,43 @@ describe("mergeIfChecksPass — postSkipNotification on every skip path (TY-295)
     expect(detail).toContain("not mergeable");
   });
 
+  it("path 12 — merge_sha_unsettled when the wait elapses with CI green but no merge commit sha", async () => {
+    // A non-self CI run is completed/green, but getPrMergeSha never resolves
+    // (mergeShaLookupNull stays true — typical of a PR with base-branch
+    // conflicts). The green-merge branch is gated off by mergeShaLookupNull, so
+    // at timeout we must surface `merge_sha_unsettled` rather than a
+    // contradictory `timeout_pending` carrying an empty pending list.
+    const { notifications, postSkipNotification } = captureNotifications();
+    const { log } = captureLog();
+
+    let clock = 0;
+    await mergeIfChecksPass("o", "r", 42, "tok", log, {
+      getPrHeadSha: async () => "abc123",
+      getPrMergeSha: async () => null,
+      listWorkflowRuns: async (_o, _n, sha) =>
+        sha === "abc123" ? [run(1, "ci", "completed", "success")] : [],
+      mergeSquash: async () => {
+        throw new Error("merge must not be attempted when the merge sha is unsettled");
+      },
+      sleep: async () => {
+        clock += 60_000;
+      },
+      now: () => clock,
+      selfRunId: "",
+      selfWorkflowName: "",
+      selfWorkflowPath: "",
+      pollIntervalMs: 100,
+      timeoutMs: 60_000,
+      postSkipNotification,
+    });
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      kind: "merge_sha_unsettled",
+      timeoutMinutes: expect.any(Number),
+    });
+  });
+
   it("does not invoke postSkipNotification on the happy path (no false-positive notifications)", async () => {
     const fake = makeDeps({
       workflowRunPages: [[run(1, "ci", "completed", "success")]],
