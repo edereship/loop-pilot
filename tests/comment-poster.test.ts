@@ -708,6 +708,7 @@ describe("buildAutoMergeSkipBody (TY-295)", () => {
       },
       { kind: "timeout_no_runs", timeoutMinutes: 10 },
       { kind: "timeout_pending", timeoutMinutes: 10, pending: ["ci"] },
+      { kind: "merge_sha_unsettled", timeoutMinutes: 10 },
       { kind: "merge_call_failed", detail: "x" },
       { kind: "unparseable_findings", count: 1 },
     ];
@@ -769,6 +770,19 @@ describe("buildAutoMergeSkipBody (TY-295)", () => {
     );
     expect(body).toContain("waiting for any non-self CI run to appear");
     expect(body).toContain("no CI configured");
+  });
+
+  it("merge_sha_unsettled explains the unsettled merge commit (conflict) instead of claiming pending CI", () => {
+    const body = buildAutoMergeSkipBody(
+      { kind: "merge_sha_unsettled", timeoutMinutes: 10 },
+      RUN_URL,
+    );
+    expect(body).toContain("10 min");
+    expect(body).toContain("merge commit");
+    expect(body).toContain("conflicts");
+    // The whole point of this kind: it must NOT contradictorily imply CI runs
+    // are still pending (the bug it replaces emitted "0 CI run(s) still pending").
+    expect(body).not.toContain("still pending");
   });
 
   it("head_changed includes the old and new sha and points at /restart-review", () => {

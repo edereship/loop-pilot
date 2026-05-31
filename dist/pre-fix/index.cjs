@@ -20126,9 +20126,30 @@ function decodePayload(raw) {
   }
 }
 function renderStatusCommentBody(snapshot) {
-  for (let count = snapshot.entries.length; count >= 0; count--) {
+  for (let count = snapshot.entries.length; count >= 1; count--) {
     const effective = count === snapshot.entries.length ? snapshot : { ...snapshot, entries: snapshot.entries.slice(0, count) };
     const body = renderStatusCommentBodyUnchecked(effective);
+    if (body.length <= GITHUB_COMMENT_BODY_LIMIT)
+      return body;
+  }
+  if (snapshot.entries.length > 0) {
+    const newest = snapshot.entries[0];
+    const renderWithBody = (body2) => renderStatusCommentBodyUnchecked({
+      ...snapshot,
+      entries: [{ ...newest, body: body2 }]
+    });
+    const withMarker = (charCount) => charCount < newest.body.length ? newest.body.slice(0, charCount) + ENTRY_BODY_TRUNCATION_MARKER : newest.body;
+    let lo = 0;
+    let hi = newest.body.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (renderWithBody(withMarker(mid)).length <= GITHUB_COMMENT_BODY_LIMIT) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const body = renderWithBody(withMarker(lo));
     if (body.length <= GITHUB_COMMENT_BODY_LIMIT)
       return body;
   }
@@ -20461,6 +20482,14 @@ function buildAutoMergeSkipBody(kind, runUrl) {
         `${kind.pending.length} CI run(s) still pending: ${kind.pending.map((n) => `\`${n}\``).join(", ")}.`,
         "",
         "Wait for CI to finish and merge manually, or bump `LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES` if your CI is consistently slow.",
+        "",
+        `Workflow run: ${runUrl}`
+      ].join("\n");
+    case "merge_sha_unsettled":
+      return [
+        `${AUTO_MERGE_SKIP_PREFIX} \u2014 timed out after ${kind.timeoutMinutes} min: CI on HEAD is green but GitHub has not produced a merge commit for this PR.`,
+        "",
+        "GitHub reports no merge commit sha while a PR is unmergeable, so this usually means the PR has conflicts with its base branch (or mergeability is still being computed). Resolve the conflicts (or wait for mergeability to settle) and merge manually.",
         "",
         `Workflow run: ${runUrl}`
       ].join("\n");
@@ -20916,7 +20945,14 @@ function summaryMayContainFindings(body, threshold) {
   if (mentionsAnySeverity) {
     return severitySignal;
   }
-  return /\bfindings?\b/.test(normalized) || /\bissues?\b/.test(normalized) || /指摘|問題|検出/.test(body);
+  return /\bfindings?\b/.test(normalized) || /\bissues?\b/.test(normalized) || // Codex's standard review summary ("Here are some automated review
+  // suggestions for this pull request.") names no severity and contains
+  // neither "findings" nor "issues", so without "suggestions" here it
+  // returned false — silently skipping the debounce on the primary
+  // pull_request_review trigger even when inline findings exist. The
+  // no-findings residual check above already treats "suggestions" as a
+  // findings signal; mirror it in this generic fallback so the two agree.
+  /\bsuggestions?\b/.test(normalized) || /指摘|問題|検出/.test(body);
 }
 
 // dist/findings-hash.js
@@ -21197,6 +21233,12 @@ async function mergeIfChecksPass(owner, name, pr, token, log, overrides = {}) {
           timeoutMinutes
         });
         log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min waiting for the merge commit sha to settle.`);
+      } else if (pending.length === 0) {
+        await deps.postSkipNotification?.({
+          kind: "merge_sha_unsettled",
+          timeoutMinutes
+        });
+        log.warning(`[pr-merger] Skipping auto-merge for PR #${pr}: timed out after ${timeoutMinutes} min \u2014 CI on HEAD is green but GitHub has not produced a merge commit (the PR may have base-branch conflicts).`);
       } else {
         const pendingNames = pending.map((r) => r.name);
         await deps.postSkipNotification?.({
@@ -21429,6 +21471,9 @@ function applyRestartToState(state, mode, reviewRequestCommentId) {
   if (state.status === "stopped" && state.stopReason === "secret_leak_suspected" && mode !== "hard") {
     return { ok: false, reason: "secret_leak_requires_hard_restart" };
   }
+  if (state.status === "stopped" && state.stopReason === "max_iterations" && mode !== "hard") {
+    return { ok: false, reason: "max_iterations_requires_hard_restart" };
+  }
   if (state.status !== "done" && state.status !== "stopped" && state.status !== "waiting_codex" && state.status !== "fixing") {
     return { ok: false, reason: "unsupported_status" };
   }
@@ -21448,6 +21493,7 @@ function applyRestartToState(state, mode, reviewRequestCommentId) {
     nextState.iterationCount = 0;
     nextState.findingsHashHistory = [];
     nextState.lastFindingsHash = null;
+    nextState.previousCheckFailure = null;
   }
   return { ok: true, nextState, previousStopReason: state.stopReason };
 }
@@ -21650,6 +21696,8 @@ function restartRejectionMessage(reason) {
       return "\u274C Restart cannot apply: current review status is not restartable.";
     case "secret_leak_requires_hard_restart":
       return "\u274C Restart cannot apply: this PR stopped with `secret_leak_suspected`. Soft `/restart-review` would let the same Codex finding hash re-trigger the leak. Review the affected files manually first, then use `/restart-review --hard` to clear iteration history and resume. See docs/operations/security.md (secret-scanner \u30DD\u30EA\u30B7\u30FC) and docs/operations/stop-and-recovery.md.";
+    case "max_iterations_requires_hard_restart":
+      return "\u274C Restart cannot apply: this PR stopped at `max_iterations`. Soft `/restart-review` keeps `iterationCount` at the cap, so the next run would immediately re-stop with the same reason. Use `/restart-review --hard` to reset the iteration count (and findings history) and resume. See docs/operations/stop-and-recovery.md.";
   }
 }
 async function getPrAuthor(owner, repo, prNumber, token) {
@@ -21865,7 +21913,16 @@ var defaultDeps3 = {
   sleep: sleep2,
   now: () => /* @__PURE__ */ new Date(),
   readHeadSha: () => readHeadSha("pre-fix"),
-  checkoutBranch
+  checkoutBranch,
+  fetchPrHeadRepoFullName: async (owner, repo, pr, token) => {
+    const stdout = await ghApi([
+      "api",
+      `repos/${owner}/${repo}/pulls/${pr}`,
+      "--jq",
+      ".head.repo.full_name // empty"
+    ], token);
+    return stdout.trim();
+  }
 };
 async function runPreFix(config, deps = defaultDeps3) {
   registerAllSecrets(config, deps.setSecret);
@@ -21879,6 +21936,12 @@ async function runPreFix(config, deps = defaultDeps3) {
     throw new Error("[pre-fix] pr-head-ref is required but not set. Cannot determine target branch.");
   }
   deps.info(`[pre-fix] Starting Workflow B for PR #${config.prNumber}, trigger comment: ${triggerCommentId}`);
+  const headRepoFullName = await deps.fetchPrHeadRepoFullName(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
+  const expectedRepo = `${config.repoOwner}/${config.repoName}`;
+  if (headRepoFullName.toLowerCase() !== expectedRepo.toLowerCase()) {
+    deps.error(`[pre-fix] Refusing to run: PR #${config.prNumber} head repo ${headRepoFullName === "" ? "(unknown/deleted)" : `"${headRepoFullName}"`} does not match base repo "${expectedRepo}". Auto-fix is disabled for fork PRs. Ensure the workflow's "Check fork PR" guard is present (see docs/operations/security.md).`);
+    return;
+  }
   const isCommandTrigger = isRestartCommandLike(config.triggerCommentBody);
   if (!config.autoReviewFullAuto && !isCommandTrigger) {
     const effectiveLabel = config.autoReviewLabel || DEFAULT_LOOPPILOT_LABEL;

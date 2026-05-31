@@ -434,6 +434,14 @@ export function summaryMayContainFindings(
   return (
     /\bfindings?\b/.test(normalized) ||
     /\bissues?\b/.test(normalized) ||
+    // Codex's standard review summary ("Here are some automated review
+    // suggestions for this pull request.") names no severity and contains
+    // neither "findings" nor "issues", so without "suggestions" here it
+    // returned false — silently skipping the debounce on the primary
+    // pull_request_review trigger even when inline findings exist. The
+    // no-findings residual check above already treats "suggestions" as a
+    // findings signal; mirror it in this generic fallback so the two agree.
+    /\bsuggestions?\b/.test(normalized) ||
     /指摘|問題|検出/.test(body)
   );
 }

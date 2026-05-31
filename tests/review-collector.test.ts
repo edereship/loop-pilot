@@ -599,6 +599,20 @@ describe("summaryMayContainFindings (TY-294)", () => {
     ).toBe(true);
   });
 
+  // Regression: Codex's standard review summary names no severity and uses
+  // "suggestions" rather than "findings"/"issues". It must still be treated as
+  // possibly-findings so the debounce is NOT skipped on the primary
+  // pull_request_review trigger (the generic fallback previously omitted
+  // "suggestions" and returned false).
+  it("returns true for Codex's standard `automated review suggestions` summary", () => {
+    expect(
+      summaryMayContainFindings(
+        "💡 Codex Review\n\nHere are some automated review suggestions for this pull request.",
+        "P3",
+      ),
+    ).toBe(true);
+  });
+
   it("still respects existing `no findings` / `no issues` keywords", () => {
     expect(summaryMayContainFindings("No findings", "P2")).toBe(false);
     expect(summaryMayContainFindings("No issues", "P2")).toBe(false);

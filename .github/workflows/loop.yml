@@ -365,8 +365,72 @@ jobs:
           PR_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           LOOP_CONCLUSION: ${{ steps.loop.conclusion }}
+          # Trusted state-comment authors (TY-272 #A). The healthy-state gate
+          # below must accept the same authors readState uses, so a GitHub App /
+          # machine-user deployment is covered too — not just github-actions[bot].
+          STATE_AUTHORS: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}
         run: |
           set -euo pipefail
+          # BUG-2 (TY-339): a job-timeout (`cancelled`) that lands AFTER the loop
+          # has advanced the hidden state to `waiting_codex` (repair committed +
+          # pushed + `@codex review` re-requested) or `done` (completed, possibly
+          # mid auto-merge wait) is NOT a crash — the in-job Codex ACK poll
+          # (post-fix, TY-334) or the done-path auto-merge wait can run long
+          # enough to be cancelled here even though the loop succeeded. Posting
+          # "🛑 LoopPilot crashed … /restart-review --hard" then misleads the
+          # operator into wiping iteration history and double-posting `@codex
+          # review`.
+          #
+          # The healthy-state skip is restricted to the `cancelled` path on
+          # purpose (Codex P2 on PoC #147 — "require fresh state"): a genuine
+          # pre-fix / post-fix crash surfaces as conclusion=`failure` (via
+          # runIfNotVitest → core.setFailed), NOT `cancelled`. Skipping on
+          # `failure` too would let an early pre-fix crash that left a PREVIOUS
+          # run's `waiting_codex` / `done` state in place be silently suppressed,
+          # so the operator would never learn this run crashed. Reaching a
+          # healthy state AND being cancelled only happens when THIS run advanced
+          # the state and then got cancelled in its long-running tail (a
+          # cancellation during `fixing` leaves `status: fixing`, which is not
+          # skipped below), so `cancelled` is a reliable proxy for "this run did
+          # the work"; `failure` always falls through to the crash post.
+          #
+          # Reading the state robustly:
+          #   * Honor `LOOPPILOT_STATE_COMMENT_AUTHORS` (mirrors
+          #     buildTrustedAuthorJqFilter) so non-default state authors are read.
+          #   * Iterate authors as a quoted array so bracketed bot names
+          #     (`my-app[bot]`) are not glob-expanded against the checkout.
+          #   * Anchor on the visible header `startswith("LoopPilot state is
+          #     stored in this comment.")` (same as readState) so operational
+          #     comments that merely QUOTE the `<!-- looppilot-state` marker
+          #     are not read as state.
+          #   * Decode ONLY the newest matching state comment (`@base64 | tail`),
+          #     so a corrupted newest comment falls open (posts the crash).
+          # The grep matches the unescaped JSON field (`"status": "…"`), so a
+          # `"status"` token in `previousCheckFailure` (escaped) cannot spoof it.
+          if [ "${LOOP_CONCLUSION:-}" = "cancelled" ]; then
+            AUTHOR_FILTER='.user.login == "github-actions[bot]"'
+            if [ -n "${STATE_AUTHORS:-}" ]; then
+              IFS=',' read -ra _authors <<< "$STATE_AUTHORS" || true
+              for _a in "${_authors[@]:-}"; do
+                _a=$(printf '%s' "$_a" | tr -d '[:space:]')
+                if printf '%s' "$_a" | grep -qE '^[A-Za-z0-9_-]+(\[bot\])?$'; then
+                  AUTHOR_FILTER="$AUTHOR_FILTER or .user.login == \"$_a\""
+                fi
+              done
+            fi
+            NEWEST_STATE_B64=$(gh api --paginate \
+              "repos/${REPO}/issues/${PR_NUM}/comments" \
+              --jq ".[] | select($AUTHOR_FILTER) | select(.body | startswith(\"LoopPilot state is stored in this comment.\")) | select(.body | contains(\"<!-- looppilot-state\")) | .body | @base64" \
+              2>/dev/null | tail -n1 || true)
+            STATE_STATUS=""
+            if [ -n "${NEWEST_STATE_B64:-}" ]; then
+              STATE_STATUS=$(printf '%s' "$NEWEST_STATE_B64" | base64 -d 2>/dev/null | grep -oE '"status": "(waiting_codex|done|fixing|stopped|initialized)"' | head -n1 | grep -oE '(waiting_codex|done|fixing|stopped|initialized)' || true)
+            fi
+            if [ "${STATE_STATUS:-}" = "waiting_codex" ] || [ "${STATE_STATUS:-}" = "done" ]; then
+              echo "::notice::Loop was cancelled but hidden state is '${STATE_STATUS}' — it committed its work before the job ended; skipping the crash notification."
+              exit 0
+            fi
+          fi
           # Dedup window: look for any `🛑 **LoopPilot stopped**` body
           # authored by github-actions[bot] in the last 90s. That string
           # is the literal prefix `buildTerminalNotificationBody` emits

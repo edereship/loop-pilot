@@ -262,6 +262,47 @@ describe("applyRestartToState", () => {
     expect(result).toEqual({ ok: false, reason: "state_corrupted" });
   });
 
+  it("rejects soft restart from stopReason=max_iterations (soft keeps the cap and re-stops)", () => {
+    // A soft restart preserves iterationCount, which is already at the cap, so
+    // pre-fix's `iterationCount >= maxReviewIterations` guard re-trips on the
+    // next trigger and immediately re-stops. Only --hard (resets the count)
+    // makes progress, so soft is rejected with a --hard escape hatch.
+    const state = makeState({
+      status: "stopped",
+      stopReason: "max_iterations",
+      iterationCount: 20,
+    });
+    const result = applyRestartToState(state, "soft", 1);
+    expect(result).toEqual({
+      ok: false,
+      reason: "max_iterations_requires_hard_restart",
+    });
+  });
+
+  it("allows --hard restart from stopReason=max_iterations, clearing the cap", () => {
+    const state = makeState({
+      status: "stopped",
+      stopReason: "max_iterations",
+      iterationCount: 20,
+      findingsHashHistory: [{ iteration: 20, hash: "hash-a" }],
+      lastFindingsHash: "hash-a",
+    });
+    const result = applyRestartToState(state, "hard", 9999);
+    if (!result.ok) {
+      throw new Error(`expected --hard to recover max_iterations: ${result.reason}`);
+    }
+    expect(result.nextState).toMatchObject({
+      status: "waiting_codex",
+      // stopReason is preserved across restart per TY-258 (one-shot, cleared on
+      // the next clean commit); --hard resets the iteration accounting.
+      stopReason: "max_iterations",
+      iterationCount: 0,
+      findingsHashHistory: [],
+      lastFindingsHash: null,
+      lastCodexRequestCommentId: 9999,
+    });
+  });
+
   it("soft-restarts the new workflow_crashed stop reason without ceremony (TY-282 #2A)", () => {
     // workflow_crashed is the new auto-recoverable stop reason for crash
     // recovery + stale fixing detection. Unlike state_corrupted it accepts
@@ -336,6 +377,41 @@ describe("applyRestartToState", () => {
     if (!result.ok) throw new Error("expected hard restart to succeed");
     expect(result.nextState.fixingStartedAt).toBeNull();
     expect(result.nextState.status).toBe("waiting_codex");
+  });
+
+  it("clears previousCheckFailure on hard restart so a fresh start does not inject stale CHECK_COMMAND context", () => {
+    // A `fixing` state hard-restarted after a prior test_failure carries the
+    // failure tail (preserved across the intervening soft restart). `--hard`
+    // wipes iteration history; the stale failure context must go with it so the
+    // next repair prompt does not embed a now-irrelevant "Previous CHECK_COMMAND
+    // Failure" section AND `selectModel` does not escalate on it.
+    const state = makeState({
+      status: "fixing",
+      fixingStartedAt: "2026-05-14T10:00:00.000Z",
+      iterationCount: 3,
+      findingsHashHistory: [{ iteration: 3, hash: "hash-a" }],
+      lastFindingsHash: "hash-a",
+      previousCheckFailure: "STALE tsc error from an abandoned attempt",
+    });
+
+    const result = applyRestartToState(state, "hard", 45678);
+
+    if (!result.ok) throw new Error("expected hard restart to succeed");
+    expect(result.nextState.previousCheckFailure).toBeNull();
+    expect(result.nextState.iterationCount).toBe(0);
+  });
+
+  it("preserves previousCheckFailure on soft restart so the next attempt keeps the failure context (no regression)", () => {
+    const state = makeState({
+      status: "stopped",
+      stopReason: "test_failure",
+      previousCheckFailure: "tsc error: TS2345 ...",
+    });
+
+    const result = applyRestartToState(state, "soft", 45678);
+
+    if (!result.ok) throw new Error("expected soft restart to succeed");
+    expect(result.nextState.previousCheckFailure).toBe("tsc error: TS2345 ...");
   });
 
   it("TY-286 #C: keeps fixingStartedAt null on soft restart from non-fixing status (no regression)", () => {

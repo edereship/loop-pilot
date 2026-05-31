@@ -94,7 +94,8 @@ export type RestartApplyResult =
       reason:
         | "state_corrupted"
         | "unsupported_status"
-        | "secret_leak_requires_hard_restart";
+        | "secret_leak_requires_hard_restart"
+        | "max_iterations_requires_hard_restart";
     };
 
 export function applyRestartToState(
@@ -138,6 +139,22 @@ export function applyRestartToState(
   ) {
     return { ok: false, reason: "secret_leak_requires_hard_restart" };
   }
+  // A soft restart preserves `iterationCount`, which on a `max_iterations`
+  // stop is already at the cap. The next pre-fix run re-trips its
+  // `iterationCount >= maxReviewIterations` guard (`main-pre-fix.ts`) and
+  // immediately re-stops with the same reason — burning a Codex review round
+  // and showing operators a misleading "🟢 restarted" followed by an instant
+  // re-stop. Only `--hard` (which resets `iterationCount` to 0) can make
+  // progress, so reject soft exactly like `state_corrupted` /
+  // `secret_leak_suspected`. The `STOP_REASON_LABELS` text and the recovery
+  // docs already steer operators to `--hard` for this stop reason.
+  if (
+    state.status === "stopped" &&
+    state.stopReason === "max_iterations" &&
+    mode !== "hard"
+  ) {
+    return { ok: false, reason: "max_iterations_requires_hard_restart" };
+  }
   if (
     state.status !== "done" &&
     state.status !== "stopped" &&
@@ -169,6 +186,17 @@ export function applyRestartToState(
     nextState.iterationCount = 0;
     nextState.findingsHashHistory = [];
     nextState.lastFindingsHash = null;
+    // `--hard` is an explicit "start from scratch", so wipe the
+    // iteration-derived CHECK_COMMAND failure context too. Without this, a
+    // `fixing` state hard-restarted after a prior `test_failure` (whose tail is
+    // preserved across a soft `/restart-review` and then carried into the
+    // `fixing` claim) would inject a now-stale "Previous CHECK_COMMAND Failure"
+    // section into the next repair prompt AND trip `selectModel`'s
+    // `previous_check_failure` escalation — burning an escalated-tier iteration
+    // on context the `--hard` was meant to discard. `stopReason` stays
+    // preserved on purpose (TY-258 one-shot escalation); soft restart still
+    // keeps `previousCheckFailure` so the next attempt sees the last failure.
+    nextState.previousCheckFailure = null;
   }
   return { ok: true, nextState, previousStopReason: state.stopReason };
 }
@@ -690,6 +718,13 @@ function restartRejectionMessage(reason: Exclude<RestartApplyResult, { ok: true 
         "Soft `/restart-review` would let the same Codex finding hash re-trigger the leak. " +
         "Review the affected files manually first, then use `/restart-review --hard` to clear iteration history and resume. " +
         "See docs/operations/security.md (secret-scanner ポリシー) and docs/operations/stop-and-recovery.md."
+      );
+    case "max_iterations_requires_hard_restart":
+      return (
+        "❌ Restart cannot apply: this PR stopped at `max_iterations`. " +
+        "Soft `/restart-review` keeps `iterationCount` at the cap, so the next run would immediately re-stop with the same reason. " +
+        "Use `/restart-review --hard` to reset the iteration count (and findings history) and resume. " +
+        "See docs/operations/stop-and-recovery.md."
       );
   }
 }
