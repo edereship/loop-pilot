@@ -190,28 +190,18 @@ See docs/operations/scope-policy.md.
 
 「セキュリティ拒否であり override 不可」を明示。
 
-## 旧 variable の deprecation
+## 旧 variable の撤廃 (TY-271 / TY-350)
 
-以下の 3 変数は deprecated。設定されていたら post-fix 起動時に warning ログを出し、旧仕様で受け入れる。**次マイナーで削除予告**。
-
-| 旧 variable | 旧 input | 移行先 |
-|-------------|---------|--------|
-| `LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES` | `scope-allowed-path-prefixes` | **撤廃** — allow-list 概念自体が無くなった。block-list に書き換える必要なし（block されていないパスは全て許可される） |
-| `LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES` | `scope-additional-hard-block-prefixes` | `LOOPPILOT_BLOCK_PATHS` に追記。例: `LOOPPILOT_BLOCK_PATHS="scripts/,Justfile"` |
-| `LOOPPILOT_HARD_BLOCK_OVERRIDE` | `looppilot-hard-block-override` | `LOOPPILOT_BLOCK_PATHS` の `!` 構文。例: `LOOPPILOT_BLOCK_PATHS="!package.json,!tsconfig.json"` |
-
-`LOOPPILOT_SCOPE_MAX_FILES` / `LOOPPILOT_SCOPE_MAX_LINES` は block-list とは直交するため**存続**する。
-
-### Migration ガイド
-
-旧運用と等価な新運用への 1:1 マッピング:
+旧 scope 変数 `LOOPPILOT_HARD_BLOCK_OVERRIDE` / `LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES` / `LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES`（および対応する `looppilot-hard-block-override` / `scope-allowed-path-prefixes` / `scope-additional-hard-block-prefixes` action input）は **v1.1.0 で削除**された。これらは reusable workflow `loop.yml` から composite へ配線されておらず、`@v1` では元々設定しても効果がなかった（TY-350）。`LOOPPILOT_BLOCK_PATHS` に移行する:
 
 | 旧設定 | 新設定 |
 |--------|--------|
 | `LOOPPILOT_HARD_BLOCK_OVERRIDE=package.json,tsconfig.json` | `LOOPPILOT_BLOCK_PATHS=!package.json,!tsconfig.json` |
 | `LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES=secrets/,Justfile` | `LOOPPILOT_BLOCK_PATHS=secrets/,Justfile` |
 | 両方併用 | `LOOPPILOT_BLOCK_PATHS=!package.json,!tsconfig.json,secrets/,Justfile` |
-| `LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES=src/,tests/,docs/,packages/` | （削除のみ。block-list 化により不要） |
+| `LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES=...` | （削除のみ。allow-list 概念は廃止され、block されていないパスは全て許可される） |
+
+`LOOPPILOT_SCOPE_MAX_FILES` / `LOOPPILOT_SCOPE_MAX_LINES` は block-list とは直交するため**存続**する。
 
 ## 関連
 

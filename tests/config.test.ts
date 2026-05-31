@@ -95,47 +95,6 @@ describe("loadConfig — Claude authentication (TY-260)", () => {
   });
 });
 
-describe("loadInitConfig — hard-block override (TY-255)", () => {
-  let restore: (() => void) | null = null;
-
-  beforeEach(() => {
-    restore = withEnv({
-      ...REQUIRED_ENV,
-      LOOPPILOT_HARD_BLOCK_OVERRIDE: undefined,
-    });
-  });
-
-  afterEach(() => {
-    restore?.();
-    restore = null;
-  });
-
-  it("defaults to an empty list when the variable is unset", () => {
-    expect(loadInitConfig().hardBlockOverride).toEqual([]);
-  });
-
-  it("treats an empty string as no override (variable defined but blank)", () => {
-    process.env.LOOPPILOT_HARD_BLOCK_OVERRIDE = "";
-    expect(loadInitConfig().hardBlockOverride).toEqual([]);
-  });
-
-  it("parses comma-separated paths and trims surrounding whitespace", () => {
-    process.env.LOOPPILOT_HARD_BLOCK_OVERRIDE = " package.json , tsconfig.json ";
-    expect(loadInitConfig().hardBlockOverride).toEqual([
-      "package.json",
-      "tsconfig.json",
-    ]);
-  });
-
-  it("discards empty entries from stray separators", () => {
-    process.env.LOOPPILOT_HARD_BLOCK_OVERRIDE = "package.json,,tsconfig.json,";
-    expect(loadInitConfig().hardBlockOverride).toEqual([
-      "package.json",
-      "tsconfig.json",
-    ]);
-  });
-});
-
 describe("loadInitConfig — integer input range validation (TY-267 #15)", () => {
   let restore: (() => void) | null = null;
 
@@ -250,8 +209,6 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
       LOOPPILOT_BLOCK_PATHS: undefined,
       LOOPPILOT_SCOPE_MAX_FILES: undefined,
       LOOPPILOT_SCOPE_MAX_LINES: undefined,
-      LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES: undefined,
-      LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES: undefined,
     });
   });
 
@@ -265,8 +222,6 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
     expect(config.autoReviewBlockPaths).toBe("");
     expect(config.scopeMaxFiles).toBe(0);
     expect(config.scopeMaxLines).toBe(0);
-    expect(config.scopeAllowedPathPrefixes).toEqual([]);
-    expect(config.scopeAdditionalHardBlockPrefixes).toEqual([]);
   });
 
   it("reads LOOPPILOT_SCOPE_MAX_FILES / _MAX_LINES from env when input is empty", () => {
@@ -292,19 +247,6 @@ describe("loadInitConfig — scope policy env-var fallback", () => {
     // of parsing concerns and lets main-post-fix re-emit it in the warning
     // for `!.github/...` rejections.
     expect(config.autoReviewBlockPaths).toBe("secrets/,!Makefile,Justfile");
-  });
-
-  it("still reads the deprecated LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES / _ADDITIONAL_HARD_BLOCK_PREFIXES (TY-271 deprecation)", () => {
-    process.env.LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES = "packages/,apps/";
-    process.env.LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES = "scripts/,Justfile";
-
-    const config = loadInitConfig();
-
-    // Config still parses the deprecated values so main-post-fix can emit
-    // the deprecation warning at run time. The actual behavioural fold-in
-    // happens in `buildScopePolicy`.
-    expect(config.scopeAllowedPathPrefixes).toEqual(["packages/", "apps/"]);
-    expect(config.scopeAdditionalHardBlockPrefixes).toEqual(["scripts/", "Justfile"]);
   });
 });
 

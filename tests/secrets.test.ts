@@ -43,9 +43,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     autoReviewBlockPaths: "",
     scopeMaxFiles: 0,
     scopeMaxLines: 0,
-    hardBlockOverride: [],
-    scopeAllowedPathPrefixes: [],
-    scopeAdditionalHardBlockPrefixes: [],
     ...overrides,
   };
 }

@@ -19231,17 +19231,8 @@ function loadBaseConfig() {
     severityThreshold: severityThresholdInput("severity-threshold", "LOOPPILOT_SEVERITY_THRESHOLD", DEFAULT_SEVERITY_THRESHOLD),
     autoReviewBlockPaths: input("looppilot-block-paths", "LOOPPILOT_BLOCK_PATHS", ""),
     scopeMaxFiles: intInput("scope-max-files", "LOOPPILOT_SCOPE_MAX_FILES", 0),
-    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0),
-    hardBlockOverride: stringListInput("looppilot-hard-block-override", "LOOPPILOT_HARD_BLOCK_OVERRIDE"),
-    scopeAllowedPathPrefixes: stringListInput("scope-allowed-path-prefixes", "LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES"),
-    scopeAdditionalHardBlockPrefixes: stringListInput("scope-additional-hard-block-prefixes", "LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES")
+    scopeMaxLines: intInput("scope-max-lines", "LOOPPILOT_SCOPE_MAX_LINES", 0)
   };
-}
-function stringListInput(inputName, envName) {
-  const raw = input(inputName, envName, "");
-  if (raw === "")
-    return [];
-  return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
 }
 function severityThresholdInput(inputName, envName, defaultValue) {
   const raw = input(inputName, envName, "").trim().toUpperCase();
@@ -20848,31 +20839,10 @@ function parseBlockPathsSpec(raw) {
   }
   return spec;
 }
-function legacyAdditionsToPatterns(values) {
-  return values.map((v) => v.trim()).map((v) => v.startsWith("/") ? v.slice(1) : v).filter((v) => v.length > 0).map((path) => ({
-    path,
-    isDirectory: path.endsWith("/"),
-    locked: false,
-    userAdded: true
-  }));
-}
-function legacyRemovalsToPatterns(values) {
-  return values.map((v) => v.trim()).map((v) => v.startsWith("/") ? v.slice(1) : v).filter((v) => v.length > 0).filter((v) => v !== ".github/" && !v.startsWith(".github/")).map((path) => ({
-    path,
-    isDirectory: path.endsWith("/"),
-    locked: false
-  }));
-}
 function buildScopePolicy(overrides) {
   const spec = parseBlockPathsSpec(overrides.blockPathsSpec ?? "");
-  const removals = [
-    ...spec.removals,
-    ...legacyRemovalsToPatterns(overrides.hardBlockOverride ?? [])
-  ];
-  const additions = [
-    ...spec.additions,
-    ...legacyAdditionsToPatterns(overrides.additionalHardBlockPrefixes ?? [])
-  ];
+  const removals = [...spec.removals];
+  const additions = [...spec.additions];
   const removalKeys = new Set(removals.map((p) => p.path));
   const surviving = DEFAULT_BLOCK_PATTERNS.filter((p) => p.locked || !removalKeys.has(p.path));
   const exemptedRootDotfiles = new Set(removals.map((p) => p.path).filter((p) => ROOT_DOTFILE_RE.test(p)));
@@ -21379,15 +21349,6 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     });
     return;
   }
-  if (config.scopeAllowedPathPrefixes.length > 0) {
-    deps.warning("[scope-check] LOOPPILOT_SCOPE_ALLOWED_PATH_PREFIXES / scope-allowed-path-prefixes is deprecated (TY-271). The allow-list concept has been removed; the value is ignored. The scope check now blocks only paths matching LOOPPILOT_BLOCK_PATHS (or the built-in defaults). Remove this variable.");
-  }
-  if (config.scopeAdditionalHardBlockPrefixes.length > 0) {
-    deps.warning(`[scope-check] LOOPPILOT_SCOPE_ADDITIONAL_HARD_BLOCK_PREFIXES / scope-additional-hard-block-prefixes is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS, e.g. LOOPPILOT_BLOCK_PATHS="${config.scopeAdditionalHardBlockPrefixes.join(",")}".`);
-  }
-  if (config.hardBlockOverride.length > 0) {
-    deps.warning(`[scope-check] LOOPPILOT_HARD_BLOCK_OVERRIDE / looppilot-hard-block-override is deprecated (TY-271). Migrate to LOOPPILOT_BLOCK_PATHS with the ! prefix, e.g. LOOPPILOT_BLOCK_PATHS="${config.hardBlockOverride.map((p) => `!${p}`).join(",")}".`);
-  }
   const blockSpec = parseBlockPathsSpec(config.autoReviewBlockPaths);
   for (const ignored of blockSpec.ignoredRemovals) {
     deps.warning(`[scope-check] LOOPPILOT_BLOCK_PATHS removal "!${ignored}" was ignored: .github/ is locked and cannot be unblocked.`);
@@ -21395,9 +21356,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
   const scopePolicy = buildScopePolicy({
     blockPathsSpec: config.autoReviewBlockPaths,
     maxFiles: config.scopeMaxFiles > 0 ? config.scopeMaxFiles : void 0,
-    maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : void 0,
-    additionalHardBlockPrefixes: config.scopeAdditionalHardBlockPrefixes,
-    hardBlockOverride: config.hardBlockOverride
+    maxLines: config.scopeMaxLines > 0 ? config.scopeMaxLines : void 0
   });
   if (config.autoReviewBlockPaths !== "") {
     deps.info(`[scope-check] LOOPPILOT_BLOCK_PATHS: "${config.autoReviewBlockPaths}"`);

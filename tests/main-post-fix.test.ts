@@ -51,9 +51,6 @@ const baseConfig: Config = {
   autoReviewBlockPaths: "",
   scopeMaxFiles: 0,
   scopeMaxLines: 0,
-  hardBlockOverride: [],
-  scopeAllowedPathPrefixes: [],
-  scopeAdditionalHardBlockPrefixes: [],
 };
 
 const baseInputs: PostFixInputs = {
@@ -1389,41 +1386,6 @@ describe("runPostFix", () => {
     expect(deps.info).toHaveBeenCalledWith(
       '[scope-check] LOOPPILOT_BLOCK_PATHS: "!package.json"',
     );
-    expect(deps.postStopComment).not.toHaveBeenCalled();
-    expect(deps.commitMessages.length).toBe(1);
-  });
-
-  it("legacy hardBlockOverride still works with a deprecation warning (TY-271)", async () => {
-    // Backward compat: LOOPPILOT_HARD_BLOCK_OVERRIDE values are folded
-    // into the new block-list as removals. Old repos keep working but get a
-    // warning telling them to migrate.
-    const deps = makeDeps(
-      {
-        found: true,
-        corrupted: false,
-        commentId: 100,
-        commentUpdatedAt: "2026-05-14T12:00:00Z",
-        state: makeState(),
-      },
-      {
-        gitDiffNumstat: () => "3\t1\tpackage.json\n",
-      },
-    );
-
-    await runPostFix(
-      { ...baseConfig, hardBlockOverride: ["package.json"] },
-      deps,
-      baseInputs,
-    );
-
-    const warnCalls = (deps.warning as ReturnType<typeof vi.fn>).mock.calls.map(
-      (c: unknown[]) => String(c[0]),
-    );
-    expect(
-      warnCalls.some((m: string) =>
-        m.includes("LOOPPILOT_HARD_BLOCK_OVERRIDE") && m.includes("deprecated"),
-      ),
-    ).toBe(true);
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.commitMessages.length).toBe(1);
   });
