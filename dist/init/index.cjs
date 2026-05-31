@@ -4978,22 +4978,22 @@ var require_formdata = __commonJS({
         name = webidl.converters.USVString(name, prefix, "name");
         value = isBlobLike(value) ? webidl.converters.Blob(value, prefix, "value", { strict: false }) : webidl.converters.USVString(value, prefix, "value");
         filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix, "filename") : void 0;
-        const entry = makeEntry(name, value, filename);
-        this[kState].push(entry);
+        const entry2 = makeEntry(name, value, filename);
+        this[kState].push(entry2);
       }
       delete(name) {
         webidl.brandCheck(this, _FormData);
         const prefix = "FormData.delete";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         name = webidl.converters.USVString(name, prefix, "name");
-        this[kState] = this[kState].filter((entry) => entry.name !== name);
+        this[kState] = this[kState].filter((entry2) => entry2.name !== name);
       }
       get(name) {
         webidl.brandCheck(this, _FormData);
         const prefix = "FormData.get";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         name = webidl.converters.USVString(name, prefix, "name");
-        const idx = this[kState].findIndex((entry) => entry.name === name);
+        const idx = this[kState].findIndex((entry2) => entry2.name === name);
         if (idx === -1) {
           return null;
         }
@@ -5004,14 +5004,14 @@ var require_formdata = __commonJS({
         const prefix = "FormData.getAll";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         name = webidl.converters.USVString(name, prefix, "name");
-        return this[kState].filter((entry) => entry.name === name).map((entry) => entry.value);
+        return this[kState].filter((entry2) => entry2.name === name).map((entry2) => entry2.value);
       }
       has(name) {
         webidl.brandCheck(this, _FormData);
         const prefix = "FormData.has";
         webidl.argumentLengthCheck(arguments, 1, prefix);
         name = webidl.converters.USVString(name, prefix, "name");
-        return this[kState].findIndex((entry) => entry.name === name) !== -1;
+        return this[kState].findIndex((entry2) => entry2.name === name) !== -1;
       }
       set(name, value, filename = void 0) {
         webidl.brandCheck(this, _FormData);
@@ -5025,16 +5025,16 @@ var require_formdata = __commonJS({
         name = webidl.converters.USVString(name, prefix, "name");
         value = isBlobLike(value) ? webidl.converters.Blob(value, prefix, "name", { strict: false }) : webidl.converters.USVString(value, prefix, "name");
         filename = arguments.length === 3 ? webidl.converters.USVString(filename, prefix, "name") : void 0;
-        const entry = makeEntry(name, value, filename);
-        const idx = this[kState].findIndex((entry2) => entry2.name === name);
+        const entry2 = makeEntry(name, value, filename);
+        const idx = this[kState].findIndex((entry3) => entry3.name === name);
         if (idx !== -1) {
           this[kState] = [
             ...this[kState].slice(0, idx),
-            entry,
-            ...this[kState].slice(idx + 1).filter((entry2) => entry2.name !== name)
+            entry2,
+            ...this[kState].slice(idx + 1).filter((entry3) => entry3.name !== name)
           ];
         } else {
-          this[kState].push(entry);
+          this[kState].push(entry2);
         }
       }
       [nodeUtil.inspect.custom](depth, options) {
@@ -8784,16 +8784,16 @@ var require_env_http_proxy_agent = __commonJS({
           return false;
         }
         for (let i = 0; i < this.#noProxyEntries.length; i++) {
-          const entry = this.#noProxyEntries[i];
-          if (entry.port && entry.port !== port) {
+          const entry2 = this.#noProxyEntries[i];
+          if (entry2.port && entry2.port !== port) {
             continue;
           }
-          if (!/^[.*]/.test(entry.hostname)) {
-            if (hostname === entry.hostname) {
+          if (!/^[.*]/.test(entry2.hostname)) {
+            if (hostname === entry2.hostname) {
               return false;
             }
           } else {
-            if (hostname.endsWith(entry.hostname.replace(/^\*/, ""))) {
+            if (hostname.endsWith(entry2.hostname.replace(/^\*/, ""))) {
               return false;
             }
           }
@@ -8805,13 +8805,13 @@ var require_env_http_proxy_agent = __commonJS({
         const noProxySplit = noProxyValue.split(/[,\s]/);
         const noProxyEntries = [];
         for (let i = 0; i < noProxySplit.length; i++) {
-          const entry = noProxySplit[i];
-          if (!entry) {
+          const entry2 = noProxySplit[i];
+          if (!entry2) {
             continue;
           }
-          const parsed = entry.match(/^(.+):(\d+)$/);
+          const parsed = entry2.match(/^(.+):(\d+)$/);
           noProxyEntries.push({
-            hostname: (parsed ? parsed[1] : entry).toLowerCase(),
+            hostname: (parsed ? parsed[1] : entry2).toLowerCase(),
             port: parsed ? Number.parseInt(parsed[2], 10) : 0
           });
         }
@@ -19237,6 +19237,12 @@ function loadBaseConfig() {
     stabilizeIntervalSeconds: intInput("stabilize-interval-seconds", "STABILIZE_INTERVAL_SECONDS", 10, 1),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
+    // TY-334: 0 disables ACK polling. Max bounds keep the worst-case
+    // timeout × (maxReposts + 1) at 120 × 4 = 480s — under the bumped 10-min
+    // init job timeout and well under the 30-min loop budget.
+    codexAckTimeoutSeconds: intInput("codex-ack-timeout-seconds", "CODEX_ACK_TIMEOUT_SECONDS", 90, 0, 120),
+    codexAckPollIntervalSeconds: intInput("codex-ack-poll-interval-seconds", "CODEX_ACK_POLL_INTERVAL_SECONDS", 15, 1, 60),
+    codexAckMaxReposts: intInput("codex-ack-max-reposts", "CODEX_ACK_MAX_REPOSTS", 2, 0, 3),
     githubToken,
     codexReviewRequestToken,
     autoReviewPushToken,
@@ -19291,7 +19297,7 @@ function boolInput(inputName, envName, defaultValue) {
     return false;
   throw new Error(`Input ${inputName} / env ${envName} must be 'true' or 'false', got: ${raw}`);
 }
-function intInput(inputName, envName, defaultValue, min) {
+function intInput(inputName, envName, defaultValue, min, max) {
   const raw = input(inputName, envName, "");
   if (raw === "")
     return defaultValue;
@@ -19302,6 +19308,9 @@ function intInput(inputName, envName, defaultValue, min) {
   }
   if (min !== void 0 && parsed < min) {
     throw new Error(`Input ${inputName} / env ${envName} must be >= ${min}, got: ${parsed}`);
+  }
+  if (max !== void 0 && parsed > max) {
+    throw new Error(`Input ${inputName} / env ${envName} must be <= ${max}, got: ${parsed}`);
   }
   return parsed;
 }
@@ -19457,10 +19466,10 @@ function validateState(obj) {
   if ("fixingStartedAt" in s && s.fixingStartedAt !== null && typeof s.fixingStartedAt !== "string") {
     return false;
   }
-  for (const entry of s.findingsHashHistory) {
-    if (typeof entry !== "object" || entry === null)
+  for (const entry2 of s.findingsHashHistory) {
+    if (typeof entry2 !== "object" || entry2 === null)
       return false;
-    const e = entry;
+    const e = entry2;
     if (typeof e.iteration !== "number" || typeof e.hash !== "string")
       return false;
     if ("modelTier" in e && e.modelTier !== void 0 && e.modelTier !== "base" && e.modelTier !== "escalated") {
@@ -19722,11 +19731,11 @@ function createInitialStatusSnapshot() {
     entries: []
   };
 }
-function renderEntry(entry) {
-  return `### ${entry.title}
-*${entry.timestamp}*
+function renderEntry(entry2) {
+  return `### ${entry2.title}
+*${entry2.timestamp}*
 
-${entry.body}`;
+${entry2.body}`;
 }
 function renderStatusCommentBodyUnchecked(snapshot) {
   const headerRows = [
@@ -19965,7 +19974,29 @@ async function upsertStatusComment(owner, name, pr, update, token, deps = defaul
   return existing.id;
 }
 
+// dist/types.js
+var STOP_REASON_LABELS = {
+  no_findings: "no findings at or above the severity threshold \u2014 done",
+  max_iterations: "max iterations reached \u2014 `/restart-review --hard` to retry",
+  loop_detected: "same findings repeated at escalated tier \u2014 review the finding manually",
+  test_failure: "CHECK_COMMAND failed after the repair \u2014 fix the failure and `/restart-review`",
+  state_corrupted: "hidden state JSON corrupted \u2014 see docs/operations/stop-and-recovery.md",
+  state_conflict: "hidden state changed concurrently \u2014 wait, then `/restart-review`",
+  workflow_crashed: "auto-fix workflow crashed \u2014 `/restart-review` to resume",
+  action_timeout: "Claude Code Action timed out \u2014 `/restart-review` to retry",
+  action_failure: "Claude Code Action exited non-zero \u2014 check the workflow run",
+  scope_violation: "repair touched blocked paths \u2014 adjust `LOOPPILOT_BLOCK_PATHS` or revert",
+  max_turns_exceeded: "Claude Code Action hit `--max-turns` \u2014 `/restart-review` escalates tier",
+  codex_usage_limit: "Codex quota exhausted \u2014 wait for reset, then `/restart-review`",
+  codex_request_failed: "could not re-post `@codex review` \u2014 fix Codex auth, then `/restart-review`",
+  secret_leak_suspected: "auto-fix output looks like a secret \u2014 review, then `/restart-review --hard`",
+  action_no_op: "Claude Code Action made no file changes \u2014 review the findings manually"
+};
+
 // dist/comment-poster.js
+function nowIso() {
+  return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
 async function postComment(owner, name, pr, body, token) {
   const stdout = await ghApi([
     "api",
@@ -19991,10 +20022,126 @@ async function postComment(owner, name, pr, body, token) {
   }
   return commentId;
 }
+function entry(kind, title, body) {
+  return { kind, title, body, timestamp: nowIso() };
+}
+function progressUpdate(progress) {
+  if (progress === void 0)
+    return {};
+  return {
+    iterationCount: progress.iterationCount,
+    maxIterations: progress.maxIterations,
+    lastModelTier: progress.lastModelTier
+  };
+}
+function deriveIterationProgress(state, maxIterations) {
+  const lastEntry = state.findingsHashHistory.length > 0 ? state.findingsHashHistory[state.findingsHashHistory.length - 1] : null;
+  return {
+    iterationCount: state.iterationCount,
+    maxIterations,
+    lastModelTier: lastEntry === null ? null : lastEntry.modelTier ?? "escalated"
+  };
+}
 async function applyStatusUpdate2(owner, name, pr, update, token) {
   return upsertStatusComment(owner, name, pr, update, token);
 }
+function nextActionForStopReason(reason) {
+  switch (reason) {
+    case "no_findings":
+      return "LoopPilot is complete; merge when ready.";
+    case "max_iterations":
+      return "Review history, then `/restart-review --hard` to clear the iteration count.";
+    case "loop_detected":
+      return "Same finding repeated at the escalated tier; review the diff manually before `/restart-review --hard`.";
+    case "secret_leak_suspected":
+      return "Audit the diff for leaked credentials, then `/restart-review --hard` (soft is rejected).";
+    case "scope_violation":
+      return "Review the stop detail above for the specific violation; revert if needed, adjust `LOOPPILOT_BLOCK_PATHS` if the path should be unblocked, then `/restart-review`.";
+    case "test_failure":
+      return "Fix the underlying CHECK_COMMAND failure, push, then `/restart-review`.";
+    case "codex_usage_limit":
+      return "Wait for the Codex quota to reset, then `/restart-review`.";
+    case "codex_request_failed":
+      return "Verify Codex auth / connectivity, then `/restart-review`.";
+    case "max_turns_exceeded":
+      return "`/restart-review` to retry; the next iteration auto-escalates to the higher tier.";
+    case "workflow_crashed":
+      return "`/restart-review` to resume; add `--hard` if iteration history needs clearing.";
+    case "action_no_op":
+      return "Review the Codex findings manually; `/restart-review` if you believe the next iteration can resolve them.";
+    case "state_corrupted":
+    case "state_conflict":
+      return "See docs/operations/stop-and-recovery.md for the recovery procedure.";
+    case "action_failure":
+    case "action_timeout":
+      return "Check the workflow run logs, then `/restart-review`.";
+  }
+}
+function buildStatusCommentPermalink(owner, name, pr, statusCommentId) {
+  return `https://github.com/${owner}/${name}/pull/${pr}#issuecomment-${statusCommentId}`;
+}
+function buildTerminalNotificationBody(kind, permalink) {
+  switch (kind.kind) {
+    case "done":
+      return [
+        `\u2705 **LoopPilot completed** \u2014 no findings remaining (${kind.iterations} iteration${kind.iterations === 1 ? "" : "s"}).`,
+        "",
+        `See the [status comment](${permalink}) for the full history.`
+      ].join("\n");
+    case "stopped": {
+      const label = STOP_REASON_LABELS[kind.stopReason];
+      const actionLine = kind.remainingFindings !== void 0 ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.` : "Manual intervention required.";
+      return [
+        `\u{1F6D1} **LoopPilot stopped** \u2014 ${label}.`,
+        "",
+        actionLine,
+        `See the [status comment](${permalink}) for the full history.`
+      ].join("\n");
+    }
+    case "init_incomplete":
+      return [
+        "\u26A0\uFE0F **LoopPilot init incomplete** \u2014 the initial `@codex review` was never posted.",
+        "",
+        "LoopPilot is not active on this PR until init runs successfully. Either:",
+        "- Re-run the Workflow A run from the Actions tab, or",
+        "- Re-trigger init by removing and re-adding the gate label (or closing / reopening the PR in full-auto mode).",
+        "",
+        `See the [status comment](${permalink}) for context.`
+      ].join("\n");
+  }
+}
+async function postTerminalNotification(owner, name, pr, statusCommentId, kind, token) {
+  try {
+    const permalink = buildStatusCommentPermalink(owner, name, pr, statusCommentId);
+    const body = buildTerminalNotificationBody(kind, permalink);
+    await postComment(owner, name, pr, body, token);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    warning(`[comment-poster] Failed to post terminal notification: ${message}`);
+  }
+}
 var AUTO_MERGE_SKIP_DEDUP_WINDOW_MS = 90 * 1e3;
+async function postStopComment(owner, name, pr, stopReason, reviewId, remainingFindings, detail, token, progress) {
+  const formattedReason = STOP_REASON_LABELS[stopReason];
+  const body = [
+    `Reason: ${formattedReason}`,
+    `Last processed Codex review: #${reviewId}`,
+    `Open in-scope findings remaining: ${remainingFindings}`,
+    `Detail: ${detail}`
+  ].join("\n");
+  const statusCommentId = await applyStatusUpdate2(owner, name, pr, {
+    current: `Stopped \u2014 ${formattedReason}`,
+    openFindings: remainingFindings,
+    // TY-291 #4 (UX-11): stopReason-specific imperative replaces the generic
+    // "Manual intervention required." line so the row tells the operator
+    // exactly which recovery command to run.
+    nextAction: nextActionForStopReason(stopReason),
+    ...progressUpdate(progress),
+    newEntry: entry("stopped", `Automation stopped \u2014 ${formattedReason}`, body)
+  }, token);
+  await postTerminalNotification(owner, name, pr, statusCommentId, { kind: "stopped", stopReason, remainingFindings }, token);
+  return statusCommentId;
+}
 async function postInitialStatusComment(owner, name, pr, maxIterations, token) {
   return applyStatusUpdate2(owner, name, pr, {
     current: "Initialized \u2014 waiting for first Codex review",
@@ -20007,6 +20154,122 @@ async function postInitialStatusComment(owner, name, pr, maxIterations, token) {
 }
 async function postCodexReviewRequest(owner, name, pr, token) {
   return postComment(owner, name, pr, "@codex review", token);
+}
+
+// dist/codex-ack.js
+var defaultCodexAckDeps = {
+  getEyesReactors: async (owner, repo, commentId, token) => {
+    const out = await ghApi([
+      "api",
+      "--paginate",
+      `repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
+      "-H",
+      "Accept: application/vnd.github+json",
+      "--jq",
+      '.[] | select(.content == "eyes") | .user.login'
+    ], token);
+    return out.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+  },
+  hasNewCodexActivity: async (owner, repo, pr, codexBotLogin, sinceIso, token) => {
+    const commentsOut = await ghApi([
+      "api",
+      "--paginate",
+      `repos/${owner}/${repo}/issues/${pr}/comments?since=${encodeURIComponent(sinceIso)}`,
+      "--jq",
+      '.[] | .user.login + "|" + (.created_at // "")'
+    ], token);
+    if (commentsOut.split("\n").map((s) => s.trim()).filter((s) => s.length > 0).some((line) => {
+      const pipeIdx = line.indexOf("|");
+      if (pipeIdx === -1)
+        return false;
+      const login = line.slice(0, pipeIdx);
+      const createdAt = line.slice(pipeIdx + 1);
+      return login === codexBotLogin && new Date(createdAt).getTime() >= new Date(sinceIso).getTime();
+    })) {
+      return true;
+    }
+    const reviewsOut = await ghApi([
+      "api",
+      "--paginate",
+      `repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100`,
+      "--jq",
+      '.[] | .user.login + "|" + (.submitted_at // "")'
+    ], token);
+    return reviewsOut.split("\n").map((s) => s.trim()).filter((s) => s.length > 0).some((line) => {
+      const pipeIdx = line.indexOf("|");
+      if (pipeIdx === -1)
+        return false;
+      const login = line.slice(0, pipeIdx);
+      const submittedAt = line.slice(pipeIdx + 1);
+      return login === codexBotLogin && new Date(submittedAt).getTime() >= new Date(sinceIso).getTime();
+    });
+  },
+  postCodexReviewRequest,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: () => Date.now(),
+  info: (message) => info(message),
+  warning: (message) => warning(message)
+};
+async function waitForAckWindow(params, deps, commentId, requestedAt, pollIntervalMs) {
+  const deadline = deps.now() + params.timeoutSeconds * 1e3;
+  for (; ; ) {
+    try {
+      const reactors = await deps.getEyesReactors(params.owner, params.repo, commentId, params.readToken);
+      if (reactors.includes(params.codexBotLogin)) {
+        return "eyes";
+      }
+    } catch (error2) {
+      deps.warning(`[codex-ack] Failed to read reactions on comment ${commentId}: ${error2 instanceof Error ? error2.message : String(error2)}. Treating as no ACK yet.`);
+    }
+    try {
+      if (await deps.hasNewCodexActivity(params.owner, params.repo, params.pr, params.codexBotLogin, requestedAt, params.readToken)) {
+        return "new_activity";
+      }
+    } catch (error2) {
+      deps.warning(`[codex-ack] Failed to check for new Codex activity: ${error2 instanceof Error ? error2.message : String(error2)}. Treating as no ACK yet.`);
+    }
+    const remaining = deadline - deps.now();
+    if (remaining <= 0) {
+      return null;
+    }
+    await deps.sleep(Math.min(pollIntervalMs, remaining));
+  }
+}
+async function ensureCodexAck(params, deps = defaultCodexAckDeps) {
+  if (params.timeoutSeconds <= 0) {
+    deps.info("[codex-ack] ACK polling disabled (CODEX_ACK_TIMEOUT_SECONDS <= 0); skipping.");
+    return {
+      acked: true,
+      reason: "disabled",
+      reposts: 0,
+      lastCommentId: params.commentId
+    };
+  }
+  const pollIntervalMs = Math.max(1, params.pollIntervalSeconds) * 1e3;
+  let commentId = params.commentId;
+  let requestedAt = params.requestedAt;
+  let reposts = 0;
+  for (; ; ) {
+    const reason = await waitForAckWindow(params, deps, commentId, requestedAt, pollIntervalMs);
+    if (reason !== null) {
+      deps.info(`[codex-ack] Codex acknowledged the review request (${reason}) after ${reposts} repost(s).`);
+      return { acked: true, reason, reposts, lastCommentId: commentId };
+    }
+    if (reposts >= params.maxReposts) {
+      deps.warning(`[codex-ack] No Codex ACK after ${params.timeoutSeconds}s and ${reposts} repost(s) (max ${params.maxReposts}). Giving up.`);
+      return { acked: false, reason: "exhausted", reposts, lastCommentId: commentId };
+    }
+    const newRequestedAt = new Date(deps.now()).toISOString();
+    try {
+      commentId = await deps.postCodexReviewRequest(params.owner, params.repo, params.pr, params.token);
+    } catch (error2) {
+      deps.warning(`[codex-ack] Failed to repost @codex review: ${error2 instanceof Error ? error2.message : String(error2)}. Giving up.`);
+      return { acked: false, reason: "exhausted", reposts, lastCommentId: commentId };
+    }
+    requestedAt = newRequestedAt;
+    reposts += 1;
+    deps.info(`[codex-ack] No ACK within ${params.timeoutSeconds}s; reposted @codex review (attempt ${reposts}/${params.maxReposts}), new comment ${commentId}.`);
+  }
 }
 
 // dist/secrets.js
@@ -20034,6 +20297,8 @@ var defaultDeps2 = {
   updateStateComment,
   postCodexReviewRequest,
   postInitialStatusComment,
+  postStopComment,
+  ensureCodexAck: (params) => ensureCodexAck(params),
   // TY-276 #4: wrap @actions/core methods in arrows for symmetry with
   // main-pre-fix / main-post-fix. The direct-reference form works today
   // because `@actions/core` does not use `this`, but a future version that
@@ -20091,6 +20356,7 @@ async function runInit(config, deps = defaultDeps2) {
     throw error2;
   }
   let reviewRequestId;
+  const codexRequestedAt = (/* @__PURE__ */ new Date()).toISOString();
   try {
     reviewRequestId = await deps.postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
     deps.info(`Posted @codex review: comment ${reviewRequestId}`);
@@ -20122,14 +20388,17 @@ async function runInit(config, deps = defaultDeps2) {
     status: "waiting_codex",
     lastCodexRequestCommentId: reviewRequestId
   };
+  let ackLockUpdatedAt;
   try {
-    await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken, { expectedUpdatedAt: firstWriteResult.updatedAt });
+    const secondWriteResult = await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken, { expectedUpdatedAt: firstWriteResult.updatedAt });
+    ackLockUpdatedAt = secondWriteResult.updatedAt;
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);
     deps.warning(`[init] Failed to persist lastCodexRequestCommentId after @codex review post: ${message}. LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
     if (!(error2 instanceof StateUpdateConflictError)) {
       try {
-        await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken, { expectedUpdatedAt: firstWriteResult.updatedAt });
+        const retryResult = await deps.updateStateComment(config.repoOwner, config.repoName, commentId, state, config.githubToken, { expectedUpdatedAt: firstWriteResult.updatedAt });
+        ackLockUpdatedAt = retryResult.updatedAt;
       } catch (retryError) {
         if (retryError instanceof StateUpdateConflictError) {
           deps.warning(`[init] Retry to persist lastCodexRequestCommentId detected a concurrent state update. No re-post risk: either the 2nd write already committed or Workflow B has advanced.`);
@@ -20137,6 +20406,54 @@ async function runInit(config, deps = defaultDeps2) {
           const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
           deps.warning(`[init] Retry to persist lastCodexRequestCommentId also failed: ${retryMsg}. A Workflow A rerun may re-post @codex review.`);
         }
+      }
+    }
+  }
+  if (ackLockUpdatedAt !== void 0) {
+    const ack = await deps.ensureCodexAck({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      pr: config.prNumber,
+      commentId: reviewRequestId,
+      requestedAt: codexRequestedAt,
+      codexBotLogin: config.codexBotLogin,
+      readToken: config.githubToken,
+      token: config.codexReviewRequestToken,
+      timeoutSeconds: config.codexAckTimeoutSeconds,
+      pollIntervalSeconds: config.codexAckPollIntervalSeconds,
+      maxReposts: config.codexAckMaxReposts
+    });
+    if (!ack.acked) {
+      const stoppedState = {
+        ...state,
+        lastCodexRequestCommentId: ack.lastCommentId,
+        status: "stopped",
+        stopReason: "codex_request_failed"
+      };
+      try {
+        await deps.updateStateComment(config.repoOwner, config.repoName, commentId, stoppedState, config.githubToken, { expectedUpdatedAt: ackLockUpdatedAt });
+        try {
+          await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", config.triggerCommentId, 0, `Codex did not acknowledge the @codex review request after ${config.codexAckMaxReposts} repost(s) (\u2248${config.codexAckTimeoutSeconds}s per attempt). Run /restart-review once Codex is reachable to resume.`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
+        } catch (notifyError) {
+          const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+          deps.warning(`[init] Demoted to stopped/codex_request_failed but failed to post the stop notification: ${msg}.`);
+        }
+      } catch (demoteError) {
+        if (demoteError instanceof StateUpdateConflictError) {
+          deps.warning("[init] ACK-failure demotion skipped: Workflow B advanced the state during ACK polling.");
+        } else {
+          const msg = demoteError instanceof Error ? demoteError.message : String(demoteError);
+          deps.warning(`[init] Failed to demote to stopped/codex_request_failed after no Codex ACK: ${msg}. State remains waiting_codex; /restart-review required.`);
+        }
+      }
+      deps.setOutput("comment-id", String(commentId));
+      return;
+    } else if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestId) {
+      try {
+        await deps.updateStateComment(config.repoOwner, config.repoName, commentId, { ...state, lastCodexRequestCommentId: ack.lastCommentId }, config.githubToken, { expectedUpdatedAt: ackLockUpdatedAt });
+      } catch (error2) {
+        const msg = error2 instanceof Error ? error2.message : String(error2);
+        deps.warning(`[init] Failed to persist reposted Codex review request id ${ack.lastCommentId}: ${msg}. State remains waiting_codex; the next Codex review trigger will reconcile.`);
       }
     }
   }

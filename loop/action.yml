@@ -77,6 +77,18 @@ inputs:
     description: "GitHub login of the Codex bot"
     required: false
     default: "chatgpt-codex-connector[bot]"
+  codex-ack-timeout-seconds:
+    description: "TY-334: per-attempt seconds post-fix polls for a Codex ACK (👀 reaction or new Codex activity) after posting @codex review. 0 disables polling. Max 120 so timeout × (max-reposts + 1) stays under the job timeout."
+    required: false
+    default: "90"
+  codex-ack-poll-interval-seconds:
+    description: "TY-334: seconds between ACK polls. Default 15."
+    required: false
+    default: "15"
+  codex-ack-max-reposts:
+    description: "TY-334: hard cap on @codex review reposts when no ACK arrives. After this many, post-fix demotes to stopped/codex_request_failed. Default 2, max 3."
+    required: false
+    default: "2"
   codex-review-marker:
     description: "Text marker in Codex summary comment"
     required: false
@@ -179,6 +191,11 @@ runs:
         check-command: ${{ inputs.check-command }}
         build-command: ${{ inputs.build-command }}
         codex-bot-login: ${{ inputs.codex-bot-login }}
+        # TY-334: forward ACK-poll tuning so the /restart-review re-post is
+        # monitored for a Codex acknowledgement (pre-fix handles restart).
+        codex-ack-timeout-seconds: ${{ inputs.codex-ack-timeout-seconds }}
+        codex-ack-poll-interval-seconds: ${{ inputs.codex-ack-poll-interval-seconds }}
+        codex-ack-max-reposts: ${{ inputs.codex-ack-max-reposts }}
         codex-review-marker: ${{ inputs.codex-review-marker }}
         stabilize-interval-seconds: ${{ inputs.stabilize-interval-seconds }}
         stabilize-count: ${{ inputs.stabilize-count }}
@@ -275,3 +292,9 @@ runs:
         scope-max-files: ${{ inputs.scope-max-files }}
         scope-max-lines: ${{ inputs.scope-max-lines }}
         looppilot-state-comment-authors: ${{ inputs.looppilot-state-comment-authors }}
+        # TY-334: forward Codex bot login + ACK-poll tuning so post-fix can
+        # recover a silently-dropped @codex review request after a repair.
+        codex-bot-login: ${{ inputs.codex-bot-login }}
+        codex-ack-timeout-seconds: ${{ inputs.codex-ack-timeout-seconds }}
+        codex-ack-poll-interval-seconds: ${{ inputs.codex-ack-poll-interval-seconds }}
+        codex-ack-max-reposts: ${{ inputs.codex-ack-max-reposts }}

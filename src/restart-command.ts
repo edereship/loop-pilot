@@ -8,6 +8,8 @@ import {
 import { updateStateComment as defaultUpdateStateComment } from "./state-manager.js";
 import type { ReadStateResult } from "./state-manager.js";
 import { createLockedStateUpdater } from "./state-comment-locker.js";
+import { ensureCodexAck as defaultEnsureCodexAck } from "./codex-ack.js";
+import type { CodexAckParams, CodexAckResult } from "./codex-ack.js";
 import type { ReviewState, StopReason } from "./types.js";
 
 export type RestartMode = "soft" | "hard";
@@ -181,6 +183,14 @@ export interface RestartCommandContext {
   restartRoles: string;
   githubToken: string;
   codexReviewRequestToken: string;
+  // TY-334: Codex bot login + ACK-poll tuning so the re-posted @codex review is
+  // monitored for an acknowledgement, the same as init / post-fix. Without this
+  // the documented recovery path (/restart-review) re-wedges at waiting_codex
+  // whenever Codex drops the request again.
+  codexBotLogin: string;
+  codexAckTimeoutSeconds: number;
+  codexAckPollIntervalSeconds: number;
+  codexAckMaxReposts: number;
   stateResult: ReadStateResult;
 }
 
@@ -218,6 +228,8 @@ export interface RestartCommandDeps {
     prNumber: number,
     token: string,
   ) => Promise<number>;
+  // TY-334: injected so tests can drive ACK / no-ACK without real polling.
+  ensureCodexAck: (params: CodexAckParams) => Promise<CodexAckResult>;
   warning: (message: string) => void;
 }
 
@@ -386,6 +398,11 @@ export async function handleRestartCommand(
   // TY-286 #C). The audit comment + reaction below are intentionally skipped
   // — they advertise a successful restart, which this branch is not.
   let reviewRequestCommentId: number;
+  // TY-334: capture baseline before posting so any Codex activity that arrives
+  // between the post and the poll window is treated as an ACK (Finding 1: the
+  // original code re-stamped codexRequestedAt AFTER the post, which caused a
+  // fast Codex response to be treated as pre-request activity and missed).
+  const codexRequestedAt = new Date().toISOString();
   try {
     reviewRequestCommentId = await deps.postCodexReviewRequest(
       context.owner,
@@ -463,6 +480,94 @@ export async function handleRestartCommand(
     return { handled: true };
   }
 
+  // TY-334: poll for a Codex ACK on the re-posted @codex review, exactly as
+  // init / post-fix do. /restart-review is the documented recovery for a wedged
+  // loop, so without this the recovery itself re-wedges at waiting_codex when
+  // Codex drops the request again. On exhaustion, demote to
+  // stopped/codex_request_failed and skip the success audit comment.
+  const ack = await deps.ensureCodexAck({
+    owner: context.owner,
+    repo: context.repo,
+    pr: context.prNumber,
+    commentId: reviewRequestCommentId,
+    requestedAt: codexRequestedAt,
+    codexBotLogin: context.codexBotLogin,
+    readToken: context.githubToken,
+    token: context.codexReviewRequestToken,
+    timeoutSeconds: context.codexAckTimeoutSeconds,
+    pollIntervalSeconds: context.codexAckPollIntervalSeconds,
+    maxReposts: context.codexAckMaxReposts,
+  });
+  if (!ack.acked) {
+    const stoppedState: ReviewState = {
+      ...restartResult.nextState,
+      lastCodexRequestCommentId: ack.lastCommentId,
+      status: "stopped",
+      stopReason: "codex_request_failed",
+    };
+    if (
+      !(await updateStateCommentLocked(
+        stoppedState,
+        "[restart] Could not record codex_request_failed stop after no Codex ACK.",
+        {
+          onConflict: async (detail) => {
+            deps.warning(
+              `[restart] ${detail} State was advanced by a concurrent run; ACK-demotion write skipped.`,
+            );
+          },
+        },
+      ))
+    ) {
+      return { handled: true };
+    }
+    try {
+      await deps.postStopComment(
+        context.owner,
+        context.repo,
+        context.prNumber,
+        "codex_request_failed",
+        context.triggerCommentId,
+        0,
+        `Codex did not acknowledge the @codex review request after ${context.codexAckMaxReposts} repost(s) (≈${context.codexAckTimeoutSeconds}s per attempt). Re-run /restart-review once Codex is reachable to resume.`,
+        context.githubToken,
+      );
+    } catch (notifyError) {
+      const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
+      deps.warning(
+        `[restart] Demoted to stopped/codex_request_failed after no Codex ACK but failed to post the stop notification: ${msg}.`,
+      );
+    }
+    return { handled: true };
+  }
+  if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestCommentId) {
+    // Best-effort: record the latest @codex review comment id after reposts.
+    // Swallow failures — the state is already waiting_codex and the reposted
+    // request has been posted.
+    try {
+      await updateStateCommentLocked(
+        { ...restartResult.nextState, lastCodexRequestCommentId: ack.lastCommentId },
+        "[restart] Could not persist the reposted Codex review request comment id.",
+        {
+          onConflict: async (detail) => {
+            deps.warning(
+              `[restart] ${detail} Auto-review state remains waiting_codex; ` +
+                "the next Codex review trigger will reconcile.",
+            );
+          },
+        },
+      );
+    } catch (repostWriteError) {
+      const msg =
+        repostWriteError instanceof Error
+          ? repostWriteError.message
+          : String(repostWriteError);
+      deps.warning(
+        `[restart] Failed to persist the reposted Codex review request id ${ack.lastCommentId}: ${msg}. ` +
+          "Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.",
+      );
+    }
+  }
+
   await deps.postComment(
     context.owner,
     context.repo,
@@ -472,7 +577,7 @@ export async function handleRestartCommand(
       "",
       `mode: ${command.mode}`,
       `from: ${restartResult.previousStopReason ?? "none"}`,
-      `reviewRequestCommentId: ${reviewRequestCommentId}`,
+      `reviewRequestCommentId: ${ack.lastCommentId}`,
     ].join("\n"),
     context.githubToken,
   );
@@ -706,5 +811,6 @@ const defaultRestartCommandDeps: RestartCommandDeps = {
   postStopComment: defaultPostStopComment,
   addRestartReaction,
   postCodexReviewRequest: defaultPostCodexReviewRequest,
+  ensureCodexAck: (params) => defaultEnsureCodexAck(params),
   warning: (message: string) => core.warning(message),
 };

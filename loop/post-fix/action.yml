@@ -69,6 +69,22 @@ inputs:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false
     default: ""
+  codex-bot-login:
+    description: "GitHub login of the Codex bot (TY-334). Used by the in-job ACK poll to recognise Codex's 👀 reaction / activity on the @codex review request."
+    required: false
+    default: "chatgpt-codex-connector[bot]"
+  codex-ack-timeout-seconds:
+    description: "TY-334: per-attempt seconds to poll for a Codex ACK after posting @codex review. 0 disables polling. Max 120."
+    required: false
+    default: "90"
+  codex-ack-poll-interval-seconds:
+    description: "TY-334: seconds between ACK polls. Default 15."
+    required: false
+    default: "15"
+  codex-ack-max-reposts:
+    description: "TY-334: hard cap on @codex review reposts when no ACK arrives. After this many, post-fix demotes to stopped/codex_request_failed. Default 2, max 3."
+    required: false
+    default: "2"
 
 runs:
   using: "node24"

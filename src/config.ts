@@ -29,6 +29,18 @@ export interface BaseConfig {
   stabilizeIntervalSeconds: number;
   stabilizeCount: number;
   codexReviewMarker: string;
+  /**
+   * TY-334: in-job `@codex review` ACK polling. After posting the request,
+   * init / post-fix poll for a 👀 reaction (or new Codex activity) for up to
+   * `codexAckTimeoutSeconds`, reposting up to `codexAckMaxReposts` times, so a
+   * silently-dropped review request self-recovers instead of wedging the loop
+   * at `waiting_codex`. `codexAckTimeoutSeconds === 0` disables polling.
+   * Bounds keep `timeout × (maxReposts + 1)` safely under the job timeout
+   * (≤ 120 × 4 = 480s < the 10-min init / 30-min loop budgets).
+   */
+  codexAckTimeoutSeconds: number;
+  codexAckPollIntervalSeconds: number;
+  codexAckMaxReposts: number;
   codexReviewRequestToken: string;
   autoReviewPushToken: string;
   githubToken: string;
@@ -281,6 +293,30 @@ function loadBaseConfig(): BaseConfig {
     ),
     stabilizeCount: intInput("stabilize-count", "STABILIZE_COUNT", 3, 1),
     codexReviewMarker: input("codex-review-marker", "CODEX_REVIEW_MARKER", "Codex Review"),
+    // TY-334: 0 disables ACK polling. Max bounds keep the worst-case
+    // timeout × (maxReposts + 1) at 120 × 4 = 480s — under the bumped 10-min
+    // init job timeout and well under the 30-min loop budget.
+    codexAckTimeoutSeconds: intInput(
+      "codex-ack-timeout-seconds",
+      "CODEX_ACK_TIMEOUT_SECONDS",
+      90,
+      0,
+      120,
+    ),
+    codexAckPollIntervalSeconds: intInput(
+      "codex-ack-poll-interval-seconds",
+      "CODEX_ACK_POLL_INTERVAL_SECONDS",
+      15,
+      1,
+      60,
+    ),
+    codexAckMaxReposts: intInput(
+      "codex-ack-max-reposts",
+      "CODEX_ACK_MAX_REPOSTS",
+      2,
+      0,
+      3,
+    ),
     githubToken,
     codexReviewRequestToken,
     autoReviewPushToken,
@@ -386,6 +422,7 @@ function intInput(
   envName: string,
   defaultValue: number,
   min?: number,
+  max?: number,
 ): number {
   const raw = input(inputName, envName, "");
   if (raw === "") return defaultValue;
@@ -401,6 +438,13 @@ function intInput(
   if (min !== undefined && parsed < min) {
     throw new Error(
       `Input ${inputName} / env ${envName} must be >= ${min}, got: ${parsed}`,
+    );
+  }
+  // TY-334: upper bound so a misconfigured value cannot wedge the job past its
+  // timeout (e.g. an ACK poll window longer than the job budget).
+  if (max !== undefined && parsed > max) {
+    throw new Error(
+      `Input ${inputName} / env ${envName} must be <= ${max}, got: ${parsed}`,
     );
   }
   return parsed;

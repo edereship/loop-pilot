@@ -43,6 +43,8 @@ import {
   postTestFailureComment as defaultPostTestFailureComment,
 } from "./comment-poster.js";
 import { registerAllSecrets } from "./secrets.js";
+import { ensureCodexAck } from "./codex-ack.js";
+import type { CodexAckParams, CodexAckResult } from "./codex-ack.js";
 import type { ReviewState, StopReason } from "./types.js";
 
 /**
@@ -84,6 +86,8 @@ export interface PostFixDeps {
   runBuildCommand: typeof defaultRunBuildCommand;
   postClaudeCodeActionFixSummary: typeof defaultPostClaudeCodeActionFixSummary;
   postCodexReviewRequest: typeof defaultPostCodexReviewRequest;
+  // TY-334: injected so tests can drive ACK / no-ACK without real polling.
+  ensureCodexAck: (params: CodexAckParams) => Promise<CodexAckResult>;
   postStopComment: typeof defaultPostStopComment;
   postTestFailureComment: typeof defaultPostTestFailureComment;
   /**
@@ -183,6 +187,7 @@ const defaultDeps: PostFixDeps = {
   runBuildCommand: defaultRunBuildCommand,
   postClaudeCodeActionFixSummary: defaultPostClaudeCodeActionFixSummary,
   postCodexReviewRequest: defaultPostCodexReviewRequest,
+  ensureCodexAck: (params) => ensureCodexAck(params),
   postStopComment: defaultPostStopComment,
   postTestFailureComment: defaultPostTestFailureComment,
   postTerminalNotification: defaultPostTerminalNotification,
@@ -1634,6 +1639,9 @@ export async function runPostFix(
   }
 
   deps.info("[post-fix] Posting @codex review request...");
+  // TY-334: capture the baseline before posting so any Codex activity that
+  // arrives between the post and the poll window is treated as an ACK.
+  const codexRequestedAt = new Date().toISOString();
   try {
     const reviewRequestId = await deps.postCodexReviewRequest(
       config.repoOwner,
@@ -1668,8 +1676,101 @@ export async function runPostFix(
     ) {
       return;
     }
+
+    // TY-334: poll for a Codex ACK (👀 reaction or new Codex activity) while
+    // this job is still alive; repost up to CODEX_ACK_MAX_REPOSTS times if the
+    // request is silently dropped. On exhaustion, demote to
+    // stopped/codex_request_failed (reusing the TY-273 #B5 path below) so the
+    // loop is not wedged at waiting_codex with no restart trigger. The pushed
+    // repair commit is preserved on the branch regardless.
+    const ack = await deps.ensureCodexAck({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      pr: config.prNumber,
+      commentId: reviewRequestId,
+      requestedAt: codexRequestedAt,
+      codexBotLogin: config.codexBotLogin,
+      readToken: config.githubToken,
+      token: config.codexReviewRequestToken,
+      timeoutSeconds: config.codexAckTimeoutSeconds,
+      pollIntervalSeconds: config.codexAckPollIntervalSeconds,
+      maxReposts: config.codexAckMaxReposts,
+    });
+    if (!ack.acked) {
+      const stoppedState: ReviewState = {
+        ...updatedWaitingState,
+        lastCodexRequestCommentId: ack.lastCommentId,
+        status: "stopped",
+        stopReason: "codex_request_failed",
+      };
+      if (
+        !(await updateStateCommentLocked(
+          stoppedState,
+          "Could not record codex_request_failed stop after no Codex ACK.",
+          {
+            onConflict: async (detail) => {
+              deps.warning(
+                `[post-fix] ${detail} State was advanced by a concurrent run; ACK-demotion write skipped.`,
+              );
+            },
+          },
+        ))
+      ) {
+        return;
+      }
+      try {
+        await deps.postStopComment(
+          config.repoOwner,
+          config.repoName,
+          config.prNumber,
+          "codex_request_failed",
+          inputs.triggerCommentId,
+          0,
+          `Codex did not acknowledge the @codex review request after ${config.codexAckMaxReposts} repost(s) (≈${config.codexAckTimeoutSeconds}s per attempt). The repair commit is preserved on the branch; run /restart-review once Codex is reachable to resume.`,
+          config.githubToken,
+          deriveIterationProgress(stoppedState, config.maxReviewIterations),
+        );
+      } catch (notifyError) {
+        const msg =
+          notifyError instanceof Error ? notifyError.message : String(notifyError);
+        deps.warning(
+          `[post-fix] Demoted to stopped/codex_request_failed after no Codex ACK but failed to post the stop notification: ${msg}.`,
+        );
+      }
+      return;
+    }
+    if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestId) {
+      // Best-effort: record the latest @codex review comment id after reposts.
+      // A failure here is harmless — the state is already waiting_codex and the
+      // reposted request has been posted — so swallow it rather than letting it
+      // reach the outer catch, which would wrongly demote an ACKed loop to
+      // codex_request_failed.
+      try {
+        await updateStateCommentLocked(
+          { ...updatedWaitingState, lastCodexRequestCommentId: ack.lastCommentId },
+          "Could not persist the reposted Codex review request comment id.",
+          {
+            onConflict: async (detail) => {
+              deps.warning(
+                `[post-fix] ${detail} Auto-review state remains waiting_codex; ` +
+                  "the next Codex review trigger will reconcile.",
+              );
+            },
+          },
+        );
+      } catch (repostWriteError) {
+        const msg =
+          repostWriteError instanceof Error
+            ? repostWriteError.message
+            : String(repostWriteError);
+        deps.warning(
+          `[post-fix] Failed to persist the reposted Codex review request id ${ack.lastCommentId}: ${msg}. ` +
+            "Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.",
+        );
+      }
+    }
     deps.info(
-      `[post-fix] Phase 4 complete. Status: waiting_codex. Review request: ${reviewRequestId}`,
+      `[post-fix] Phase 4 complete. Status: waiting_codex. Review request: ${ack.lastCommentId}`,
     );
   } catch (error) {
     // TY-273 #B5: when @codex review re-request fails, leaving status at

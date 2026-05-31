@@ -49,6 +49,9 @@ const crashConfig: Config = {
   autoReviewBlockPaths: "",
   scopeMaxFiles: 0,
   scopeMaxLines: 0,
+  codexAckTimeoutSeconds: 90,
+  codexAckPollIntervalSeconds: 15,
+  codexAckMaxReposts: 2,
 };
 
 function makeFixingState(): ReviewState {

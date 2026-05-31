@@ -174,6 +174,53 @@ describe("reusable loop forwards operator scope-policy variables to the composit
   });
 });
 
+describe("reusable workflows forward the Codex ACK-poll wiring to the actions (TY-334)", () => {
+  // TY-334 regression guard. The in-job @codex review ACK poll (codex-ack.ts)
+  // recovers a silently-dropped review request, but only if the workflows
+  // forward CODEX_ACK_* and CODEX_BOT_LOGIN to the composite/init actions and
+  // the composite forwards them on to pre-fix AND post-fix. Same forwarding
+  // class as TY-350 — if a future refactor drops a leg, the feature silently
+  // no-ops (vars.* are not auto-exported to the action process env).
+
+  it("loop.yml forwards the three CODEX_ACK_* vars to the loop action", () => {
+    expect(loopReusable).toContain("codex-ack-timeout-seconds: ${{ vars.CODEX_ACK_TIMEOUT_SECONDS || '90' }}");
+    expect(loopReusable).toContain("codex-ack-poll-interval-seconds: ${{ vars.CODEX_ACK_POLL_INTERVAL_SECONDS || '15' }}");
+    expect(loopReusable).toContain("codex-ack-max-reposts: ${{ vars.CODEX_ACK_MAX_REPOSTS || '2' }}");
+  });
+
+  it("init.yml forwards codex-bot-login + the CODEX_ACK_* vars and raises the job timeout for the ACK poll", () => {
+    expect(initReusable).toContain("codex-bot-login: ${{ vars.CODEX_BOT_LOGIN || 'chatgpt-codex-connector[bot]' }}");
+    expect(initReusable).toContain("codex-ack-timeout-seconds: ${{ vars.CODEX_ACK_TIMEOUT_SECONDS || '90' }}");
+    expect(initReusable).toContain("codex-ack-max-reposts: ${{ vars.CODEX_ACK_MAX_REPOSTS || '2' }}");
+    expect(initReusable).toContain("timeout-minutes: 10");
+  });
+
+  it("the composite forwards each codex-ack input to BOTH pre-fix and post-fix", () => {
+    for (const input of [
+      "codex-ack-timeout-seconds",
+      "codex-ack-poll-interval-seconds",
+      "codex-ack-max-reposts",
+    ]) {
+      const needle = `${input}: \${{ inputs.${input} }}`;
+      const occurrences = loopComposite.split(needle).length - 1;
+      expect(occurrences).toBeGreaterThanOrEqual(2);
+    }
+    // post-fix also needs codex-bot-login to recognise the Codex bot's 👀.
+    expect(loopComposite.split("codex-bot-login: ${{ inputs.codex-bot-login }}").length - 1)
+      .toBeGreaterThanOrEqual(2);
+  });
+
+  it("pre-fix and post-fix actions declare the codex-ack inputs", () => {
+    for (const input of [
+      "codex-ack-timeout-seconds",
+      "codex-ack-poll-interval-seconds",
+      "codex-ack-max-reposts",
+    ]) {
+      expect(preFixAction).toContain(`${input}:`);
+    }
+  });
+});
+
 describe("README documents the cross-org adopter caller", () => {
   it("references the reusable workflows by tagged path", () => {
     expect(readme).toContain("team-yubune/loop-pilot/.github/workflows/init.yml@v1");

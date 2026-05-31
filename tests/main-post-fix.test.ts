@@ -51,6 +51,9 @@ const baseConfig: Config = {
   autoReviewBlockPaths: "",
   scopeMaxFiles: 0,
   scopeMaxLines: 0,
+  codexAckTimeoutSeconds: 90,
+  codexAckPollIntervalSeconds: 15,
+  codexAckMaxReposts: 2,
 };
 
 const baseInputs: PostFixInputs = {
@@ -105,6 +108,12 @@ function makeDeps(
     runBuildCommand: vi.fn().mockResolvedValue({ success: true, output: "" }),
     postClaudeCodeActionFixSummary: vi.fn().mockResolvedValue(11),
     postCodexReviewRequest: vi.fn().mockResolvedValue(22),
+    ensureCodexAck: vi.fn().mockResolvedValue({
+      acked: true,
+      reason: "eyes",
+      reposts: 0,
+      lastCommentId: 22,
+    }),
     postStopComment: vi.fn().mockResolvedValue(33),
     postTestFailureComment: vi.fn().mockResolvedValue(44),
     postTerminalNotification: vi.fn().mockResolvedValue(undefined),
@@ -915,6 +924,44 @@ describe("runPostFix", () => {
       "github-token",
     expect.any(Object),
     );
+  });
+
+  it("TY-334: demotes to stopped/codex_request_failed and notifies when Codex never ACKs the re-review", async () => {
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState(),
+      },
+      {
+        gitDiffNumstat: () => "5\t2\tsrc/foo.ts\n",
+        gitListUntracked: () => "",
+        ensureCodexAck: vi.fn().mockResolvedValue({
+          acked: false,
+          reason: "exhausted",
+          reposts: 2,
+          lastCommentId: 999,
+        }),
+      },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock
+      .calls as unknown as Array<[string, string, number, ReviewState, string]>;
+    const stoppedWrite = calls.find(
+      (c) => c[3]?.status === "stopped" && c[3]?.stopReason === "codex_request_failed",
+    );
+    expect(stoppedWrite).toBeDefined();
+    expect(stoppedWrite?.[3].lastCodexRequestCommentId).toBe(999);
+
+    const stopCalls = (deps.postStopComment as ReturnType<typeof vi.fn>).mock
+      .calls as unknown as Array<[string, string, number, string, number, number, string]>;
+    const stopCall = stopCalls.find((c) => c[3] === "codex_request_failed");
+    expect(stopCall).toBeDefined();
+    expect(stopCall?.[6]).toContain("did not acknowledge");
   });
 
   it("flags binary new files via readWorkingTreeFile=null and stops with binary scope violation", async () => {

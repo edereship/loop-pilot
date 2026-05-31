@@ -58,7 +58,11 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # TY-334: raised from 5 → 10 min to give the in-job @codex review ACK poll
+    # headroom. Worst case is codex-ack-timeout-seconds × (max-reposts + 1) =
+    # 120 × 4 = 480s at the input bounds; 10 min keeps a safety margin above
+    # that plus checkout / the init API calls.
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v5
@@ -86,6 +90,13 @@ jobs:
           # TY-272 #A: trusted state-comment author override; empty falls
           # back to `github-actions[bot]`.
           looppilot-state-comment-authors: ${{ vars.LOOPPILOT_STATE_COMMENT_AUTHORS }}
+          # TY-334: Codex bot login + in-job @codex review ACK polling so a
+          # silently-dropped initial review request self-recovers instead of
+          # wedging the PR at waiting_codex. Must match loop.yml's CODEX_BOT_LOGIN.
+          codex-bot-login: ${{ vars.CODEX_BOT_LOGIN || 'chatgpt-codex-connector[bot]' }}
+          codex-ack-timeout-seconds: ${{ vars.CODEX_ACK_TIMEOUT_SECONDS || '90' }}
+          codex-ack-poll-interval-seconds: ${{ vars.CODEX_ACK_POLL_INTERVAL_SECONDS || '15' }}
+          codex-ack-max-reposts: ${{ vars.CODEX_ACK_MAX_REPOSTS || '2' }}
 
       # TY-283: Workflow A fail-safe (symmetric with the Workflow B fail-safe
       # set in `loop.yml`). Workflow A has only three steps — `checkout`,

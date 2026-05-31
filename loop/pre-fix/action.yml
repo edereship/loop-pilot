@@ -63,6 +63,18 @@ inputs:
     description: "GitHub login of the Codex bot"
     required: false
     default: "chatgpt-codex-connector[bot]"
+  codex-ack-timeout-seconds:
+    description: "TY-334: per-attempt seconds pre-fix polls for a Codex ACK (👀 reaction or new Codex activity) after posting @codex review during /restart-review. 0 disables polling."
+    required: false
+    default: "90"
+  codex-ack-poll-interval-seconds:
+    description: "TY-334: seconds between ACK polls during /restart-review. Default 15."
+    required: false
+    default: "15"
+  codex-ack-max-reposts:
+    description: "TY-334: hard cap on @codex review reposts when no ACK arrives during /restart-review. Default 2, max 3."
+    required: false
+    default: "2"
   codex-review-marker:
     description: "Text marker in Codex summary comment"
     required: false
