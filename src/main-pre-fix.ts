@@ -9,6 +9,7 @@ import { ghApi } from "./gh.js";
 import { demoteFixingOnCrash, rollbackFixingClaim } from "./crash-recovery.js";
 import {
   createInitialState,
+  MAX_HISTORY_ENTRIES,
   readState as defaultReadState,
   updateStateComment as defaultUpdateStateComment,
 } from "./state-manager.js";
@@ -645,7 +646,14 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       triggerCommentId !== 0
         ? (currentTriggerSource ?? state.lastProcessedTriggerSource)
         : state.lastProcessedTriggerSource,
-    lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString(),
+    // Second-truncate the now() fallback so this field stays second-precision
+    // like GitHub's `createdAt`. review-collector compares it lexicographically
+    // (filterAndParseComments / countRelevantBotComments); a millisecond-precision
+    // value (`…00.123Z`) sorts before a same-second `createdAt` (`…00Z`, since
+    // 'Z' > '.'), which would re-process an already-seen comment after a
+    // /restart-review that preserves this timestamp.
+    lastCodexReviewReceivedAt:
+      latestCommentTime || deps.now().toISOString().replace(/\.\d{3}Z$/, "Z"),
   };
 
   if (findings.length === 0) {
@@ -770,6 +778,20 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       deriveIterationProgress(stoppedState, config.maxReviewIterations),
     );
     return;
+  }
+
+  // Loop detection only compares against the trimmed findings-hash history,
+  // which `serializeState` caps at MAX_HISTORY_ENTRIES. When the operator sets
+  // MAX_REVIEW_ITERATIONS above that cap, an oscillation whose cycle length
+  // exceeds MAX_HISTORY_ENTRIES is silently undetectable and the loop runs to
+  // `max_iterations` (burning escalated-tier iterations) instead of stopping at
+  // `loop_detected`. Period-2 oscillations (the common Codex case) are still
+  // caught. Surface the degraded detection so operators who deliberately raised
+  // the cap know the tradeoff (see docs/specs/loop-detection.md).
+  if (config.maxReviewIterations > MAX_HISTORY_ENTRIES) {
+    deps.warning(
+      `[pre-fix] MAX_REVIEW_ITERATIONS (${config.maxReviewIterations}) exceeds the findings-hash history cap (${MAX_HISTORY_ENTRIES}); oscillation loops with a cycle length greater than ${MAX_HISTORY_ENTRIES} will not be detected and will run to max_iterations instead. Period-2 oscillations are still caught. See docs/specs/loop-detection.md.`,
+    );
   }
 
   if (isLoop(findings, state.findingsHashHistory)) {

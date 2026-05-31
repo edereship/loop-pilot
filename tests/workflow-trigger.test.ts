@@ -114,6 +114,21 @@ describe("Workflow B trigger guard", () => {
     expect(postFixAction).toContain("build-command:");
   });
 
+  it("TY-337: forwards max-review-iterations from the loop composite to post-fix so the status cap matches the operator setting", () => {
+    // workflow → composite is already wired (max-review-iterations on the
+    // Run auto-fix loop step). The gap was composite → post-fix: without it
+    // post-fix falls back to the default 20 and the **Iterations** header in
+    // every post-fix status update diverges from vars.MAX_REVIEW_ITERATIONS.
+    // The forwarding line also appears in the pre-fix step, so scope the
+    // assertion to the Post-fix step to guard the specific wiring TY-337 adds.
+    const postFixStep = loopAction.slice(loopAction.indexOf("name: Post-fix"));
+    expect(postFixStep).toContain(
+      "max-review-iterations: ${{ inputs.max-review-iterations }}",
+    );
+    // Post-fix sub-action must declare the input so the composite value is read.
+    expect(postFixAction).toContain("max-review-iterations:");
+  });
+
   it("does not compare CODEX_BOT_LOGIN unless the variable is non-empty", () => {
     expect(loopReusable).toContain("vars.CODEX_BOT_LOGIN != ''");
     expect(loopReusable).toContain("github.event.comment.user.login == vars.CODEX_BOT_LOGIN");

@@ -397,6 +397,31 @@ describe("runPreFix", () => {
     expect(deps.mergeIfChecksPass).not.toHaveBeenCalled();
   });
 
+  it("second-truncates the now() fallback for lastCodexReviewReceivedAt (TY-359 / #150)", async () => {
+    // With no relevant Codex comments, lastCodexReviewReceivedAt falls back to
+    // now(). It must be second-precision (matching GitHub's createdAt) so a
+    // /restart-review that preserves it does not lexicographically re-process an
+    // already-seen same-second comment. The now() mock is ...12:00:00Z, whose
+    // toISOString() is ...12:00:00.000Z without the truncation.
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      [],
+    );
+
+    await runPreFix(baseConfig, deps);
+
+    const calls = vi.mocked(deps.updateStateComment).mock.calls;
+    const doneWrite = calls.find((c) => c[3]?.status === "done");
+    expect(doneWrite).toBeDefined();
+    expect(doneWrite?.[3]?.lastCodexReviewReceivedAt).toBe("2026-05-14T12:00:00Z");
+  });
+
   it("enables auto-merge on done/no_findings when LOOPPILOT_AUTO_MERGE is true", async () => {
     const deps = makeDeps(
       {
@@ -752,6 +777,67 @@ describe("runPreFix", () => {
       expect.any(Object),
     );
     expect(deps.checkoutBranch).toHaveBeenCalledWith("linear/TY-237");
+  });
+
+  it("warns when MAX_REVIEW_ITERATIONS exceeds the findings-hash history cap but still proceeds (TY-359 / #158)", async () => {
+    const findings: RawReviewComment[] = [
+      {
+        id: 320,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P2 Minor nit\n\nA comment is unclear.",
+        path: "src/foo.ts",
+        line: 7,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      findings,
+    );
+
+    await runPreFix({ ...baseConfig, maxReviewIterations: 21 }, deps);
+
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining("exceeds the findings-hash history cap"),
+    );
+    // Non-breaking: the iteration still proceeds to fixing.
+    expect(deps.outputs.should_run).toBe("true");
+  });
+
+  it("does not warn about the history cap when MAX_REVIEW_ITERATIONS is within it (TY-359 / #158)", async () => {
+    const findings: RawReviewComment[] = [
+      {
+        id: 321,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: "P2 Minor nit\n\nA comment is unclear.",
+        path: "src/foo.ts",
+        line: 7,
+        createdAt: "2026-05-14T11:30:00Z",
+      },
+    ];
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex" }),
+      },
+      findings,
+    );
+
+    await runPreFix({ ...baseConfig, maxReviewIterations: 20 }, deps);
+
+    expect(deps.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining("exceeds the findings-hash history cap"),
+    );
+    expect(deps.outputs.should_run).toBe("true");
   });
 
   it("embeds the effective scope policy section in the prompt (TY-278)", async () => {

@@ -361,11 +361,33 @@ export async function handleRestartCommand(
 
   const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
   if (!preflight.ok) {
+    // A soft `/restart-review` on a `fixing` state is rejected as
+    // `unsupported_status`. Because `handleRestartCommand` runs *before*
+    // pre-fix's stale-`fixing` recovery (and returns early), a command trigger
+    // never reaches that recovery, so the generic "not restartable" message
+    // sends operators down a dead end. A job killed mid-`fixing` (job timeout /
+    // hard cancel, where `demoteFixingOnCrash` cannot run) never posts
+    // `@codex review`, so no Codex trigger arrives to drive the 30-min stale
+    // demotion either — the only working recovery is `/restart-review --hard`.
+    // Surface that explicitly instead of the generic rejection.
+    const rejection =
+      preflight.reason === "unsupported_status" &&
+      context.stateResult.state.status === "fixing" &&
+      command.mode !== "hard"
+        ? [
+            "❌ Restart cannot apply: a fix is currently in progress (`fixing`).",
+            "",
+            "If a Workflow B run is still active for this PR, wait for it to finish — it returns the loop to `waiting_codex` on its own.",
+            "If the previous run crashed or was cancelled (e.g. a job timeout) and left the state stuck at `fixing`, a soft `/restart-review` cannot recover it. Confirm no auto-fix run is active, then use `/restart-review --hard` to clear iteration history and resume.",
+            "",
+            "See docs/operations/stop-and-recovery.md (`fixing` のまま停止している場合).",
+          ].join("\n")
+        : restartRejectionMessage(preflight.reason);
     await deps.postComment(
       context.owner,
       context.repo,
       context.prNumber,
-      restartRejectionMessage(preflight.reason),
+      rejection,
       context.githubToken,
     );
     return { handled: true };

@@ -18,6 +18,7 @@ import {
   scanForSecrets,
   extractAddedContentFromUnifiedDiff,
   formatSecretLeakDetail,
+  unquoteGitPath,
   type SecretScanResult,
   type SecretScanTarget,
 } from "./secret-scanner.js";
@@ -230,6 +231,28 @@ const defaultDeps: PostFixDeps = {
 export function countUntrackedAddedLines(content: string): number {
   if (content === "") return 0;
   return content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
+}
+
+/**
+ * Decode a `git ls-files --others` output line into a real filesystem path.
+ *
+ * With `-c core.quotepath=false` (set in `git.ts:gitListUntracked`), non-ASCII
+ * bytes are emitted raw, but paths containing control characters (tab,
+ * newline, embedded quote, backslash) are still C-quoted and wrapped in
+ * double quotes — `git` quotes those regardless of `core.quotepath`. Passing
+ * the quoted literal straight to `readWorkingTreeFile` / `git add` yields
+ * ENOENT, so the untracked entry gets marked binary (`added: -1`) and the loop
+ * stops on a spurious `scope_violation`.
+ *
+ * `parseGitNumstat` already unquotes the same shape on the tracked side
+ * (TY-306 #2); this keeps the untracked builders — which feed the *same*
+ * scope check, secret scan, and `git add` — symmetric. A no-op for ordinary
+ * unquoted paths.
+ */
+export function decodeLsFilesPath(line: string): string {
+  return line.length >= 2 && line.startsWith('"') && line.endsWith('"')
+    ? unquoteGitPath(line.slice(1, -1))
+    : line;
 }
 
 function readPostFixInputs(): PostFixInputs {
@@ -849,6 +872,7 @@ export async function runPostFix(
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
+    .map((line) => decodeLsFilesPath(line))
     .map((path) => {
       const content = deps.readWorkingTreeFile(path);
       // null content (binary, missing, permission) → mark as binary so
@@ -1051,6 +1075,7 @@ export async function runPostFix(
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
+    .map((line) => decodeLsFilesPath(line))
     .map((path) => {
       const content = deps.readWorkingTreeFile(path);
       if (content === null) {
@@ -1212,6 +1237,7 @@ export async function runPostFix(
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
+      .map((line) => decodeLsFilesPath(line))
       .map((path) => {
         const content = deps.readWorkingTreeFile(path);
         if (content === null) {
@@ -1452,7 +1478,8 @@ export async function runPostFix(
   const preCommitUntracked = preCommitUntrackedRaw
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .filter((line) => line.length > 0)
+    .map((line) => decodeLsFilesPath(line));
   const preCommitScanResult = scanWithIntentToAdd({
     untrackedPaths: preCommitUntracked,
     deps,
@@ -1552,16 +1579,35 @@ export async function runPostFix(
     return;
   }
 
-  await deps.postClaudeCodeActionFixSummary(
-    config.repoOwner,
-    config.repoName,
-    config.prNumber,
-    inputs.iteration,
-    modifiedFiles,
-    commitSha || undefined,
-    config.githubToken,
-    deriveIterationProgress(state, config.maxReviewIterations),
-  );
+  // Best-effort: the repair commit is already committed and pushed above, so a
+  // transient failure updating the visible status comment must NOT propagate.
+  // Left unhandled it reaches `runIfNotVitest`'s onError → `demoteFixingOnCrash`,
+  // which — because the hidden state is still `fixing` (the `waiting_codex`
+  // write below has not run yet) — rolls back `iterationCount` /
+  // `findingsHashHistory` for an iteration whose commit is already on the branch
+  // and demotes to `stopped/workflow_crashed`, falsely reporting a crash for a
+  // successful repair and skipping the `@codex review` re-request. Mirror
+  // pre-fix's `postFixingStartComment` handling (main-pre-fix.ts): warn and
+  // continue so the push is honoured and Phase 4 still runs.
+  try {
+    await deps.postClaudeCodeActionFixSummary(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      inputs.iteration,
+      modifiedFiles,
+      commitSha || undefined,
+      config.githubToken,
+      deriveIterationProgress(state, config.maxReviewIterations),
+    );
+  } catch (summaryError) {
+    const message =
+      summaryError instanceof Error ? summaryError.message : String(summaryError);
+    deps.warning(
+      `[post-fix] Failed to update the auto-fix status comment after pushing the repair: ${message}. ` +
+        "The repair commit is on the branch; continuing to waiting_codex and the @codex review re-request.",
+    );
+  }
 
   // ─── Phase 4: Re-review ──────────────────────────────────────────────────
   const waitingState: ReviewState = {
@@ -1660,8 +1706,19 @@ export async function runPostFix(
     // `state_conflict` 🛑 stop here would falsely tell operators the
     // LoopPilot halted while it is actually still waiting for the next
     // Codex review trigger.
-    if (
-      !(await updateStateCommentLocked(
+    //
+    // A 412 is handled informationally by the `onConflict` warn below. A
+    // non-412 transient error (5xx / 429 / network), however, makes
+    // `updateStateCommentLocked` re-throw — and because this call sits inside
+    // the outer `try` that wraps the `@codex review` post, the throw would land
+    // in the catch below and falsely demote a healthy `waiting_codex` loop to
+    // `stopped/codex_request_failed`, claiming the review post failed even
+    // though it succeeded. Catch it here and treat it the same as the 412 path:
+    // warn and return, leaving the state at `waiting_codex` for the next Codex
+    // review trigger to reconcile.
+    let requestIdPersisted: boolean;
+    try {
+      requestIdPersisted = await updateStateCommentLocked(
         updatedWaitingState,
         "Could not persist the Codex review request comment id.",
         {
@@ -1672,8 +1729,17 @@ export async function runPostFix(
             );
           },
         },
-      ))
-    ) {
+      );
+    } catch (recordError) {
+      const message =
+        recordError instanceof Error ? recordError.message : String(recordError);
+      deps.warning(
+        `[post-fix] Failed to persist the Codex review request comment id (non-conflict error): ${message}. ` +
+          "The repair commit is pushed and @codex review was posted; LoopPilot state remains waiting_codex and the next Codex review trigger will reconcile.",
+      );
+      return;
+    }
+    if (!requestIdPersisted) {
       return;
     }
 

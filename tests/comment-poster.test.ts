@@ -850,9 +850,10 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
   it("suppresses a duplicate post when a prefix-matching comment exists in the 90s dedup window", async () => {
     // Dedup query returns a body that already starts with the prefix — the
-    // function must NOT call postComment a second time.
+    // function must NOT call postComment a second time. The query uses
+    // `.[].body | @json`, so each body arrives as a single JSON-encoded line.
     mockedGhApi.mockResolvedValueOnce(
-      `${AUTO_MERGE_SKIP_PREFIX} — earlier skip notification body`,
+      JSON.stringify(`${AUTO_MERGE_SKIP_PREFIX} — earlier skip notification body`),
     );
 
     await postAutoMergeSkipNotification(
@@ -959,10 +960,13 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     // OLDEST 30 comments — GitHub serves issue comments ascending — so the late
     // prefix line was invisible and the duplicate post fired. With --paginate the
     // whole window is scanned and the late match suppresses the duplicate.
+    // `.[].body | @json` emits one JSON-encoded body per line, so encode each.
     const bodies = [
       ...Array.from({ length: 120 }, (_, i) => `unrelated comment ${i}`),
       `${AUTO_MERGE_SKIP_PREFIX} — most recent skip notification`,
-    ].join("\n");
+    ]
+      .map((b) => JSON.stringify(b))
+      .join("\n");
     mockedGhApi.mockResolvedValueOnce(bodies);
 
     await postAutoMergeSkipNotification(
@@ -976,5 +980,31 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     // Only the dedup query ran; the suppressed path makes no second postComment call.
     expect(mockedGhApi).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not suppress when a comment only quotes the prefix on a non-first line (TY-359 / #155)", async () => {
+    // A blockquote of an earlier skip notification embeds the prefix in the
+    // MIDDLE of the body, not at its start. With `.[].body | @json` the body is
+    // one JSON-encoded line and the prefix test is anchored to the decoded
+    // body's start, so the quote must NOT be treated as a prior notification.
+    // The pre-fix line-by-line `.[].body` form matched the quoted line and
+    // wrongly suppressed the fresh notification.
+    const quotingBody = `Following up on the earlier run:\n\n> ${AUTO_MERGE_SKIP_PREFIX} — CI failed last time`;
+    mockedGhApi.mockResolvedValueOnce(JSON.stringify(quotingBody)); // dedup query (@json)
+    mockedGhApi.mockResolvedValueOnce(String(POSTED_COMMENT_ID)); // postComment
+
+    await postAutoMergeSkipNotification(
+      "team-yubune",
+      "loop-pilot",
+      65,
+      { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
+      RUN_URL,
+      "token",
+    );
+
+    // Not suppressed: dedup query + the fresh postComment.
+    expect(mockedGhApi).toHaveBeenCalledTimes(2);
+    const { body } = expectPostCommentInvocation(mockedGhApi.mock.calls[1]);
+    expect(body.startsWith(AUTO_MERGE_SKIP_PREFIX)).toBe(true);
   });
 });

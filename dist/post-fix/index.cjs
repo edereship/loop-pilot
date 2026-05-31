@@ -18640,6 +18640,7 @@ __export(main_post_fix_exports, {
   SECRET_WARN_LOG_CAP_PER_PATTERN: () => SECRET_WARN_LOG_CAP_PER_PATTERN,
   SECRET_WARN_PATH_SUPPRESS_RE: () => SECRET_WARN_PATH_SUPPRESS_RE,
   countUntrackedAddedLines: () => countUntrackedAddedLines,
+  decodeLsFilesPath: () => decodeLsFilesPath,
   formatScopeViolationDetail: () => formatScopeViolationDetail,
   logSecretScanWarnings: () => logSecretScanWarnings,
   runPostFix: () => runPostFix
@@ -21262,6 +21263,9 @@ function countUntrackedAddedLines(content) {
     return 0;
   return content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
 }
+function decodeLsFilesPath(line) {
+  return line.length >= 2 && line.startsWith('"') && line.endsWith('"') ? unquoteGitPath(line.slice(1, -1)) : line;
+}
 function readPostFixInputs() {
   const commentId = parseInt(getInput("comment-id"), 10);
   const iteration = parseInt(getInput("iteration"), 10);
@@ -21527,7 +21531,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   const trackedChanges = parseGitNumstat(numstat);
-  const untrackedChanges = untrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((path) => {
+  const untrackedChanges = untrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((line) => decodeLsFilesPath(line)).map((path) => {
     const content = deps.readWorkingTreeFile(path);
     if (content === null) {
       return { path, added: -1, deleted: -1 };
@@ -21645,7 +21649,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     return;
   }
   const postCheckTracked = parseGitNumstat(postCheckNumstat);
-  const postCheckUntracked = postCheckUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((path) => {
+  const postCheckUntracked = postCheckUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((line) => decodeLsFilesPath(line)).map((path) => {
     const content = deps.readWorkingTreeFile(path);
     if (content === null) {
       return { path, added: -1, deleted: -1 };
@@ -21734,7 +21738,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
       return;
     }
     const postBuildTracked = parseGitNumstat(postBuildNumstat);
-    const postBuildUntracked = postBuildUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((path) => {
+    const postBuildUntracked = postBuildUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((line) => decodeLsFilesPath(line)).map((path) => {
       const content = deps.readWorkingTreeFile(path);
       if (content === null) {
         return { path, added: -1, deleted: -1 };
@@ -21877,7 +21881,7 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     });
     return;
   }
-  const preCommitUntracked = preCommitUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  const preCommitUntracked = preCommitUntrackedRaw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).map((line) => decodeLsFilesPath(line));
   const preCommitScanResult = scanWithIntentToAdd({
     untrackedPaths: preCommitUntracked,
     deps
@@ -21950,7 +21954,12 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     });
     return;
   }
-  await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, commitSha || void 0, config.githubToken, deriveIterationProgress(state, config.maxReviewIterations));
+  try {
+    await deps.postClaudeCodeActionFixSummary(config.repoOwner, config.repoName, config.prNumber, inputs.iteration, modifiedFiles, commitSha || void 0, config.githubToken, deriveIterationProgress(state, config.maxReviewIterations));
+  } catch (summaryError) {
+    const message = summaryError instanceof Error ? summaryError.message : String(summaryError);
+    deps.warning(`[post-fix] Failed to update the auto-fix status comment after pushing the repair: ${message}. The repair commit is on the branch; continuing to waiting_codex and the @codex review re-request.`);
+  }
   const waitingState = {
     ...state,
     status: "waiting_codex",
@@ -21996,11 +22005,19 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
       ...waitingState,
       lastCodexRequestCommentId: reviewRequestId
     };
-    if (!await updateStateCommentLocked(updatedWaitingState, "Could not persist the Codex review request comment id.", {
-      onConflict: async (detail) => {
-        deps.warning(`[post-fix] ${detail} LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
-      }
-    })) {
+    let requestIdPersisted;
+    try {
+      requestIdPersisted = await updateStateCommentLocked(updatedWaitingState, "Could not persist the Codex review request comment id.", {
+        onConflict: async (detail) => {
+          deps.warning(`[post-fix] ${detail} LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
+        }
+      });
+    } catch (recordError) {
+      const message = recordError instanceof Error ? recordError.message : String(recordError);
+      deps.warning(`[post-fix] Failed to persist the Codex review request comment id (non-conflict error): ${message}. The repair commit is pushed and @codex review was posted; LoopPilot state remains waiting_codex and the next Codex review trigger will reconcile.`);
+      return;
+    }
+    if (!requestIdPersisted) {
       return;
     }
     const ack = await deps.ensureCodexAck({
@@ -22075,6 +22092,7 @@ runIfNotVitest(run, () => demoteFixingOnCrash("post-fix"));
   SECRET_WARN_LOG_CAP_PER_PATTERN,
   SECRET_WARN_PATH_SUPPRESS_RE,
   countUntrackedAddedLines,
+  decodeLsFilesPath,
   formatScopeViolationDetail,
   logSecretScanWarnings,
   runPostFix
