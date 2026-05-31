@@ -20627,6 +20627,22 @@ var HARD_FAIL_SECRET_PATTERNS = [
     // OPENSSH / etc.) come *before* "PRIVATE KEY", so they are absorbed by
     // the `[A-Z0-9 -]*` slot.
     re: /-----BEGIN (?:[A-Z0-9 -]*)?(?:ENCRYPTED )?PRIVATE KEY-----/
+  },
+  {
+    name: "git-checkout-basic-auth",
+    severity: "hard",
+    // base64 of the literal `x-access-token:` prefix that `actions/checkout`
+    // persists into `.git/config` as
+    // `http.<url>.extraheader = AUTHORIZATION: basic <base64(x-access-token:<TOKEN>)>`.
+    // The prefix patterns above catch the *plaintext* `ghs_…` token, but the
+    // agent runs with an unrestricted `Read` tool and can read `.git/config`,
+    // whose credential is stored base64-encoded. Committing that blob to an
+    // allowed path would exfiltrate the workflow GITHUB_TOKEN, and the base64
+    // form matches none of the raw-prefix rules — it would otherwise only trip
+    // the WARN-tier high-entropy rule, which does not stop the loop. The
+    // 15-byte prefix encodes to a fixed 20-char base64 string, so this is an
+    // effectively zero-false-positive hard fail.
+    re: /eC1hY2Nlc3MtdG9rZW46[A-Za-z0-9+/=]{10,}/
   }
 ];
 var WARN_SECRET_PATTERNS = [
