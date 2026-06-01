@@ -77,6 +77,14 @@ describe("marketplace facade: root action.yml meets listing requirements", () =>
     expect(rootAction).toMatch(/^description:\s*\S/m);
   });
 
+  it("keeps the description under GitHub Marketplace's 125-character limit", () => {
+    // Marketplace rejects a description >= 125 chars — but only at publish time in
+    // the Releases UI, never at merge. Guard it here so it fails in CI instead.
+    const descMatch = rootAction.match(/^description:\s*"([^"\n]*)"\s*$/m);
+    expect(descMatch).not.toBeNull();
+    expect(descMatch![1].length).toBeLessThan(125);
+  });
+
   it("is a composite action (no published image / no dist entrypoint)", () => {
     expect(rootAction).toContain('using: "composite"');
   });

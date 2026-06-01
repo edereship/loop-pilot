@@ -10,6 +10,14 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-06-01
+
+### Fixed
+- Root `action.yml` description shortened to under 125 characters (TY-343). GitHub
+  Marketplace rejects a description of 125+ chars at publish time (it is not
+  validated at merge), which blocked publishing the v1.5.0 listing. Added a CI
+  guard for the 125-char limit in `tests/marketplace-facade.test.ts`.
+
 ## [1.5.0] - 2026-06-01
 
 GitHub Marketplace discoverability facade (TY-343 / #31). Adds a repository-root
