@@ -10,6 +10,15 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-06-01
+
+GitHub Marketplace discoverability facade (TY-343 / #31). Adds a repository-root
+`action.yml` so LoopPilot can be listed on the GitHub Marketplace, which lists
+Actions/Apps only — not the `gh-looppilot` CLI extension or reusable workflows.
+The listed action is an inert signpost (prints the `gh looppilot` install path and
+exits 0), not the way to run LoopPilot. Touches the `@v1`-consumed surface with no
+adopter-facing behavior change to the loop.
+
 ### Added
 - Repository-root `action.yml` (TY-343): a GitHub Marketplace discoverability
   **facade**. LoopPilot is event-driven (reusable workflows), and Marketplace
