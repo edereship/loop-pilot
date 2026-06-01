@@ -10,6 +10,26 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+### Added
+- Repository-root `action.yml` (TY-343): a GitHub Marketplace discoverability
+  **facade**. LoopPilot is event-driven (reusable workflows), and Marketplace
+  lists Actions/Apps only — so listing requires a real root action. This one is an
+  inert signpost: run as a step it prints the `gh looppilot` install path and exits
+  0. It does not change the canonical `loop@v1` / `init@v1` subpath actions or the
+  reusable-workflow refs. Touches the `@v1`-consumed surface (no adopter-facing
+  behavior change to the loop). The Marketplace listing `name` is "LoopPilot PR
+  Review-Fix Loop" (not the bare "LoopPilot", which GitHub would reject because a
+  `looppilot` user already exists).
+- README.md / README.ja.md: GitHub Marketplace badge + a note that the listing is a
+  discoverability front door, not the way to run LoopPilot (do not use the bare
+  `uses: team-yubune/loop-pilot@v1` ref).
+- `tests/marketplace-facade.test.ts`: CI guards that the root facade meets
+  Marketplace listing requirements (name / description / branding) and stays an
+  inert signpost (exit 0, no sub-action / `./` refs).
+- `docs/operations/releasing.md`: root `action.yml` added to the documented
+  `@v1`-consumed surface; notes it is intentionally excluded from the action-ref
+  scan because it carries no `team-yubune/loop-pilot/...@v<major>` refs.
+
 ## [1.4.0] - 2026-05-31
 
 Config-wiring audit follow-ups (#29). The end-to-end config chain was found

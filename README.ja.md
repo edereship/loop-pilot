@@ -2,9 +2,13 @@
 
 [English](README.md) | **日本語**
 
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-LoopPilot-blue?logo=github)](https://github.com/marketplace/actions/looppilot-pr-review-fix-loop)
+
 > GitHub Pull Request 向けの AI レビュー修正ループ。LoopPilot は Codex に PR レビューを依頼し、指摘を Claude に修正させ、チェックを実行し、PR がクリーンになるまで繰り返します。
 
 LoopPilot は GitHub Actions の再利用可能 workflow として動きます。サーバー運用やホスティングは不要です。推奨の導入方法は [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) です。
+
+> **[GitHub Marketplace の掲載](https://github.com/marketplace/actions/looppilot-pr-review-fix-loop)は発見性のための入口であり、LoopPilot の実行方法ではありません。** LoopPilot はイベント駆動で再利用可能 workflow として動くため、ジョブに追加する step ではありません。`uses: team-yubune/loop-pilot@v1` をジョブに書かないでください — このルート action は導入手順を表示して終了するだけです。導入は下記の `gh looppilot` CLI、または[手動の再利用可能 workflow caller](#手動導入)（`team-yubune/loop-pilot/.github/workflows/{init,loop}.yml@v1`）を使ってください。
 
 ## まずここから
 
