@@ -1,0 +1,62 @@
+# Repository-root action.yml — GitHub Marketplace FACADE / "front door" ONLY (TY-343).
+#
+# This is NOT how you run LoopPilot. LoopPilot is event-driven: a PR label (or an
+# `@codex review` comment) drives the reusable workflows
+#   team-yubune/loop-pilot/.github/workflows/{init,loop}.yml@v1
+# which the `gh looppilot` CLI wires up for you. There is no useful "add this as a
+# step in a job" surface, so this root action exists purely so LoopPilot is
+# listable + discoverable on the GitHub Marketplace (Marketplace lists Actions and
+# Apps only — not reusable workflows, and not the `gh-looppilot` CLI extension).
+#
+# When run as a step it prints the real install path and exits 0 — a loud, friendly
+# signpost, never a second implementation of the loop. The tests/marketplace-facade
+# guard locks it that way (no `exit 1`, no sub-action / `./` refs).
+#
+# It does NOT affect the canonical subpath actions: GitHub resolves
+#   team-yubune/loop-pilot/loop@v1  -> loop/action.yml
+#   team-yubune/loop-pilot/init@v1  -> init/action.yml
+# directly from those subdirectories and never consults this root file, so those
+# refs keep working unchanged.
+name: "LoopPilot"
+description: "AI review-fix loop for GitHub PRs — Codex reviews, Claude fixes, repeat. Discoverability front door; install with the gh looppilot CLI (this is not a step action)."
+author: "team-yubune"
+branding:
+  icon: "refresh-cw"
+  color: "blue"
+
+runs:
+  using: "composite"
+  steps:
+    - name: LoopPilot is event-driven — use the gh looppilot CLI
+      shell: bash
+      run: |
+        cat <<'EOF'
+        ============================================================
+          LoopPilot — this Marketplace action is a DISCOVERABILITY
+          FRONT DOOR, not the way to run LoopPilot.
+        ============================================================
+
+        LoopPilot is EVENT-DRIVEN. It is triggered by a PR label and an
+        `@codex review` comment, and runs as GitHub Actions REUSABLE
+        WORKFLOWS:
+
+            team-yubune/loop-pilot/.github/workflows/init.yml@v1
+            team-yubune/loop-pilot/.github/workflows/loop.yml@v1
+
+        It is NOT something you add as a step inside a job, so running this
+        root action in a job does nothing useful.
+
+        ---> Recommended setup (one command):
+
+            gh extension install team-yubune/gh-looppilot
+            cd your-repo
+            gh looppilot init
+            gh looppilot doctor
+
+        `gh looppilot init` generates the two thin caller workflows above,
+        creates the gate label, and prints the manual secret / Codex steps.
+
+        Docs / manual install:
+            https://github.com/team-yubune/loop-pilot#readme
+        ============================================================
+        EOF

@@ -2,9 +2,13 @@
 
 **English** | [日本語](README.ja.md)
 
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-LoopPilot-blue?logo=github)](https://github.com/marketplace/actions/looppilot)
+
 > An AI review-fix loop for GitHub pull requests. LoopPilot asks Codex to review a PR, lets Claude fix the findings, runs your checks, and repeats until the PR is clean.
 
 LoopPilot runs as GitHub Actions reusable workflows. You do not host a service, run a server, or install anything in production. The recommended setup path is the [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot).
+
+> **The [GitHub Marketplace listing](https://github.com/marketplace/actions/looppilot) is a discoverability front door, not the way to run LoopPilot.** LoopPilot is event-driven and runs as reusable workflows, so it is not a step you add to a job. Do not write `uses: team-yubune/loop-pilot@v1` in a job — that root action only prints setup guidance and exits. Install with the `gh looppilot` CLI (below), or use the [manual reusable-workflow callers](#manual-install) (`team-yubune/loop-pilot/.github/workflows/{init,loop}.yml@v1`).
 
 ## Start here
 
