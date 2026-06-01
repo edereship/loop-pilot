@@ -17,7 +17,9 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
   inert signpost: run as a step it prints the `gh looppilot` install path and exits
   0. It does not change the canonical `loop@v1` / `init@v1` subpath actions or the
   reusable-workflow refs. Touches the `@v1`-consumed surface (no adopter-facing
-  behavior change to the loop).
+  behavior change to the loop). The Marketplace listing `name` is "LoopPilot AI
+  Review Loop" (not the bare "LoopPilot", which GitHub would reject because a
+  `looppilot` user already exists).
 - README.md / README.ja.md: GitHub Marketplace badge + a note that the listing is a
   discoverability front door, not the way to run LoopPilot (do not use the bare
   `uses: team-yubune/loop-pilot@v1` ref).

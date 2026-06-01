@@ -65,8 +65,15 @@ const OMITTED_FEATHER_ICONS = [
 ];
 
 describe("marketplace facade: root action.yml meets listing requirements", () => {
-  it("declares the LoopPilot name and a non-empty description", () => {
-    expect(rootAction).toMatch(/^name:\s*["']?LoopPilot["']?\s*$/m);
+  it("declares a LoopPilot-branded, publishable name (not the bare 'LoopPilot') + a non-empty description", () => {
+    const nameMatch = rootAction.match(/^name:\s*"?([^"\n]+?)"?\s*$/m);
+    expect(nameMatch).not.toBeNull();
+    const name = nameMatch![1].trim();
+    expect(name).toContain("LoopPilot");
+    // GitHub Marketplace forbids an action name that matches an existing GitHub
+    // user/org you don't own. A `looppilot` user exists, so the bare brand name
+    // "LoopPilot" would be REJECTED at publish — the name must be more specific.
+    expect(name.toLowerCase()).not.toBe("looppilot");
     expect(rootAction).toMatch(/^description:\s*\S/m);
   });
 
