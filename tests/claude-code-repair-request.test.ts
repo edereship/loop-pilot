@@ -20,6 +20,7 @@ const prContext: PrContext = {
 const findings: Finding[] = [
   {
     severity: "P1",
+    commentId: 0,
     path: "src/auth/middleware.ts",
     line: 42,
     title: "Unauthenticated requests reach protected handler",
@@ -27,6 +28,7 @@ const findings: Finding[] = [
   },
   {
     severity: "P0",
+    commentId: 0,
     path: "src/auth/session.ts",
     line: 84,
     title: "Token refresh path can bypass expiry validation",
@@ -34,6 +36,7 @@ const findings: Finding[] = [
   },
   {
     severity: "P2",
+    commentId: 0,
     path: "src/auth/logger.ts",
     line: 17,
     title: "Debug log leaks request id format",
@@ -145,6 +148,7 @@ function makeP2Finding(index: number, bodyLen = 200): Finding {
   const padded = String(index).padStart(4, "0");
   return {
     severity: "P2",
+    commentId: 0,
     path: `src/synthetic/file-${padded}.ts`,
     line: 1,
     title: `synthetic finding ${padded}`,
@@ -225,6 +229,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("keeps bodies untouched at MAX_FINDING_BODY_CHARS - 1 and exactly MAX_FINDING_BODY_CHARS", () => {
     const finding1: Finding = {
       severity: "P1",
+      commentId: 0,
       path: "src/foo.ts",
       line: 1,
       title: "body cap - 1",
@@ -232,6 +237,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     };
     const finding2: Finding = {
       severity: "P1",
+      commentId: 0,
       path: "src/bar.ts",
       line: 1,
       title: "body cap",
@@ -253,6 +259,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("truncates the body once it exceeds MAX_FINDING_BODY_CHARS by one character", () => {
     const finding: Finding = {
       severity: "P1",
+      commentId: 0,
       path: "src/foo.ts",
       line: 1,
       title: "body cap + 1",
@@ -278,6 +285,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("guarantees payload-level ClaudeCodeRepairFinding.body.length <= MAX_FINDING_BODY_CHARS invariant", () => {
     const finding: Finding = {
       severity: "P0",
+      commentId: 0,
       path: "src/huge.ts",
       line: 1,
       title: "huge body",
@@ -305,6 +313,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     );
     const oversized: Finding = {
       severity: "P0",
+      commentId: 0,
       path: "src/aaa-oversized.ts",
       line: 1,
       title: "oversized body",
@@ -351,6 +360,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     const longBodyB = "B".repeat(MAX_FINDING_BODY_CHARS + 100);
     const f1: Finding = {
       severity: "P2",
+      commentId: 0,
       path: "src/same.ts",
       line: 1,
       title: "same",
@@ -358,6 +368,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     };
     const f2: Finding = {
       severity: "P2",
+      commentId: 0,
       path: "src/same.ts",
       line: 1,
       title: "same",
@@ -518,6 +529,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
     const fs: Finding[] = [
       {
         severity: "P1",
+        commentId: 0,
         path: "src/auth/session.ts",
         line: null,
         title: "File-level concern",
@@ -525,6 +537,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
       },
       {
         severity: "P2",
+        commentId: 0,
         path: "src/auth/logger.ts",
         line: 17,
         title: "Inline concern",
@@ -549,6 +562,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
     const fs: Finding[] = [
       {
         severity: "P1",
+        commentId: 0,
         path: "src/foo.ts",
         line: 5,
         title: "Inline at line 5",
@@ -556,6 +570,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
       },
       {
         severity: "P1",
+        commentId: 0,
         path: "src/foo.ts",
         line: null,
         title: "File-level for foo",
@@ -582,6 +597,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
       { length: MAX_FINDINGS_PER_REQUEST + 5 },
       (_, i) => ({
         severity: "P2",
+        commentId: 0,
         path: `src/synthetic/file-${String(i).padStart(4, "0")}.ts`,
         line: 1,
         title: `synthetic ${i}`,

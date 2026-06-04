@@ -654,6 +654,12 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     // /restart-review that preserves this timestamp.
     lastCodexReviewReceivedAt:
       latestCommentTime || deps.now().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    // TY-360: clear any in-scope finding ids carried in from the previous
+    // iteration's `fixing` claim. Only the `fixingState` write below (Phase 3)
+    // repopulates this with the current iteration's findings; every terminal
+    // write derived from this base (done / loop_detected / max_iterations / …)
+    // keeps it empty so post-fix never resolves threads for a non-fixing state.
+    currentIterationFindingCommentIds: [],
   };
 
   if (findings.length === 0) {
@@ -905,6 +911,12 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     // stale-detector in subsequent pre-fix runs can distinguish a genuinely
     // hung `fixing` from one that legitimately resumed via /restart-review.
     fixingStartedAt: deps.now().toISOString(),
+    // TY-360: persist the in-scope finding comment ids forwarded to
+    // claude-code-action so post-fix can resolve the matching Codex review
+    // threads after a successful repair. `findings` is the severity-filtered
+    // in-scope set (below-threshold / unparseable were already excluded by
+    // `filterAndParseComments`), so only fixable threads are ever targeted.
+    currentIterationFindingCommentIds: findings.map((f) => f.commentId),
   };
   if (
     !(await updateStateCommentLocked(

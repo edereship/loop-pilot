@@ -101,7 +101,12 @@ GitHub Actions 内で `sleep $DEBOUNCE_SECONDS` を使う場合、**ランナー
 - [`runCheckCommand`](../../src/check-runner.ts) を実行:
   - 失敗時は check-runner が modifiedFiles をロールバックした後、tail を `state.previousCheckFailure` に保存し `stopped(test_failure)`
   - 成功時は `git add -- <modifiedFiles>` → `git commit -m "fix: auto-resolve Codex review findings (iteration {N})"` → `git push`
-- 成功 commit 後: `last_claude_commit_sha` を更新、`previousCheckFailure` を `null` にリセット、`stopReason` を `null` にリセット（`/restart-review` 経由で持ち越された `max_turns_exceeded` などのエスカレーションシグナルを one-shot にする）、修正サマリ（変更ファイル一覧）を PR コメント、`status: waiting_codex` に更新、`@codex review` を再投稿
+- 成功 commit 後: `last_claude_commit_sha` を更新、`previousCheckFailure` を `null` にリセット、`stopReason` を `null` にリセット（`/restart-review` 経由で持ち越された `max_turns_exceeded` などのエスカレーションシグナルを one-shot にする）、修正サマリ（変更ファイル一覧）を PR コメント、`status: waiting_codex` に更新、**当該 iteration の in-scope finding に対応する Codex レビュースレッドを resolve**（後述）、`@codex review` を再投稿
+- **修正済みレビュースレッドの自動 resolve（TY-360 / A案）:** CHECK_COMMAND 成功 + commit/push 済みの iteration で、その iteration の in-scope finding（閾値以上）に対応する未解決の Codex レビュースレッドを [`resolveFindingThreads`](../../src/review-thread-resolver.ts) が GraphQL `resolveReviewThread` で解決する。
+  - **対象の特定:** pre-fix が Phase 3 で `fixing` を claim する際、in-scope finding の元コメント id（`Finding.commentId` = REST `pulls/{n}/comments[].id`）を hidden state の `current_iteration_finding_comment_ids` に保存する。post-fix は GraphQL `reviewThreads` を取得し、各スレッドの `comments.nodes.databaseId` を保存済み id と**厳密一致**でマッピングする（path/line のあいまい照合は不要）。
+  - **スコープ:** below-threshold / unparseable のスレッドは resolve しない（in-scope finding の id だけが保存されているため対象外）。既に `isResolved` のスレッドは skip（冪等）。
+  - **best-effort:** スレッド取得・解決の失敗はループ本体（commit / `@codex review` 再投稿 / 状態遷移）を一切失敗させない（warning ログのみ）。`@codex review` 再投稿の**前**に実行するため、次の Codex レビュー到達時には解決済みになっている。
+  - **トークン:** `pull-requests:write` を持つ `github-token` を使用する（push token ではない）。Codex が作成したスレッドでも write 権限があれば解決可能。
 
 ---
 
@@ -182,7 +187,8 @@ PR ごとに以下の状態を持つ。
     { "iteration": 2, "hash": "sha256:ghi789..." }
   ],
   "status": "waiting_codex",
-  "stop_reason": null
+  "stop_reason": null,
+  "current_iteration_finding_comment_ids": []
 }
 ```
 
@@ -202,6 +208,7 @@ PR ごとに以下の状態を持つ。
 | `stop_reason` | 停止理由。`no_findings`（正常終了）、`max_iterations`、`loop_detected`、`test_failure`、`state_corrupted`、`state_conflict`、`workflow_crashed`、`action_timeout`、`action_failure`、`scope_violation`、`max_turns_exceeded`、`codex_usage_limit`、`codex_request_failed`、`secret_leak_suspected`、`action_no_op` のいずれか。`scope_violation` / `action_timeout` / `action_failure` / `max_turns_exceeded` は claude-code-action 経路の停止理由（[security.md](../operations/security.md#claude-code-action-実行制御) 参照）。`codex_usage_limit` は Codex 外部サービスの quota 通知。`codex_request_failed` は post-fix が `@codex review` の再投稿に失敗した場合の deadlock 回避降格で、人手復旧は `/restart-review` (soft)。`action_no_op` は claude-code-action が success outcome を返したのに file change が 0 件だった場合の停止で、自動 Codex 再依頼は行わない。`/restart-review` でも `stop_reason` をクリアせず保持し、次 iteration のモデル選定 (`previous_max_turns_exceeded`) に使う。post-fix の clean commit 経路で `null` に戻す |
 | `previous_check_failure` | 前回 iteration の `CHECK_COMMAND` 失敗 stdout/stderr の末尾（最大 20,000 文字、tail-preserving truncation）。次 iteration の claude-code-action prompt の `## Previous CHECK_COMMAND Failure` セクションに転記される。clean run / claude-code-action 失敗時は `null` |
 | `fixingStartedAt` | pre-fix が Phase 3 で `fixing` 状態を claim した時刻 (ISO 8601)。pre-fix の stale 判定はこのフィールドを参照し (`/restart-review` で保持される `lastCodexReviewReceivedAt` の流用を避ける)、post-fix の各 terminal 遷移 (`waiting_codex` / `done` / `stopped`) で `null` にクリアされる。legacy state には存在せず、`deserializeState` が `null` に normalize する |
+| `current_iteration_finding_comment_ids` | 当該 `fixing` iteration で claude-code-action に渡した in-scope finding（閾値以上）の元コメント id 配列（REST `pulls/{n}/comments[].id`）。pre-fix の Phase 3 で記録し、post-fix が commit/push 成功後に対応する Codex レビュースレッドを resolve するのに使う（TY-360）。各 terminal 遷移で `[]` にクリアされる。legacy state には存在せず `deserializeState` が `[]` に normalize する。serialize floor 保護のため最大 500 件に制限する |
 
 ### 状態遷移
 

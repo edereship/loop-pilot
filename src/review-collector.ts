@@ -152,6 +152,10 @@ export function filterAndParseComments(
     }
     findings.push({
       severity: parsed.severity,
+      // TY-360: carry the REST comment id so post-fix can map this in-scope
+      // finding to its GraphQL review thread (databaseId match) and resolve it
+      // after a successful repair.
+      commentId: comment.id,
       path: comment.path,
       // TY-280: preserve null so the prompt can format file-level / outdated
       // findings as `(file-level)` instead of `path:0` (which would imply a

@@ -114,6 +114,12 @@ function makeDeps(
       reposts: 0,
       lastCommentId: 22,
     }),
+    resolveFindingThreads: vi.fn().mockResolvedValue({
+      resolved: 0,
+      alreadyResolved: 0,
+      failed: 0,
+      unmatched: 0,
+    }),
     postStopComment: vi.fn().mockResolvedValue(33),
     postTestFailureComment: vi.fn().mockResolvedValue(44),
     postTerminalNotification: vi.fn().mockResolvedValue(undefined),
@@ -205,6 +211,60 @@ describe("runPostFix", () => {
         previousCheckFailure: null,
         lastClaudeCommitSha: "abc1234",
       }),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
+  it("TY-360: resolves the iteration's in-scope finding threads after a clean push (github-token)", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState({ currentIterationFindingCommentIds: [501, 502] }),
+    });
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    // Resolve is invoked with the in-scope finding ids from the (fixing) state
+    // and the github-token (pull-requests:write), NOT the push token.
+    expect(deps.resolveFindingThreads).toHaveBeenCalledWith({
+      owner: "team-yubune",
+      repo: "loop-pilot",
+      prNumber: 99,
+      commentIds: [501, 502],
+      token: "github-token",
+    });
+    // It runs after the repair was committed/pushed and before the re-review.
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.pushCalls.length).toBe(1);
+    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+  });
+
+  it("TY-360: a resolve failure is best-effort — the loop still re-requests Codex and reaches waiting_codex", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState({ currentIterationFindingCommentIds: [501] }),
+    });
+    // Even if the (already best-effort) resolver somehow throws, post-fix must
+    // not let it break the commit / @codex review / state transition.
+    (deps.resolveFindingThreads as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("graphql exploded"),
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.pushCalls.length).toBe(1);
+    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "loop-pilot",
+      100,
+      expect.objectContaining({ status: "waiting_codex" }),
       "github-token",
       expect.any(Object),
     );

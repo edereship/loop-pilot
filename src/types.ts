@@ -4,6 +4,16 @@ export type Severity = "P0" | "P1" | "P2" | "P3";
 /** Codex インラインコメントから抽出した指摘 */
 export interface Finding {
   severity: Severity;
+  /**
+   * databaseId of the Codex inline review comment this finding was parsed
+   * from (REST `pulls/{n}/comments[].id`). This is the SAME value as the
+   * GraphQL `reviewThreads.comments.nodes.databaseId`, so post-fix can map an
+   * in-scope finding to its review thread node id by exact id match and
+   * resolve the thread after a successful repair (TY-360). Intentionally NOT
+   * part of `computeFindingsHash` — the hash keys on (severity, path, body)
+   * only, so carrying the id here does not perturb loop detection.
+   */
+  commentId: number;
   path: string;
   /**
    * 1-based line number where Codex anchored the comment, or `null` for
@@ -64,6 +74,18 @@ export interface ReviewState {
    * stale" so existing in-flight PRs do not regress to `state_corrupted`.
    */
   fixingStartedAt: string | null;
+  /**
+   * Comment ids (REST `pulls/{n}/comments[].id`) of the in-scope findings
+   * forwarded to claude-code-action for the current `fixing` iteration
+   * (TY-360). Pre-fix Phase 3 records them when it claims `fixing`; post-fix
+   * reads them after a successful commit/push to resolve the matching Codex
+   * review threads (best-effort), then clears the list on every terminal
+   * transition (`waiting_codex` / `done` / `stopped`). Empty for legacy state
+   * comments (normalized by `deserializeState`) and whenever the iteration was
+   * not driven by in-scope findings. Only finding-derived ids land here, so
+   * below-threshold / unparseable Codex threads are never resolved.
+   */
+  currentIterationFindingCommentIds: number[];
 }
 
 export interface FindingsHashEntry {

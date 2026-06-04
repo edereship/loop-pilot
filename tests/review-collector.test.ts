@@ -65,6 +65,19 @@ describe("filterAndParseComments", () => {
     expect(findings[2].title).toBe("Style issue");
   });
 
+  it("carries the source comment id on each finding (TY-360)", () => {
+    const comments: RawReviewComment[] = [
+      makeComment({ id: 7001, body: "P0 Null dereference\n\nFix the null check." }),
+      makeComment({ id: 7002, body: "P1 Missing type annotation\n\nAdd return type." }),
+    ];
+
+    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
+
+    // commentId == the REST databaseId so post-fix can map the finding to its
+    // GraphQL review thread and resolve it after a fix.
+    expect(findings.map((f) => f.commentId)).toEqual([7001, 7002]);
+  });
+
   it("filters out comments from non-Codex bot users", () => {
     const comments: RawReviewComment[] = [
       makeComment({ id: 1, body: "P0 Critical bug", user: { login: "human-reviewer" } }),

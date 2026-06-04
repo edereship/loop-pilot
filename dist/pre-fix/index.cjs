@@ -19765,6 +19765,7 @@ var VALID_STOP_REASONS = new Set(Object.keys(STOP_REASON_LABELS));
 var LAST_CLAUDE_COMMIT_SHA_MAX_CHARS = 64;
 var FINDINGS_HASH_MAX_CHARS = 64;
 var TIMESTAMP_MAX_CHARS = 64;
+var MAX_FINDING_COMMENT_IDS = 500;
 var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
 var TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 function getTrustedStateCommentAuthors(env = process.env) {
@@ -19819,6 +19820,15 @@ function validateState(obj) {
   s.fixingStartedAt.length > TIMESTAMP_MAX_CHARS)) {
     return false;
   }
+  if ("currentIterationFindingCommentIds" in s) {
+    const ids = s.currentIterationFindingCommentIds;
+    if (!Array.isArray(ids) || ids.length > MAX_FINDING_COMMENT_IDS)
+      return false;
+    for (const id of ids) {
+      if (!Number.isSafeInteger(id) || id < 0)
+        return false;
+    }
+  }
   for (const entry2 of s.findingsHashHistory) {
     if (typeof entry2 !== "object" || entry2 === null)
       return false;
@@ -19845,7 +19855,8 @@ function createInitialState() {
     status: "initialized",
     stopReason: null,
     previousCheckFailure: null,
-    fixingStartedAt: null
+    fixingStartedAt: null,
+    currentIterationFindingCommentIds: []
   };
 }
 var PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS = 4e3;
@@ -19896,7 +19907,11 @@ function deserializeState(commentBody) {
       // TY-301 #2: legacy state comments lack this field. Normalize to `null`
       // so the dedup check in pre-fix falls back to id-only comparison
       // (preserving the pre-TY-301 behaviour for in-flight PRs).
-      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null
+      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null,
+      // TY-360: legacy state comments lack this field. Normalize to `[]` so
+      // post-fix can rely on it being a real array (no resolve targets) instead
+      // of guarding for undefined.
+      currentIterationFindingCommentIds: parsed.currentIterationFindingCommentIds ?? []
     };
     return normalized;
   } catch {
@@ -20844,6 +20859,10 @@ function filterAndParseComments(comments, botLogin, lastReceivedAt, threshold) {
     }
     findings.push({
       severity: parsed.severity,
+      // TY-360: carry the REST comment id so post-fix can map this in-scope
+      // finding to its GraphQL review thread (databaseId match) and resolve it
+      // after a successful repair.
+      commentId: comment.id,
       path: comment.path,
       // TY-280: preserve null so the prompt can format file-level / outdated
       // findings as `(file-level)` instead of `path:0` (which would imply a
@@ -22167,7 +22186,13 @@ async function runPreFix(config, deps = defaultDeps3) {
     // value (`…00.123Z`) sorts before a same-second `createdAt` (`…00Z`, since
     // 'Z' > '.'), which would re-process an already-seen comment after a
     // /restart-review that preserves this timestamp.
-    lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString().replace(/\.\d{3}Z$/, "Z")
+    lastCodexReviewReceivedAt: latestCommentTime || deps.now().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    // TY-360: clear any in-scope finding ids carried in from the previous
+    // iteration's `fixing` claim. Only the `fixingState` write below (Phase 3)
+    // repopulates this with the current iteration's findings; every terminal
+    // write derived from this base (done / loop_detected / max_iterations / …)
+    // keeps it empty so post-fix never resolves threads for a non-fixing state.
+    currentIterationFindingCommentIds: []
   };
   if (findings.length === 0) {
     deps.info("[pre-fix] No findings. Marking done.");
@@ -22271,7 +22296,13 @@ async function runPreFix(config, deps = defaultDeps3) {
     // TY-273 #B4: record the actual fixing entry timestamp so the
     // stale-detector in subsequent pre-fix runs can distinguish a genuinely
     // hung `fixing` from one that legitimately resumed via /restart-review.
-    fixingStartedAt: deps.now().toISOString()
+    fixingStartedAt: deps.now().toISOString(),
+    // TY-360: persist the in-scope finding comment ids forwarded to
+    // claude-code-action so post-fix can resolve the matching Codex review
+    // threads after a successful repair. `findings` is the severity-filtered
+    // in-scope set (below-threshold / unparseable were already excluded by
+    // `filterAndParseComments`), so only fixable threads are ever targeted.
+    currentIterationFindingCommentIds: findings.map((f) => f.commentId)
   };
   if (!await updateStateCommentLocked(fixingState, "Could not claim the hidden comment state for fixing."))
     return;

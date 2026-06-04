@@ -359,6 +359,62 @@ describe("deserializeState", () => {
     expect(restored!.fixingStartedAt).toBe(value);
   });
 
+  it("round-trips currentIterationFindingCommentIds (TY-360)", () => {
+    const ids = [101, 202, 303];
+    const restored = deserializeState(
+      serializeState(
+        makeState({ status: "fixing", currentIterationFindingCommentIds: ids }),
+      ),
+    );
+    expect(restored).not.toBeNull();
+    expect(restored!.currentIterationFindingCommentIds).toEqual(ids);
+  });
+
+  it("normalizes a legacy state without currentIterationFindingCommentIds to [] (TY-360)", () => {
+    // Older state comments predate the field; deserialize must backfill [] so
+    // post-fix can rely on it being an array (no resolve targets).
+    const body = serializeState(makeState()).replace(
+      /,?\n\s*"currentIterationFindingCommentIds":\s*\[\]/,
+      "",
+    );
+    expect(body).not.toContain("currentIterationFindingCommentIds");
+    const restored = deserializeState(body);
+    expect(restored).not.toBeNull();
+    expect(restored!.currentIterationFindingCommentIds).toEqual([]);
+  });
+
+  it("rejects currentIterationFindingCommentIds over the length cap (TY-360)", () => {
+    // The array is the one variable-length field the serialize floor does not
+    // trim, so an oversized array must be rejected to protect the floor.
+    const huge = Array.from({ length: 501 }, (_, i) => i);
+    const restored = deserializeState(
+      serializeState(
+        makeState({ status: "fixing", currentIterationFindingCommentIds: huge }),
+      ),
+    );
+    expect(restored).toBeNull();
+  });
+
+  it("accepts currentIterationFindingCommentIds at the 500-id cap boundary (TY-360)", () => {
+    const atCap = Array.from({ length: 500 }, (_, i) => i + 1);
+    const restored = deserializeState(
+      serializeState(
+        makeState({ status: "fixing", currentIterationFindingCommentIds: atCap }),
+      ),
+    );
+    expect(restored).not.toBeNull();
+    expect(restored!.currentIterationFindingCommentIds).toHaveLength(500);
+  });
+
+  it("rejects non-integer / negative entries in currentIterationFindingCommentIds (TY-360)", () => {
+    for (const bad of ["-1", "1.5", '"101"', "null"]) {
+      const body = serializeState(
+        makeState({ status: "fixing", currentIterationFindingCommentIds: [101] }),
+      ).replace(/"currentIterationFindingCommentIds":\s*\[\s*101\s*\]/, `"currentIterationFindingCommentIds": [${bad}]`);
+      expect(deserializeState(body)).toBeNull();
+    }
+  });
+
   it("rejects a stopReason outside the StopReason union (TY-339 #1)", () => {
     // Symmetric with the lastProcessedTriggerSource / modelTier enum checks:
     // a forged state cannot smuggle in an arbitrary stopReason string.

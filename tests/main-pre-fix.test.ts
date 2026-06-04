@@ -331,6 +331,9 @@ describe("runPreFix", () => {
         status: "fixing",
         // mock now() returns 2026-05-14T12:00:00Z.
         fixingStartedAt: "2026-05-14T12:00:00.000Z",
+        // TY-360: the in-scope finding's source comment id is persisted so
+        // post-fix can resolve the matching review thread after the repair.
+        currentIterationFindingCommentIds: [300],
       }),
       "github-token",
       expect.any(Object),

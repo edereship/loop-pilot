@@ -56,6 +56,17 @@ const FINDINGS_HASH_MAX_CHARS = 64;
 // (→ `state_corrupted`, symmetric with the SHA / hash fields).
 const TIMESTAMP_MAX_CHARS = 64;
 
+// TY-360: `currentIterationFindingCommentIds` is the one variable-length array
+// the `serializeState` step-3 floor does not trim, so it must be length-bounded
+// for the "body fits under MAX_SERIALIZED_BYTES" guarantee to hold — same
+// reasoning as the string-length caps above. In-scope findings per iteration
+// are realistically a handful (Codex rarely emits dozens of inline comments and
+// the repair prompt itself caps embedding at MAX_FINDINGS_PER_REQUEST = 30); a
+// numeric comment id serializes to ~12 chars, so 500 ids (~6 KB) stays far under
+// the floor while only a tampered / pathological state is rejected
+// (→ `state_corrupted`, symmetric with the SHA / hash / timestamp fields).
+const MAX_FINDING_COMMENT_IDS = 500;
+
 // TY-272 #A: trust-boundary author filter for the hidden state comment.
 //
 // Public PRs let any commenter post a body that contains our hidden state
@@ -200,6 +211,18 @@ function validateState(obj: unknown): obj is ReviewState {
   ) {
     return false;
   }
+  // TY-360: currentIterationFindingCommentIds was added after the initial
+  // release; tolerate missing (legacy) and explicit shapes. When present it
+  // must be a bounded array of non-negative safe-integer comment ids so a
+  // forged state cannot smuggle in a huge array (serialize-floor DoS) or
+  // non-numeric thread targets. Missing is normalized to `[]` below.
+  if ("currentIterationFindingCommentIds" in s) {
+    const ids = s.currentIterationFindingCommentIds;
+    if (!Array.isArray(ids) || ids.length > MAX_FINDING_COMMENT_IDS) return false;
+    for (const id of ids) {
+      if (!Number.isSafeInteger(id) || (id as number) < 0) return false;
+    }
+  }
 
   // Validate each hash history entry shape
   for (const entry of s.findingsHashHistory) {
@@ -244,6 +267,7 @@ export function createInitialState(): ReviewState {
     stopReason: null,
     previousCheckFailure: null,
     fixingStartedAt: null,
+    currentIterationFindingCommentIds: [],
   };
 }
 
@@ -370,6 +394,12 @@ export function deserializeState(commentBody: string): ReviewState | null {
       lastProcessedTriggerSource:
         (parsed as { lastProcessedTriggerSource?: "comment" | "review" | null })
           .lastProcessedTriggerSource ?? null,
+      // TY-360: legacy state comments lack this field. Normalize to `[]` so
+      // post-fix can rely on it being a real array (no resolve targets) instead
+      // of guarding for undefined.
+      currentIterationFindingCommentIds:
+        (parsed as { currentIterationFindingCommentIds?: number[] })
+          .currentIterationFindingCommentIds ?? [],
     };
     return normalized;
   } catch {

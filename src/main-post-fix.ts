@@ -44,6 +44,7 @@ import {
   postTestFailureComment as defaultPostTestFailureComment,
 } from "./comment-poster.js";
 import { registerAllSecrets } from "./secrets.js";
+import { resolveFindingThreads as defaultResolveFindingThreads } from "./review-thread-resolver.js";
 import { ensureCodexAck } from "./codex-ack.js";
 import type { CodexAckParams, CodexAckResult } from "./codex-ack.js";
 import type { ReviewState, StopReason } from "./types.js";
@@ -89,6 +90,13 @@ export interface PostFixDeps {
   postCodexReviewRequest: typeof defaultPostCodexReviewRequest;
   // TY-334: injected so tests can drive ACK / no-ACK without real polling.
   ensureCodexAck: (params: CodexAckParams) => Promise<CodexAckResult>;
+  /**
+   * TY-360: resolves the Codex review threads for the iteration's in-scope
+   * findings after a successful repair commit/push. Best-effort — the impl
+   * never throws — and injected so tests can assert it is called (and that a
+   * failure does not stop the loop) without hitting the GraphQL API.
+   */
+  resolveFindingThreads: typeof defaultResolveFindingThreads;
   postStopComment: typeof defaultPostStopComment;
   postTestFailureComment: typeof defaultPostTestFailureComment;
   /**
@@ -189,6 +197,7 @@ const defaultDeps: PostFixDeps = {
   postClaudeCodeActionFixSummary: defaultPostClaudeCodeActionFixSummary,
   postCodexReviewRequest: defaultPostCodexReviewRequest,
   ensureCodexAck: (params) => ensureCodexAck(params),
+  resolveFindingThreads: defaultResolveFindingThreads,
   postStopComment: defaultPostStopComment,
   postTestFailureComment: defaultPostTestFailureComment,
   postTerminalNotification: defaultPostTerminalNotification,
@@ -736,6 +745,10 @@ export async function runPostFix(
       previousCheckFailure,
       // TY-273 #B4: leaving stale entry would mislead the next pre-fix run.
       fixingStartedAt: null,
+      // TY-360: no commit was pushed on this path, so the iteration's in-scope
+      // findings were not fixed — clear the ids so a soft /restart-review does
+      // not resolve threads for findings that were never repaired.
+      currentIterationFindingCommentIds: [],
     };
     if (
       !(await updateStateCommentLocked(
@@ -1622,6 +1635,12 @@ export async function runPostFix(
     previousCheckFailure: null,
     // TY-273 #B4: see no-op path and failureExit.
     fixingStartedAt: null,
+    // TY-360: the iteration's findings are fixed + committed; clear the ids
+    // from the persisted state. The resolve pass below reads the original
+    // `state.currentIterationFindingCommentIds` (captured at post-fix entry),
+    // so clearing here only prevents the next iteration's pre-fix / post-fix
+    // from re-seeing a stale set.
+    currentIterationFindingCommentIds: [],
   };
   try {
     if (
@@ -1682,6 +1701,32 @@ export async function runPostFix(
       );
     }
     return;
+  }
+
+  // ─── Resolve fixed Codex review threads (TY-360 / A案) ───────────────────
+  // CHECK_COMMAND succeeded and the repair commit is committed + pushed, so the
+  // iteration's in-scope findings are considered fixed. Resolve the matching
+  // Codex review threads so the PR's "Unresolved conversations" reflects the
+  // repair. Best-effort: `resolveFindingThreads` never throws, but we still
+  // wrap it so even a programming error here cannot break the `@codex review`
+  // re-request / state transition below. Uses `config.githubToken`
+  // (`pull-requests:write`), NOT the push token. Runs before the re-request so
+  // the threads are already resolved when the next Codex review arrives. Reads
+  // the original `state` ids (waitingState cleared them).
+  try {
+    await deps.resolveFindingThreads({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      prNumber: config.prNumber,
+      commentIds: state.currentIterationFindingCommentIds,
+      token: config.githubToken,
+    });
+  } catch (resolveError) {
+    deps.warning(
+      `[post-fix] Unexpected error resolving fixed review threads (continuing): ${
+        resolveError instanceof Error ? resolveError.message : String(resolveError)
+      }`,
+    );
   }
 
   deps.info("[post-fix] Posting @codex review request...");
