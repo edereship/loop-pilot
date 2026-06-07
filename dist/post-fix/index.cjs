@@ -21128,7 +21128,7 @@ var REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cur
         nodes{
           id
           isResolved
-          comments(first:50){nodes{databaseId}}
+          comments(first:50){pageInfo{hasNextPage} nodes{databaseId}}
         }
       }
     }
@@ -21146,12 +21146,18 @@ function parseReviewThreadsResponse(stdout) {
   const malformed = threads === void 0 || threads === null;
   const rawNodes = Array.isArray(threads?.nodes) ? threads.nodes : [];
   const nodes = [];
+  let malformedNodeCount = 0;
+  let truncatedThreadCount = 0;
   for (const node of rawNodes) {
-    if (typeof node !== "object" || node === null)
+    if (typeof node !== "object" || node === null) {
+      malformedNodeCount += 1;
       continue;
+    }
     const n = node;
-    if (typeof n.id !== "string")
+    if (typeof n.id !== "string") {
+      malformedNodeCount += 1;
       continue;
+    }
     const commentNodes = Array.isArray(n.comments?.nodes) ? n.comments.nodes : [];
     const commentDatabaseIds = [];
     for (const c of commentNodes) {
@@ -21159,6 +21165,8 @@ function parseReviewThreadsResponse(stdout) {
       if (typeof dbId === "number")
         commentDatabaseIds.push(dbId);
     }
+    if (n.comments?.pageInfo?.hasNextPage === true)
+      truncatedThreadCount += 1;
     nodes.push({
       id: n.id,
       isResolved: n.isResolved === true,
@@ -21168,12 +21176,21 @@ function parseReviewThreadsResponse(stdout) {
   const hasNextPage = threads?.pageInfo?.hasNextPage === true;
   const endCursorRaw = threads?.pageInfo?.endCursor;
   const endCursor = typeof endCursorRaw === "string" ? endCursorRaw : null;
-  return { nodes, hasNextPage, endCursor, malformed };
+  return {
+    nodes,
+    hasNextPage,
+    endCursor,
+    malformed,
+    malformedNodeCount,
+    truncatedThreadCount
+  };
 }
 async function fetchReviewThreads(owner, repo, prNumber, token, warn = (m) => warning(m)) {
   const all = [];
   let cursor = null;
   let moreRemaining = false;
+  let malformedNodes = 0;
+  let truncatedThreads = 0;
   for (let page = 0; page < MAX_REVIEW_THREAD_PAGES; page += 1) {
     const args = [
       "api",
@@ -21197,6 +21214,8 @@ async function fetchReviewThreads(owner, repo, prNumber, token, warn = (m) => wa
       break;
     }
     all.push(...pageResult.nodes);
+    malformedNodes += pageResult.malformedNodeCount;
+    truncatedThreads += pageResult.truncatedThreadCount;
     if (!pageResult.hasNextPage || pageResult.endCursor === null)
       break;
     cursor = pageResult.endCursor;
@@ -21204,6 +21223,12 @@ async function fetchReviewThreads(owner, repo, prNumber, token, warn = (m) => wa
   }
   if (moreRemaining) {
     warn(`[review-thread-resolver] Hit MAX_REVIEW_THREAD_PAGES (${MAX_REVIEW_THREAD_PAGES}) for ${owner}/${repo}#${prNumber} with more pages remaining; the resolved set may be incomplete.`);
+  }
+  if (malformedNodes > 0) {
+    warn(`[review-thread-resolver] Dropped ${malformedNodes} review-thread node(s) lacking a usable id for ${owner}/${repo}#${prNumber}; their findings cannot be resolved and will count as unmatched. The GraphQL node shape may have changed.`);
+  }
+  if (truncatedThreads > 0) {
+    warn(`[review-thread-resolver] ${truncatedThreads} review thread(s) on ${owner}/${repo}#${prNumber} have more than 50 comments; a finding anchored past the 50th comment will not match and will count as unmatched.`);
   }
   return all;
 }
@@ -21259,7 +21284,7 @@ async function resolveFindingThreads(params, deps = defaultDeps3) {
   try {
     threads = await deps.fetchReviewThreads(params.owner, params.repo, params.prNumber, params.token);
   } catch (error2) {
-    deps.warning(`[review-thread-resolver] Could not fetch review threads to resolve fixed findings: ${error2 instanceof Error ? error2.message : String(error2)}. Continuing \u2014 threads will remain open.`);
+    deps.warning(`[review-thread-resolver] Could not fetch review threads to resolve fixed findings: ${error2 instanceof Error ? error2.message : String(error2)}. Continuing \u2014 threads will remain open. If this persists across runs (not a transient 5xx), check that github-token still has 'pull-requests:write' on this repo.`);
     return empty;
   }
   const { toResolve, alreadyResolved, unmatched } = selectThreadsToResolve(threads, params.commentIds);

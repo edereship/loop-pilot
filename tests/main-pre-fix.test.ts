@@ -390,14 +390,23 @@ describe("runPreFix", () => {
 
     await runPreFix(baseConfig, deps);
 
-    const fixingCall = deps.updateStateComment.mock.calls.find(
-      (c) => (c[3] as Partial<ReviewState> | undefined)?.status === "fixing",
-    );
+    const fixingCall = vi
+      .mocked(deps.updateStateComment)
+      .mock.calls.find(
+        (c) => (c[3] as Partial<ReviewState> | undefined)?.status === "fixing",
+      );
     expect(fixingCall).toBeDefined();
     const ids = (fixingCall![3] as ReviewState).currentIterationFindingCommentIds;
     expect(ids).toHaveLength(MAX_FINDINGS_PER_REQUEST);
     // The dropped (lowest-priority, last-sorted) finding's id must be excluded.
     expect(ids).not.toContain(1000 + MAX_FINDINGS_PER_REQUEST);
+    // The persisted ids must be exactly the embedded top-MAX set (ids 1000..),
+    // not merely "the right length minus the dropped id" — pin the membership so
+    // a future reorder of selectEmbeddedFindings cannot silently persist a
+    // different subset than the one forwarded for repair.
+    expect([...ids].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: MAX_FINDINGS_PER_REQUEST }, (_, i) => 1000 + i),
+    );
   });
 
   it("does not double-process the same trigger comment", async () => {
@@ -1476,6 +1485,9 @@ describe("runPreFix", () => {
           state: makeState({
             status: "waiting_codex",
             fixingStartedAt: STALE,
+            // TY-360: carried over from a prior iteration; the done transition
+            // must clear it so post-fix never resolves stale ids.
+            currentIterationFindingCommentIds: [9001],
           }),
         },
         [],
@@ -1491,6 +1503,7 @@ describe("runPreFix", () => {
           status: "done",
           stopReason: "no_findings",
           fixingStartedAt: null,
+          currentIterationFindingCommentIds: [],
         }),
         "github-token",
         expect.any(Object),
@@ -1611,6 +1624,9 @@ describe("runPreFix", () => {
         state: makeState({
           status: "waiting_codex",
           fixingStartedAt: STALE,
+          // TY-360: this branch spreads `...state`, so it must clear the ids
+          // explicitly (it cannot inherit the cleared `updatedStateBase`).
+          currentIterationFindingCommentIds: [9001],
         }),
       });
 
@@ -1631,6 +1647,7 @@ describe("runPreFix", () => {
           status: "stopped",
           stopReason: "codex_usage_limit",
           fixingStartedAt: null,
+          currentIterationFindingCommentIds: [],
         }),
         "github-token",
         expect.any(Object),

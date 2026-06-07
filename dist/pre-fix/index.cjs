@@ -22139,7 +22139,15 @@ async function runPreFix(config, deps = defaultDeps3) {
       // happy-path input here is always `waiting_codex` with the field already
       // null, but a hand-edited / legacy state could carry a stale timestamp
       // that the spread would otherwise preserve into a `stopped` state.
-      fixingStartedAt: null
+      fixingStartedAt: null,
+      // TY-360: this branch spreads `...state` (it runs before
+      // `updatedStateBase` is built), so unlike the done / max_iterations /
+      // loop_detected paths it does not inherit the cleared array. Clear it
+      // explicitly with the same defense-in-depth reasoning as `fixingStartedAt`
+      // above: a hand-edited / legacy `waiting_codex` state carrying stale ids
+      // must not leak them into a `stopped` state where a soft /restart-review
+      // could later resolve threads for findings this run never repaired.
+      currentIterationFindingCommentIds: []
     };
     if (!await updateStateCommentLocked(stoppedState, "Could not stop after detecting Codex usage limit."))
       return;

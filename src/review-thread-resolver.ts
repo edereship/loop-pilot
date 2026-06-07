@@ -46,7 +46,7 @@ const REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$c
         nodes{
           id
           isResolved
-          comments(first:50){nodes{databaseId}}
+          comments(first:50){pageInfo{hasNextPage} nodes{databaseId}}
         }
       }
     }
@@ -78,6 +78,22 @@ interface ReviewThreadsPage {
    * instead of silently treating a permission/shape regression as "no threads".
    */
   malformed: boolean;
+  /**
+   * Count of raw thread nodes dropped because they lacked a string `id` (or
+   * were not objects). Such a node cannot be resolved, so the finding it
+   * belongs to would otherwise surface only as `unmatched` — indistinguishable
+   * from a finding that legitimately has no thread. Surfaced separately so a
+   * structural API regression is diagnosable rather than hidden in `unmatched`.
+   */
+  malformedNodeCount: number;
+  /**
+   * Count of threads whose `comments(first:50)` page was truncated (the thread
+   * has more than 50 comments). If the matching finding comment falls past the
+   * 50th, its `databaseId` is absent from this page and the finding shows up as
+   * `unmatched` despite a real thread existing. Surfaced separately so that
+   * silent truncation is distinguishable from a genuine no-thread `unmatched`.
+   */
+  truncatedThreadCount: number;
 }
 
 function parseReviewThreadsResponse(stdout: string): ReviewThreadsPage {
@@ -98,20 +114,29 @@ function parseReviewThreadsResponse(stdout: string): ReviewThreadsPage {
   const malformed = threads === undefined || threads === null;
   const rawNodes = Array.isArray(threads?.nodes) ? threads!.nodes : [];
   const nodes: ReviewThread[] = [];
+  let malformedNodeCount = 0;
+  let truncatedThreadCount = 0;
   for (const node of rawNodes) {
-    if (typeof node !== "object" || node === null) continue;
+    if (typeof node !== "object" || node === null) {
+      malformedNodeCount += 1;
+      continue;
+    }
     const n = node as {
       id?: unknown;
       isResolved?: unknown;
-      comments?: { nodes?: unknown };
+      comments?: { pageInfo?: { hasNextPage?: unknown }; nodes?: unknown };
     };
-    if (typeof n.id !== "string") continue;
+    if (typeof n.id !== "string") {
+      malformedNodeCount += 1;
+      continue;
+    }
     const commentNodes = Array.isArray(n.comments?.nodes) ? n.comments!.nodes : [];
     const commentDatabaseIds: number[] = [];
     for (const c of commentNodes) {
       const dbId = (c as { databaseId?: unknown })?.databaseId;
       if (typeof dbId === "number") commentDatabaseIds.push(dbId);
     }
+    if (n.comments?.pageInfo?.hasNextPage === true) truncatedThreadCount += 1;
     nodes.push({
       id: n.id,
       isResolved: n.isResolved === true,
@@ -122,7 +147,14 @@ function parseReviewThreadsResponse(stdout: string): ReviewThreadsPage {
   const hasNextPage = threads?.pageInfo?.hasNextPage === true;
   const endCursorRaw = threads?.pageInfo?.endCursor;
   const endCursor = typeof endCursorRaw === "string" ? endCursorRaw : null;
-  return { nodes, hasNextPage, endCursor, malformed };
+  return {
+    nodes,
+    hasNextPage,
+    endCursor,
+    malformed,
+    malformedNodeCount,
+    truncatedThreadCount,
+  };
 }
 
 /**
@@ -142,6 +174,8 @@ export async function fetchReviewThreads(
   const all: ReviewThread[] = [];
   let cursor: string | null = null;
   let moreRemaining = false;
+  let malformedNodes = 0;
+  let truncatedThreads = 0;
   for (let page = 0; page < MAX_REVIEW_THREAD_PAGES; page += 1) {
     const args = [
       "api",
@@ -175,6 +209,8 @@ export async function fetchReviewThreads(
       break;
     }
     all.push(...pageResult.nodes);
+    malformedNodes += pageResult.malformedNodeCount;
+    truncatedThreads += pageResult.truncatedThreadCount;
     if (!pageResult.hasNextPage || pageResult.endCursor === null) break;
     cursor = pageResult.endCursor;
     // Set only when the loop is about to exit via the `page` counter rather
@@ -188,6 +224,23 @@ export async function fetchReviewThreads(
     warn(
       `[review-thread-resolver] Hit MAX_REVIEW_THREAD_PAGES (${MAX_REVIEW_THREAD_PAGES}) for ${owner}/${repo}#${prNumber} ` +
         `with more pages remaining; the resolved set may be incomplete.`,
+    );
+  }
+  // Surface the two silent-drop causes separately from the `unmatched` counter
+  // so a non-zero `unmatched` can be attributed: a malformed node (structural
+  // API regression — finding has a thread we could not read) and comment-page
+  // truncation (>50 comments — the matching databaseId may be off-page) both
+  // otherwise masquerade as a benign "finding has no thread".
+  if (malformedNodes > 0) {
+    warn(
+      `[review-thread-resolver] Dropped ${malformedNodes} review-thread node(s) lacking a usable id for ${owner}/${repo}#${prNumber}; ` +
+        `their findings cannot be resolved and will count as unmatched. The GraphQL node shape may have changed.`,
+    );
+  }
+  if (truncatedThreads > 0) {
+    warn(
+      `[review-thread-resolver] ${truncatedThreads} review thread(s) on ${owner}/${repo}#${prNumber} have more than 50 comments; ` +
+        `a finding anchored past the 50th comment will not match and will count as unmatched.`,
     );
   }
   return all;
@@ -305,7 +358,8 @@ export async function resolveFindingThreads(
     deps.warning(
       `[review-thread-resolver] Could not fetch review threads to resolve fixed findings: ${
         error instanceof Error ? error.message : String(error)
-      }. Continuing — threads will remain open.`,
+      }. Continuing — threads will remain open. If this persists across runs (not a transient 5xx), ` +
+        `check that github-token still has 'pull-requests:write' on this repo.`,
     );
     return empty;
   }

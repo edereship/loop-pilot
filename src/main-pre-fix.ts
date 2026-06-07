@@ -531,6 +531,14 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       // null, but a hand-edited / legacy state could carry a stale timestamp
       // that the spread would otherwise preserve into a `stopped` state.
       fixingStartedAt: null,
+      // TY-360: this branch spreads `...state` (it runs before
+      // `updatedStateBase` is built), so unlike the done / max_iterations /
+      // loop_detected paths it does not inherit the cleared array. Clear it
+      // explicitly with the same defense-in-depth reasoning as `fixingStartedAt`
+      // above: a hand-edited / legacy `waiting_codex` state carrying stale ids
+      // must not leak them into a `stopped` state where a soft /restart-review
+      // could later resolve threads for findings this run never repaired.
+      currentIterationFindingCommentIds: [],
     };
     if (
       !(await updateStateCommentLocked(

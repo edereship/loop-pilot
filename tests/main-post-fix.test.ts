@@ -343,6 +343,34 @@ describe("runPostFix", () => {
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
   });
 
+  it("TY-360: clears currentIterationFindingCommentIds on the failureExit stop path (no commit pushed)", async () => {
+    // The failureExit clear at main-post-fix.ts is load-bearing:
+    // `rollbackFixingClaim` does NOT touch the comment ids, so without the
+    // explicit `[]` a stop reached without a pushed commit would carry the
+    // in-scope ids into the stopped state. A soft /restart-review would then
+    // resolve threads for findings this iteration never actually repaired.
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState({ currentIterationFindingCommentIds: [9001, 9002] }),
+      },
+      { hasStagedChanges: () => false },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3] as ReviewState;
+    expect(lastState.status).toBe("stopped");
+    expect(lastState.stopReason).toBe("action_no_op");
+    expect(lastState.currentIterationFindingCommentIds).toEqual([]);
+    // No commit was pushed, so the resolve pass must never run on this path.
+    expect(deps.resolveFindingThreads).not.toHaveBeenCalled();
+  });
+
   it("TY-286 #A: does NOT emit state_conflict 🛑 when the Phase 4 2nd write conflicts; warns instead", async () => {
     // The 1st write (waiting_codex) succeeded and `@codex review` was
     // posted, so the loop is already healthy. A 412 on the 2nd write (which

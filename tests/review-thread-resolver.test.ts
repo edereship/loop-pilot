@@ -348,6 +348,96 @@ describe("fetchReviewThreads (GraphQL wiring)", () => {
     expect(threads).toHaveLength(50);
     expect(warnings.join("\n")).toContain("MAX_REVIEW_THREAD_PAGES");
   });
+
+  it("stops after one page when hasNextPage is true but endCursor is null (no cap warning)", async () => {
+    // A malformed page that claims another page yet supplies no cursor must
+    // break cleanly rather than re-fetch with a null cursor (which would refetch
+    // page 1 forever until the cap). It is NOT the cap-truncation case, so no
+    // MAX_REVIEW_THREAD_PAGES warning should fire.
+    mockedGhApi.mockResolvedValue(
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: true, endCursor: null },
+                nodes: [
+                  { id: "PRRT_1", isResolved: false, comments: { nodes: [{ databaseId: 101 }] } },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    );
+    const warnings: string[] = [];
+    const threads = await fetchReviewThreads("o", "r", 9, "tok", (m) =>
+      warnings.push(m),
+    );
+    expect(mockedGhApi).toHaveBeenCalledTimes(1);
+    expect(threads).toEqual([
+      { id: "PRRT_1", isResolved: false, commentDatabaseIds: [101] },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("warns (separately from unmatched) when a thread node lacks a usable id", async () => {
+    mockedGhApi.mockResolvedValueOnce(
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  { id: "PRRT_1", isResolved: false, comments: { nodes: [{ databaseId: 101 }] } },
+                  // No string `id` — cannot be resolved; must be dropped + warned.
+                  { isResolved: false, comments: { nodes: [{ databaseId: 202 }] } },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    );
+    const warnings: string[] = [];
+    const threads = await fetchReviewThreads("o", "r", 9, "tok", (m) =>
+      warnings.push(m),
+    );
+    expect(threads).toEqual([
+      { id: "PRRT_1", isResolved: false, commentDatabaseIds: [101] },
+    ]);
+    expect(warnings.join("\n")).toContain("lacking a usable id");
+  });
+
+  it("warns when a thread's comments page is truncated (>50 comments)", async () => {
+    mockedGhApi.mockResolvedValueOnce(
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  {
+                    id: "PRRT_1",
+                    isResolved: false,
+                    comments: {
+                      pageInfo: { hasNextPage: true },
+                      nodes: [{ databaseId: 101 }],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    );
+    const warnings: string[] = [];
+    await fetchReviewThreads("o", "r", 9, "tok", (m) => warnings.push(m));
+    expect(warnings.join("\n")).toContain("more than 50 comments");
+  });
 });
 
 describe("resolveReviewThread (GraphQL wiring)", () => {
