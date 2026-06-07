@@ -152,9 +152,8 @@ export function filterAndParseComments(
     }
     findings.push({
       severity: parsed.severity,
-      // TY-360: carry the REST comment id so post-fix can map this in-scope
-      // finding to its GraphQL review thread (databaseId match) and resolve it
-      // after a successful repair.
+      // TY-360: carry the comment id (see `CommentId` in types.ts) so post-fix
+      // can map this in-scope finding to its review thread and resolve it.
       commentId: comment.id,
       path: comment.path,
       // TY-280: preserve null so the prompt can format file-level / outdated

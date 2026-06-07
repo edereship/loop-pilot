@@ -19604,6 +19604,12 @@ function applyFindingCaps(findings) {
     }
   };
 }
+function sortByPriority(findings) {
+  return [...findings].sort(compareFindings);
+}
+function selectEmbeddedFindings(findings) {
+  return sortByPriority(findings).slice(0, MAX_FINDINGS_PER_REQUEST);
+}
 var INSTRUCTION_LINES = [
   "1. Each Codex finding's `path` and `line` mark an investigation entry point, NOT the bounded scope of the fix. Explore related files, callers, type definitions, existing tests, and configuration as needed to produce a consistent repair.",
   "2. Treat existing tests as the specification. If a test captures the intended behavior, do not weaken or rewrite it to make a faulty fix pass; fix the production code instead.",
@@ -19615,7 +19621,7 @@ var INSTRUCTION_LINES = [
   "8. After your edits, the repository must be in a state where the configured CHECK_COMMAND succeeds. The workflow will run the final CHECK_COMMAND verification regardless of your own checks, so leave the tree in a verifiable state."
 ];
 function buildClaudeCodeRepairRequest(input2) {
-  const sorted = input2.findings.map(toRepairFinding).sort(compareFindings);
+  const sorted = sortByPriority(input2.findings).map(toRepairFinding);
   const { kept: findings, stats: findingsTruncated } = applyFindingCaps(sorted);
   const previousCheckFailure = input2.previousCheckFailure == null ? null : truncatePreviousCheckFailure(input2.previousCheckFailure);
   return {
@@ -19865,24 +19871,28 @@ function serializeState(state) {
     const json = JSON.stringify(s, null, 2);
     return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
   };
-  const step1 = {
+  const boundedState = state.currentIterationFindingCommentIds.length > MAX_FINDING_COMMENT_IDS ? {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
+    currentIterationFindingCommentIds: state.currentIterationFindingCommentIds.slice(0, MAX_FINDING_COMMENT_IDS)
+  } : state;
+  const step1 = {
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
   const body1 = wrap(step1);
   if (body1.length <= MAX_SERIALIZED_BYTES)
     return body1;
   const step2 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
-    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
+    previousCheckFailure: boundedState.previousCheckFailure ? truncatePreviousCheckFailure(boundedState.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
   const body2 = wrap(step2);
   if (body2.length <= MAX_SERIALIZED_BYTES)
     return body2;
   const step3 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
     previousCheckFailure: null
   };
   return wrap(step3);
@@ -20859,9 +20869,8 @@ function filterAndParseComments(comments, botLogin, lastReceivedAt, threshold) {
     }
     findings.push({
       severity: parsed.severity,
-      // TY-360: carry the REST comment id so post-fix can map this in-scope
-      // finding to its GraphQL review thread (databaseId match) and resolve it
-      // after a successful repair.
+      // TY-360: carry the comment id (see `CommentId` in types.ts) so post-fix
+      // can map this in-scope finding to its review thread and resolve it.
       commentId: comment.id,
       path: comment.path,
       // TY-280: preserve null so the prompt can format file-level / outdated
@@ -22086,7 +22095,11 @@ async function runPreFix(config, deps = defaultDeps3) {
       ...rollbackFixingClaim(state),
       status: "stopped",
       stopReason: "workflow_crashed",
-      fixingStartedAt: null
+      fixingStartedAt: null,
+      // TY-360: this is a terminal transition; clear the in-scope ids so a soft
+      // /restart-review does not later resolve threads for findings the crashed
+      // iteration never actually repaired.
+      currentIterationFindingCommentIds: []
     };
     if (!await updateStateCommentLocked(recoveredState, "Could not recover stale fixing state."))
       return;
@@ -22297,12 +22310,16 @@ async function runPreFix(config, deps = defaultDeps3) {
     // stale-detector in subsequent pre-fix runs can distinguish a genuinely
     // hung `fixing` from one that legitimately resumed via /restart-review.
     fixingStartedAt: deps.now().toISOString(),
-    // TY-360: persist the in-scope finding comment ids forwarded to
-    // claude-code-action so post-fix can resolve the matching Codex review
-    // threads after a successful repair. `findings` is the severity-filtered
-    // in-scope set (below-threshold / unparseable were already excluded by
-    // `filterAndParseComments`), so only fixable threads are ever targeted.
-    currentIterationFindingCommentIds: findings.map((f) => f.commentId)
+    // TY-360: persist the comment ids of the findings actually embedded in the
+    // repair prompt so post-fix resolves only the threads sent for repair.
+    // `selectEmbeddedFindings` applies the same priority sort + count cap as the
+    // prompt builder, so when more than MAX_FINDINGS_PER_REQUEST in-scope
+    // findings exist the overflow ids are NOT stored (those threads were never
+    // forwarded to claude-code-action and must stay open). `findings` is already
+    // the severity-filtered in-scope set (below-threshold / unparseable were
+    // excluded by `filterAndParseComments`), so only fixable threads are ever
+    // targeted.
+    currentIterationFindingCommentIds: selectEmbeddedFindings(findings).map((f) => f.commentId)
   };
   if (!await updateStateCommentLocked(fixingState, "Could not claim the hidden comment state for fixing."))
     return;

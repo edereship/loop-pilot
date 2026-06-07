@@ -5,6 +5,7 @@ import {
   PREVIOUS_CHECK_FAILURE_MAX_CHARS,
   buildClaudeCodeRepairPrompt,
   buildClaudeCodeRepairRequest,
+  selectEmbeddedFindings,
   serializeClaudeCodeRepairRequest,
   truncatePreviousCheckFailure,
   type ClaudeCodeRepairRequest,
@@ -155,6 +156,49 @@ function makeP2Finding(index: number, bodyLen = 200): Finding {
     body: `body-${padded}-${"x".repeat(Math.max(0, bodyLen - 10))}`,
   };
 }
+
+describe("selectEmbeddedFindings (TY-360)", () => {
+  it("returns all findings unchanged when under the cap", () => {
+    const fs = Array.from({ length: 5 }, (_, i) => makeP2Finding(i));
+    expect(selectEmbeddedFindings(fs)).toHaveLength(5);
+  });
+
+  it("caps membership at MAX_FINDINGS_PER_REQUEST, keeping highest priority", () => {
+    // commentId encodes original index so we can assert which ids survive.
+    const fs = Array.from({ length: MAX_FINDINGS_PER_REQUEST + 5 }, (_, i) => ({
+      ...makeP2Finding(i),
+      commentId: i,
+    }));
+    const kept = selectEmbeddedFindings(fs);
+    expect(kept).toHaveLength(MAX_FINDINGS_PER_REQUEST);
+    // makeP2Finding sorts by path == index order, so the dropped 5 are the
+    // highest-indexed; the overflow commentIds must be absent.
+    const keptIds = new Set(kept.map((f) => f.commentId));
+    for (let i = MAX_FINDINGS_PER_REQUEST; i < MAX_FINDINGS_PER_REQUEST + 5; i += 1) {
+      expect(keptIds.has(i)).toBe(false);
+    }
+  });
+
+  it("selects exactly the commentIds buildClaudeCodeRepairRequest embeds", () => {
+    // Lock the invariant that the stored resolve set == the forwarded set, even
+    // for >cap inputs presented out of priority order.
+    const fs = Array.from({ length: MAX_FINDINGS_PER_REQUEST + 7 }, (_, i) => ({
+      ...makeP2Finding(MAX_FINDINGS_PER_REQUEST + 7 - i),
+      commentId: i,
+    }));
+    const embeddedPaths = new Set(
+      buildClaudeCodeRepairRequest({
+        prContext,
+        findings: fs,
+        iteration: 1,
+        maxIterations: 20,
+        checkCommand: "npm run check",
+      }).findings.map((f) => f.path),
+    );
+    const selectedPaths = new Set(selectEmbeddedFindings(fs).map((f) => f.path));
+    expect(selectedPaths).toEqual(embeddedPaths);
+  });
+});
 
 describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("embeds all findings when the count is at MAX_FINDINGS_PER_REQUEST - 1", () => {

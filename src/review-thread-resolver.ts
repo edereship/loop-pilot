@@ -1,17 +1,18 @@
 import * as core from "@actions/core";
 import { ghApi } from "./gh.js";
+import type { CommentId } from "./types.js";
 
 /**
  * A PR review thread as seen by the GraphQL API, reduced to the fields TY-360
  * needs: the node `id` (target of `resolveReviewThread`), whether it is already
- * `isResolved` (idempotency skip), and the `databaseId`s of its comments (used
- * to map a thread back to the REST comment id an in-scope finding was parsed
- * from — the two ids are the same value).
+ * `isResolved` (idempotency skip), and the `databaseId`s of its comments. Each
+ * `databaseId` is a {@link CommentId}, so it maps directly to the id an in-scope
+ * finding was parsed from.
  */
 export interface ReviewThread {
   id: string;
   isResolved: boolean;
-  commentDatabaseIds: number[];
+  commentDatabaseIds: CommentId[];
 }
 
 /** Outcome counters for a single `resolveFindingThreads` pass (observability). */
@@ -69,6 +70,14 @@ interface ReviewThreadsPage {
   nodes: ReviewThread[];
   hasNextPage: boolean;
   endCursor: string | null;
+  /**
+   * True when the `reviewThreads` container was absent from an otherwise
+   * well-formed (HTTP 200, parseable JSON) response — e.g. `data.repository`
+   * is null because the token cannot see the PR. Distinguished from a real
+   * empty PR (container present, `nodes: []`) so `fetchReviewThreads` can warn
+   * instead of silently treating a permission/shape regression as "no threads".
+   */
+  malformed: boolean;
 }
 
 function parseReviewThreadsResponse(stdout: string): ReviewThreadsPage {
@@ -86,6 +95,7 @@ function parseReviewThreadsResponse(stdout: string): ReviewThreadsPage {
     };
   }).data?.repository?.pullRequest?.reviewThreads;
 
+  const malformed = threads === undefined || threads === null;
   const rawNodes = Array.isArray(threads?.nodes) ? threads!.nodes : [];
   const nodes: ReviewThread[] = [];
   for (const node of rawNodes) {
@@ -112,7 +122,7 @@ function parseReviewThreadsResponse(stdout: string): ReviewThreadsPage {
   const hasNextPage = threads?.pageInfo?.hasNextPage === true;
   const endCursorRaw = threads?.pageInfo?.endCursor;
   const endCursor = typeof endCursorRaw === "string" ? endCursorRaw : null;
-  return { nodes, hasNextPage, endCursor };
+  return { nodes, hasNextPage, endCursor, malformed };
 }
 
 /**
@@ -127,9 +137,11 @@ export async function fetchReviewThreads(
   repo: string,
   prNumber: number,
   token: string,
+  warn: (message: string) => void = (m) => core.warning(m),
 ): Promise<ReviewThread[]> {
   const all: ReviewThread[] = [];
   let cursor: string | null = null;
+  let moreRemaining = false;
   for (let page = 0; page < MAX_REVIEW_THREAD_PAGES; page += 1) {
     const args = [
       "api",
@@ -151,9 +163,32 @@ export async function fetchReviewThreads(
     }
     const stdout = await ghApi(args, token);
     const pageResult = parseReviewThreadsResponse(stdout);
+    // A well-formed HTTP 200 whose `reviewThreads` container is missing (e.g.
+    // `data.repository` null because the token cannot see the PR) would
+    // otherwise look identical to an empty PR. Surface it so a permission /
+    // schema regression is visible rather than silently resolving nothing.
+    if (pageResult.malformed) {
+      warn(
+        `[review-thread-resolver] GraphQL returned no reviewThreads container for ${owner}/${repo}#${prNumber} ` +
+          `(page ${page}); the token may lack access to the PR or the API shape changed. Treating as zero threads.`,
+      );
+      break;
+    }
     all.push(...pageResult.nodes);
     if (!pageResult.hasNextPage || pageResult.endCursor === null) break;
     cursor = pageResult.endCursor;
+    // Set only when the loop is about to exit via the `page` counter rather
+    // than the break above — i.e. there are still more pages at the cap.
+    moreRemaining = page === MAX_REVIEW_THREAD_PAGES - 1;
+  }
+  // Hitting the page cap with more pages remaining means the returned set is
+  // truncated — exactly the malformed-`hasNextPage` / runaway-pagination case
+  // the cap guards against. Warn so it is not mistaken for a complete fetch.
+  if (moreRemaining) {
+    warn(
+      `[review-thread-resolver] Hit MAX_REVIEW_THREAD_PAGES (${MAX_REVIEW_THREAD_PAGES}) for ${owner}/${repo}#${prNumber} ` +
+        `with more pages remaining; the resolved set may be incomplete.`,
+    );
   }
   return all;
 }
@@ -186,7 +221,7 @@ export async function resolveReviewThread(
  */
 export function selectThreadsToResolve(
   threads: readonly ReviewThread[],
-  commentIds: readonly number[],
+  commentIds: readonly CommentId[],
 ): { toResolve: string[]; alreadyResolved: number; unmatched: number } {
   const wanted = new Set(commentIds);
   if (wanted.size === 0) {
@@ -194,7 +229,7 @@ export function selectThreadsToResolve(
   }
   const toResolve: string[] = [];
   let alreadyResolved = 0;
-  const matchedCommentIds = new Set<number>();
+  const matchedCommentIds = new Set<CommentId>();
   for (const thread of threads) {
     const matchedHere = thread.commentDatabaseIds.filter((id) => wanted.has(id));
     if (matchedHere.length === 0) continue;
@@ -214,7 +249,7 @@ export interface ResolveFindingThreadsParams {
   repo: string;
   prNumber: number;
   /** In-scope finding comment ids for the iteration (state.currentIterationFindingCommentIds). */
-  commentIds: readonly number[];
+  commentIds: readonly CommentId[];
   /** Token with `pull-requests:write` — the github-token, NOT the push token (TY-360). */
   token: string;
 }
@@ -297,10 +332,18 @@ export async function resolveFindingThreads(
   }
 
   if (resolved > 0 || alreadyResolved > 0 || failed > 0 || unmatched > 0) {
-    deps.info(
+    const summary =
       `[review-thread-resolver] Resolved ${resolved} review thread(s) for fixed findings ` +
-        `(already-resolved: ${alreadyResolved}, failed: ${failed}, unmatched: ${unmatched}).`,
-    );
+      `(already-resolved: ${alreadyResolved}, failed: ${failed}, unmatched: ${unmatched}).`;
+    // `failed` / `unmatched` signal a real problem: a resolve mutation was
+    // denied, or an in-scope finding had no matching thread (the id↔thread
+    // assumption broke). Surface those at warning severity so GitHub Actions
+    // highlights them; the all-success case stays at info.
+    if (failed > 0 || unmatched > 0) {
+      deps.warning(summary);
+    } else {
+      deps.info(summary);
+    }
   }
   return { resolved, alreadyResolved, failed, unmatched };
 }

@@ -383,16 +383,33 @@ describe("deserializeState", () => {
     expect(restored!.currentIterationFindingCommentIds).toEqual([]);
   });
 
-  it("rejects currentIterationFindingCommentIds over the length cap (TY-360)", () => {
-    // The array is the one variable-length field the serialize floor does not
-    // trim, so an oversized array must be rejected to protect the floor.
-    const huge = Array.from({ length: 501 }, (_, i) => i);
+  it("rejects an over-cap currentIterationFindingCommentIds on the read path (TY-360)", () => {
+    // A forged/over-cap array must be rejected on deserialize to protect the
+    // serialize floor. Inject the oversized array directly into the body so it
+    // bypasses the write-path clamp in serializeState (tested separately below).
+    const huge = Array.from({ length: 501 }, (_, i) => i).join(", ");
+    const body = serializeState(
+      makeState({ status: "fixing", currentIterationFindingCommentIds: [101] }),
+    ).replace(
+      /"currentIterationFindingCommentIds":\s*\[\s*101\s*\]/,
+      `"currentIterationFindingCommentIds": [${huge}]`,
+    );
+    expect(deserializeState(body)).toBeNull();
+  });
+
+  it("clamps an over-cap currentIterationFindingCommentIds on the write path (TY-360)", () => {
+    // In-memory states never pass through validateState, so serializeState must
+    // clamp defensively to keep the persisted body under the floor. The result
+    // must still round-trip (clamped to the cap), not produce a corrupt body.
+    const huge = Array.from({ length: 501 }, (_, i) => i + 1);
     const restored = deserializeState(
       serializeState(
         makeState({ status: "fixing", currentIterationFindingCommentIds: huge }),
       ),
     );
-    expect(restored).toBeNull();
+    expect(restored).not.toBeNull();
+    expect(restored!.currentIterationFindingCommentIds).toHaveLength(500);
+    expect(restored!.currentIterationFindingCommentIds[0]).toBe(1);
   });
 
   it("accepts currentIterationFindingCommentIds at the 500-id cap boundary (TY-360)", () => {

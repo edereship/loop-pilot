@@ -19516,24 +19516,28 @@ function serializeState(state) {
     const json = JSON.stringify(s, null, 2);
     return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
   };
-  const step1 = {
+  const boundedState = state.currentIterationFindingCommentIds.length > MAX_FINDING_COMMENT_IDS ? {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
+    currentIterationFindingCommentIds: state.currentIterationFindingCommentIds.slice(0, MAX_FINDING_COMMENT_IDS)
+  } : state;
+  const step1 = {
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
   const body1 = wrap(step1);
   if (body1.length <= MAX_SERIALIZED_BYTES)
     return body1;
   const step2 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
-    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
+    previousCheckFailure: boundedState.previousCheckFailure ? truncatePreviousCheckFailure(boundedState.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
   const body2 = wrap(step2);
   if (body2.length <= MAX_SERIALIZED_BYTES)
     return body2;
   const step3 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
     previousCheckFailure: null
   };
   return wrap(step3);
@@ -21139,6 +21143,7 @@ var MAX_REVIEW_THREAD_PAGES = 50;
 function parseReviewThreadsResponse(stdout) {
   const parsed = JSON.parse(stdout);
   const threads = parsed.data?.repository?.pullRequest?.reviewThreads;
+  const malformed = threads === void 0 || threads === null;
   const rawNodes = Array.isArray(threads?.nodes) ? threads.nodes : [];
   const nodes = [];
   for (const node of rawNodes) {
@@ -21163,11 +21168,12 @@ function parseReviewThreadsResponse(stdout) {
   const hasNextPage = threads?.pageInfo?.hasNextPage === true;
   const endCursorRaw = threads?.pageInfo?.endCursor;
   const endCursor = typeof endCursorRaw === "string" ? endCursorRaw : null;
-  return { nodes, hasNextPage, endCursor };
+  return { nodes, hasNextPage, endCursor, malformed };
 }
-async function fetchReviewThreads(owner, repo, prNumber, token) {
+async function fetchReviewThreads(owner, repo, prNumber, token, warn = (m) => warning(m)) {
   const all = [];
   let cursor = null;
+  let moreRemaining = false;
   for (let page = 0; page < MAX_REVIEW_THREAD_PAGES; page += 1) {
     const args = [
       "api",
@@ -21186,10 +21192,18 @@ async function fetchReviewThreads(owner, repo, prNumber, token) {
     }
     const stdout = await ghApi(args, token);
     const pageResult = parseReviewThreadsResponse(stdout);
+    if (pageResult.malformed) {
+      warn(`[review-thread-resolver] GraphQL returned no reviewThreads container for ${owner}/${repo}#${prNumber} (page ${page}); the token may lack access to the PR or the API shape changed. Treating as zero threads.`);
+      break;
+    }
     all.push(...pageResult.nodes);
     if (!pageResult.hasNextPage || pageResult.endCursor === null)
       break;
     cursor = pageResult.endCursor;
+    moreRemaining = page === MAX_REVIEW_THREAD_PAGES - 1;
+  }
+  if (moreRemaining) {
+    warn(`[review-thread-resolver] Hit MAX_REVIEW_THREAD_PAGES (${MAX_REVIEW_THREAD_PAGES}) for ${owner}/${repo}#${prNumber} with more pages remaining; the resolved set may be incomplete.`);
   }
   return all;
 }
@@ -21261,7 +21275,12 @@ async function resolveFindingThreads(params, deps = defaultDeps3) {
     }
   }
   if (resolved > 0 || alreadyResolved > 0 || failed > 0 || unmatched > 0) {
-    deps.info(`[review-thread-resolver] Resolved ${resolved} review thread(s) for fixed findings (already-resolved: ${alreadyResolved}, failed: ${failed}, unmatched: ${unmatched}).`);
+    const summary2 = `[review-thread-resolver] Resolved ${resolved} review thread(s) for fixed findings (already-resolved: ${alreadyResolved}, failed: ${failed}, unmatched: ${unmatched}).`;
+    if (failed > 0 || unmatched > 0) {
+      deps.warning(summary2);
+    } else {
+      deps.info(summary2);
+    }
   }
   return { resolved, alreadyResolved, failed, unmatched };
 }

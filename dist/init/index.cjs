@@ -19561,24 +19561,28 @@ function serializeState(state) {
     const json = JSON.stringify(s, null, 2);
     return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
   };
-  const step1 = {
+  const boundedState = state.currentIterationFindingCommentIds.length > MAX_FINDING_COMMENT_IDS ? {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
+    currentIterationFindingCommentIds: state.currentIterationFindingCommentIds.slice(0, MAX_FINDING_COMMENT_IDS)
+  } : state;
+  const step1 = {
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
   const body1 = wrap(step1);
   if (body1.length <= MAX_SERIALIZED_BYTES)
     return body1;
   const step2 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
-    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
+    previousCheckFailure: boundedState.previousCheckFailure ? truncatePreviousCheckFailure(boundedState.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
   const body2 = wrap(step2);
   if (body2.length <= MAX_SERIALIZED_BYTES)
     return body2;
   const step3 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
     previousCheckFailure: null
   };
   return wrap(step3);

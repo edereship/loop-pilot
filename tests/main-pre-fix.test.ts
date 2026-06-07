@@ -5,6 +5,7 @@ import { createInitialState } from "../src/state-manager.js";
 import type { ReadStateResult } from "../src/state-manager.js";
 import { computeFindingsHash } from "../src/findings-hash.js";
 import { filterAndParseComments } from "../src/review-collector.js";
+import { MAX_FINDINGS_PER_REQUEST } from "../src/claude-code-repair-request.js";
 import type { RawReviewComment, ReviewState } from "../src/types.js";
 
 const baseConfig: Config = {
@@ -247,6 +248,9 @@ describe("runPreFix", () => {
           { iteration: 3, hash: "cccccccccccccccc", modelTier: "escalated" },
         ],
         lastFindingsHash: "cccccccccccccccc",
+        // TY-360: the crashed iteration claimed these ids; recovery must clear
+        // them so a soft /restart-review does not resolve unrepaired threads.
+        currentIterationFindingCommentIds: [9001, 9002],
       }),
     });
 
@@ -267,6 +271,7 @@ describe("runPreFix", () => {
         ],
         lastFindingsHash: "bbbbbbbbbbbbbbbb",
         fixingStartedAt: null,
+        currentIterationFindingCommentIds: [],
       }),
       "github-token",
       expect.any(Object),
@@ -352,6 +357,47 @@ describe("runPreFix", () => {
       1, // findings.length from the single finding in this test
       "github-token",
     );
+  });
+
+  it("TY-360: persists only the embedded (top-MAX) finding comment ids when findings overflow the cap", async () => {
+    // Build MAX_FINDINGS_PER_REQUEST + 1 in-scope P1 findings. Only the
+    // top-MAX make it into the repair request, so only their source comment
+    // ids may be persisted — the dropped lowest-priority finding's id must not
+    // be carried into post-fix, or post-fix would resolve a thread that was
+    // never sent to the repair agent.
+    const overflow = MAX_FINDINGS_PER_REQUEST + 1;
+    const findings: RawReviewComment[] = Array.from({ length: overflow }, (_, i) => {
+      const n = String(i).padStart(3, "0");
+      return {
+        id: 1000 + i,
+        user: { login: "chatgpt-codex-connector[bot]" },
+        body: `P1 finding ${n}\n\nbody ${n}`,
+        path: `src/file-${n}.ts`,
+        line: 9,
+        createdAt: "2026-05-14T11:30:00Z",
+      };
+    });
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "waiting_codex", iterationCount: 1 }),
+      },
+      findings,
+    );
+
+    await runPreFix(baseConfig, deps);
+
+    const fixingCall = deps.updateStateComment.mock.calls.find(
+      (c) => (c[3] as Partial<ReviewState> | undefined)?.status === "fixing",
+    );
+    expect(fixingCall).toBeDefined();
+    const ids = (fixingCall![3] as ReviewState).currentIterationFindingCommentIds;
+    expect(ids).toHaveLength(MAX_FINDINGS_PER_REQUEST);
+    // The dropped (lowest-priority, last-sorted) finding's id must be excluded.
+    expect(ids).not.toContain(1000 + MAX_FINDINGS_PER_REQUEST);
   });
 
   it("does not double-process the same trigger comment", async () => {
@@ -1472,6 +1518,9 @@ describe("runPreFix", () => {
             status: "waiting_codex",
             iterationCount: 20,
             fixingStartedAt: STALE,
+            // TY-360: carried over from a prior iteration; the terminal
+            // transition must clear it so post-fix never resolves stale ids.
+            currentIterationFindingCommentIds: [9001],
           }),
         },
         findings,
@@ -1487,6 +1536,7 @@ describe("runPreFix", () => {
           status: "stopped",
           stopReason: "max_iterations",
           fixingStartedAt: null,
+          currentIterationFindingCommentIds: [],
         }),
         "github-token",
         expect.any(Object),
@@ -1527,6 +1577,7 @@ describe("runPreFix", () => {
             ],
             lastFindingsHash: hash,
             fixingStartedAt: STALE,
+            currentIterationFindingCommentIds: [9001],
           }),
         },
         comments,
@@ -1542,6 +1593,7 @@ describe("runPreFix", () => {
           status: "stopped",
           stopReason: "loop_detected",
           fixingStartedAt: null,
+          currentIterationFindingCommentIds: [],
         }),
         "github-token",
         expect.any(Object),

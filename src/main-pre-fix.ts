@@ -44,6 +44,7 @@ import {
 import {
   buildClaudeCodeRepairRequest,
   buildClaudeCodeRepairPrompt,
+  selectEmbeddedFindings,
   type ClaudeCodeRepairScopePolicy,
 } from "./claude-code-repair-request.js";
 import { buildScopePolicy } from "./scope-checker.js";
@@ -432,6 +433,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       status: "stopped",
       stopReason: "workflow_crashed",
       fixingStartedAt: null,
+      // TY-360: this is a terminal transition; clear the in-scope ids so a soft
+      // /restart-review does not later resolve threads for findings the crashed
+      // iteration never actually repaired.
+      currentIterationFindingCommentIds: [],
     };
     if (
       !(await updateStateCommentLocked(
@@ -911,12 +916,18 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     // stale-detector in subsequent pre-fix runs can distinguish a genuinely
     // hung `fixing` from one that legitimately resumed via /restart-review.
     fixingStartedAt: deps.now().toISOString(),
-    // TY-360: persist the in-scope finding comment ids forwarded to
-    // claude-code-action so post-fix can resolve the matching Codex review
-    // threads after a successful repair. `findings` is the severity-filtered
-    // in-scope set (below-threshold / unparseable were already excluded by
-    // `filterAndParseComments`), so only fixable threads are ever targeted.
-    currentIterationFindingCommentIds: findings.map((f) => f.commentId),
+    // TY-360: persist the comment ids of the findings actually embedded in the
+    // repair prompt so post-fix resolves only the threads sent for repair.
+    // `selectEmbeddedFindings` applies the same priority sort + count cap as the
+    // prompt builder, so when more than MAX_FINDINGS_PER_REQUEST in-scope
+    // findings exist the overflow ids are NOT stored (those threads were never
+    // forwarded to claude-code-action and must stay open). `findings` is already
+    // the severity-filtered in-scope set (below-threshold / unparseable were
+    // excluded by `filterAndParseComments`), so only fixable threads are ever
+    // targeted.
+    currentIterationFindingCommentIds: selectEmbeddedFindings(findings).map(
+      (f) => f.commentId,
+    ),
   };
   if (
     !(await updateStateCommentLocked(

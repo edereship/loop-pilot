@@ -177,6 +177,52 @@ describe("resolveFindingThreads", () => {
     expect(result.failed).toBe(1);
     expect(deps.warnings.join("\n")).toContain("PRRT_1");
   });
+
+  it("is best-effort when the GraphQL body is not valid JSON (parse throw)", async () => {
+    // Drive the REAL fetchReviewThreads (whose JSON.parse throws on a non-JSON
+    // body, e.g. an HTML 502) through resolveFindingThreads to confirm the
+    // parse throw is caught and does not escape.
+    mockedGhApi.mockResolvedValueOnce("<html>502 Bad Gateway</html>");
+    const deps = makeDeps({
+      fetchReviewThreads: (owner, repo, prNumber, token) =>
+        fetchReviewThreads(owner, repo, prNumber, token),
+    });
+    const result = await resolveFindingThreads(
+      { owner: "o", repo: "r", prNumber: 7, commentIds: [101], token: "t" },
+      deps,
+    );
+    expect(result).toEqual({ resolved: 0, alreadyResolved: 0, failed: 0, unmatched: 0 });
+    expect(deps.resolveReviewThread).not.toHaveBeenCalled();
+    expect(deps.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("logs the summary at warning severity when there are unmatched ids", async () => {
+    // An in-scope id with no matching thread signals the id↔thread assumption
+    // broke; it must surface as a warning, not be buried in info.
+    const deps = makeDeps({
+      fetchReviewThreads: vi.fn().mockResolvedValue([thread("PRRT_1", false, [101])]),
+    });
+    const result = await resolveFindingThreads(
+      { owner: "o", repo: "r", prNumber: 7, commentIds: [101, 999], token: "t" },
+      deps,
+    );
+    expect(result.resolved).toBe(1);
+    expect(result.unmatched).toBe(1);
+    expect(deps.warnings.join("\n")).toContain("unmatched: 1");
+    expect(deps.infos).toEqual([]);
+  });
+
+  it("logs the summary at info severity on a clean all-success pass", async () => {
+    const deps = makeDeps({
+      fetchReviewThreads: vi.fn().mockResolvedValue([thread("PRRT_1", false, [101])]),
+    });
+    await resolveFindingThreads(
+      { owner: "o", repo: "r", prNumber: 7, commentIds: [101], token: "t" },
+      deps,
+    );
+    expect(deps.infos.join("\n")).toContain("Resolved 1 review thread");
+    expect(deps.warnings).toEqual([]);
+  });
 });
 
 describe("fetchReviewThreads (GraphQL wiring)", () => {
@@ -235,6 +281,72 @@ describe("fetchReviewThreads (GraphQL wiring)", () => {
     mockedGhApi.mockResolvedValueOnce(JSON.stringify({ data: {} }));
     const threads = await fetchReviewThreads("o", "r", 9, "tok");
     expect(threads).toEqual([]);
+  });
+
+  it("warns when the reviewThreads container is absent (e.g. token cannot see the PR)", async () => {
+    // HTTP 200 + parseable JSON but `data.repository` null — must not be
+    // silently treated as an empty PR.
+    mockedGhApi.mockResolvedValueOnce(
+      JSON.stringify({ data: { repository: null } }),
+    );
+    const warnings: string[] = [];
+    const threads = await fetchReviewThreads("o", "r", 9, "tok", (m) =>
+      warnings.push(m),
+    );
+    expect(threads).toEqual([]);
+    expect(warnings.join("\n")).toContain("no reviewThreads container");
+  });
+
+  it("does NOT warn for a genuinely empty PR (container present, zero nodes)", async () => {
+    mockedGhApi.mockResolvedValueOnce(
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [],
+              },
+            },
+          },
+        },
+      }),
+    );
+    const warnings: string[] = [];
+    const threads = await fetchReviewThreads("o", "r", 9, "tok", (m) =>
+      warnings.push(m),
+    );
+    expect(threads).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("stops at MAX_REVIEW_THREAD_PAGES and warns when hasNextPage never clears", async () => {
+    // Simulate a malformed/runaway pagination: every page claims another page.
+    // The cap must bound the calls AND surface a truncation warning rather than
+    // silently returning a partial set.
+    mockedGhApi.mockImplementation(async () =>
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: true, endCursor: "NEXT" },
+                nodes: [
+                  { id: "PRRT_x", isResolved: false, comments: { nodes: [{ databaseId: 1 }] } },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    );
+    const warnings: string[] = [];
+    const threads = await fetchReviewThreads("o", "r", 9, "tok", (m) =>
+      warnings.push(m),
+    );
+    expect(mockedGhApi).toHaveBeenCalledTimes(50);
+    expect(threads).toHaveLength(50);
+    expect(warnings.join("\n")).toContain("MAX_REVIEW_THREAD_PAGES");
   });
 });
 
