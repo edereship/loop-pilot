@@ -144,6 +144,10 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 | `CODEX_ACK_TIMEOUT_SECONDS` | `90` | Codex の `@codex review` 承認（👀）待ち時間を調整したい。`0` で ACK ウォッチドッグを無効化。 |
 | `CODEX_ACK_MAX_REPOSTS` | `2` | Codex が応答しないときに `@codex review` を再依頼する回数を調整したい（超過で `codex_request_failed` 停止）。 |
 | `CLAUDE_CODE_MAX_TURNS` | `40` | 1 回の修正あたりの最大エージェントターン数を調整したい（claude-code-action の `--max-turns`）。 |
+| `CLAUDE_CODE_MODEL_BASE` | `claude-sonnet-4-6` | ベースティアのモデルを変更したい。エスカレーションなしの通常修正で使われる。`CLAUDE_CODE_MODEL_ESCALATED` と同じ値にするとティアリング無効。 |
+| `CLAUDE_CODE_MODEL_ESCALATED` | `claude-opus-4-7` | エスカレーションティアのモデルを変更したい。P0 指摘・CHECK_COMMAND 失敗・findings hash 重複時に使われる。 |
+| `LOOPPILOT_RESTART_ROLES` | `author,write,maintain,admin` | `/restart-review` を実行できるロールを制限したい。 |
+| `DEBOUNCE_SECONDS` | `90` | Codex サマリコメント後にインラインコメントを収集するまでの待ち時間を調整したい。 |
 
 すべての input は [loop/action.yml](loop/action.yml) と [init/action.yml](init/action.yml) にまとまっています。
 

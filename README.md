@@ -144,6 +144,10 @@ Set these as GitHub Actions repository variables in the target repository.
 | `CODEX_ACK_TIMEOUT_SECONDS` | `90` | Tune how long LoopPilot waits for Codex to acknowledge an `@codex review` (👀) before re-requesting; `0` disables the ACK watchdog. |
 | `CODEX_ACK_MAX_REPOSTS` | `2` | Tune how many times LoopPilot re-requests `@codex review` when Codex does not respond, before stopping with `codex_request_failed`. |
 | `CLAUDE_CODE_MAX_TURNS` | `40` | Tune the max agent turns per fix attempt, forwarded to claude-code-action's `--max-turns`. |
+| `CLAUDE_CODE_MODEL_BASE` | `claude-sonnet-4-6` | Change the base-tier model used when no escalation signal fires. Set equal to `CLAUDE_CODE_MODEL_ESCALATED` to disable tiering. |
+| `CLAUDE_CODE_MODEL_ESCALATED` | `claude-opus-4-7` | Change the escalated-tier model used on P0 findings, CHECK_COMMAND failures, or repeated findings hashes. |
+| `LOOPPILOT_RESTART_ROLES` | `author,write,maintain,admin` | Restrict which roles can run `/restart-review`. |
+| `DEBOUNCE_SECONDS` | `90` | Tune how long LoopPilot waits after a Codex summary comment before collecting inline comments. |
 
 All inputs are documented in [loop/action.yml](loop/action.yml) and [init/action.yml](init/action.yml).
 
