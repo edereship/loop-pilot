@@ -135,7 +135,7 @@ Repository UI で default workflow permission を write に変更できない環
 
 **Workflow 内での参照 (推奨パターン: 両方とも渡し、未設定側は空文字列で fail fast 判定):**
 ```yaml
-- uses: Edership/loop-pilot/loop@v1
+- uses: Edereship/loop-pilot/loop@v1
   with:
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
     claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

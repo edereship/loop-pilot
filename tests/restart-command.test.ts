@@ -499,7 +499,7 @@ describe("handleRestartCommand", () => {
 
     const result = await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -520,7 +520,7 @@ describe("handleRestartCommand", () => {
     expect(result).toEqual({ handled: true });
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       999,
       {
@@ -537,14 +537,14 @@ describe("handleRestartCommand", () => {
       { expectedUpdatedAt: "2026-05-09T00:00:00Z" },
     );
     expect(deps.postCodexReviewRequest).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       18,
       "codex-token",
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       999,
       {
@@ -569,7 +569,7 @@ describe("handleRestartCommand", () => {
     expect(deps.postComment.mock.calls[0][3]).toContain("from: no_findings");
     expect(deps.postComment.mock.calls[0][3]).toContain("reviewRequestCommentId: 45678");
     expect(deps.addRestartReaction).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       777,
       "token",
@@ -587,7 +587,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -626,7 +626,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -660,7 +660,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -699,7 +699,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -718,7 +718,7 @@ describe("handleRestartCommand", () => {
     );
 
     expect(deps.postCodexReviewRequest).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       18,
       "codex-token",
@@ -741,7 +741,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -768,7 +768,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -801,7 +801,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -844,7 +844,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -882,7 +882,7 @@ describe("handleRestartCommand", () => {
 
     const result = await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -916,7 +916,7 @@ describe("handleRestartCommand", () => {
     });
     // Stop comment must surface the actionable reason + the underlying error.
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       18,
       "codex_request_failed",
@@ -945,7 +945,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1001,7 +1001,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1033,7 +1033,7 @@ describe("handleRestartCommand", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1074,7 +1074,7 @@ describe("handleRestartCommand — Codex ACK polling (TY-334)", () => {
 
     const result = await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "test-auto-ai-review",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1100,7 +1100,7 @@ describe("handleRestartCommand — Codex ACK polling (TY-334)", () => {
     expect(stoppedWrite).toBeDefined();
     expect(stoppedWrite?.[3].lastCodexRequestCommentId).toBe(88888);
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "test-auto-ai-review",
       18,
       "codex_request_failed",
@@ -1129,7 +1129,7 @@ describe("handleRestartCommand — Codex ACK polling (TY-334)", () => {
 
     const result = await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "test-auto-ai-review",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1173,7 +1173,7 @@ describe("handleRestartCommand — Codex ACK polling (TY-334)", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "test-auto-ai-review",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1215,7 +1215,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1255,7 +1255,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1281,7 +1281,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
     expect(body).toContain("`/restart-review --hard` will return the same rejection");
     // Manual surgery is the only recovery; the comment links the exact gh api command.
     expect(body).toContain("gh api -X DELETE");
-    expect(body).toContain("/repos/Edership/loop-pilot/issues/comments/");
+    expect(body).toContain("/repos/Edereship/loop-pilot/issues/comments/");
   });
 
   it("returns the same dead-end rejection on /restart-review --hard against unparseable state (TY-293 #1 regression)", async () => {
@@ -1298,7 +1298,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1328,7 +1328,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1365,7 +1365,7 @@ describe("LOOPPILOT_RESTART_ROLES validation (TY-275 #2)", () => {
     // user actually has admin permission. A warning surfaces the typo.
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,
@@ -1393,7 +1393,7 @@ describe("LOOPPILOT_RESTART_ROLES validation (TY-275 #2)", () => {
 
     await handleRestartCommand(
       {
-        owner: "Edership",
+        owner: "Edereship",
         repo: "loop-pilot",
         prNumber: 18,
         triggerCommentId: 777,

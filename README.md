@@ -6,15 +6,15 @@
 
 > An AI review-fix loop for GitHub pull requests. LoopPilot asks Codex to review a PR, lets Claude fix the findings, runs your checks, and repeats until the PR is clean.
 
-LoopPilot runs as GitHub Actions reusable workflows. You do not host a service, run a server, or install anything in production. The recommended setup path is the [`gh looppilot` CLI](https://github.com/Edership/gh-looppilot).
+LoopPilot runs as GitHub Actions reusable workflows. You do not host a service, run a server, or install anything in production. The recommended setup path is the [`gh looppilot` CLI](https://github.com/Edereship/gh-looppilot).
 
-> **The [GitHub Marketplace listing](https://github.com/marketplace/actions/looppilot-pr-review-fix-loop) is a discoverability front door, not the way to run LoopPilot.** LoopPilot is event-driven and runs as reusable workflows, so it is not a step you add to a job. Do not write `uses: Edership/loop-pilot@v1` in a job — that root action only prints setup guidance and exits. Install with the `gh looppilot` CLI (below), or use the [manual reusable-workflow callers](#manual-install) (`Edership/loop-pilot/.github/workflows/{init,loop}.yml@v1`).
+> **The [GitHub Marketplace listing](https://github.com/marketplace/actions/looppilot-pr-review-fix-loop) is a discoverability front door, not the way to run LoopPilot.** LoopPilot is event-driven and runs as reusable workflows, so it is not a step you add to a job. Do not write `uses: Edereship/loop-pilot@v1` in a job — that root action only prints setup guidance and exits. Install with the `gh looppilot` CLI (below), or use the [manual reusable-workflow callers](#manual-install) (`Edereship/loop-pilot/.github/workflows/{init,loop}.yml@v1`).
 
 ## Start here
 
 ```bash
 # 1. Install once. Requires Node >= 20 and an authenticated GitHub CLI.
-gh extension install Edership/gh-looppilot
+gh extension install Edereship/gh-looppilot
 
 # 2. Run inside the repository where you want LoopPilot.
 cd path/to/your-repo
@@ -173,7 +173,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: Edership/loop-pilot/.github/workflows/init.yml@v1
+    uses: Edereship/loop-pilot/.github/workflows/init.yml@v1
     secrets:
       CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 ```
@@ -196,7 +196,7 @@ jobs:
       pull-requests: write
       issues: write
       actions: read
-    uses: Edership/loop-pilot/.github/workflows/loop.yml@v1
+    uses: Edereship/loop-pilot/.github/workflows/loop.yml@v1
     secrets:
       CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
       LOOPPILOT_PUSH_TOKEN: ${{ secrets.LOOPPILOT_PUSH_TOKEN }}

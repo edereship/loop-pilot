@@ -18,7 +18,7 @@ const baseConfig: Config = {
   anthropicApiKey: "",
   claudeCodeOauthToken: "",
   githubToken: "github-token",
-  repoOwner: "Edership",
+  repoOwner: "Edereship",
   repoName: "loop-pilot",
   prNumber: 227,
   triggerCommentId: 0,
@@ -109,7 +109,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(2);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({
@@ -121,7 +121,7 @@ describe("runInit", () => {
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({
@@ -159,7 +159,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(2);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({
@@ -171,7 +171,7 @@ describe("runInit", () => {
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({
@@ -198,7 +198,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(2);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       12345,
       expect.objectContaining({ status: "waiting_codex" }),
@@ -206,7 +206,7 @@ describe("runInit", () => {
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       12345,
       expect.objectContaining({ status: "initialized" }),
@@ -225,7 +225,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(2);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       12345,
       expect.objectContaining({
@@ -236,7 +236,7 @@ describe("runInit", () => {
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       12345,
       expect.objectContaining({
@@ -286,7 +286,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(3);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({ status: "initialized" }),
@@ -294,7 +294,7 @@ describe("runInit", () => {
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({
@@ -305,7 +305,7 @@ describe("runInit", () => {
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       3,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({
@@ -345,7 +345,7 @@ describe("runInit", () => {
 
     expect(deps.postInitialStatusComment).toHaveBeenCalledTimes(1);
     expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       227,
       20,
@@ -359,7 +359,7 @@ describe("runInit", () => {
     await runInit({ ...baseConfig, maxReviewIterations: 15 }, deps);
 
     expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       227,
       15,
@@ -378,7 +378,7 @@ describe("runInit", () => {
     await runInit({ ...baseConfig, maxReviewIterations: 50 }, deps);
 
     expect(deps.postInitialStatusComment).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       227,
       50,
@@ -418,7 +418,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(2);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       1,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({ status: "waiting_codex", lastCodexRequestCommentId: null }),
@@ -427,7 +427,7 @@ describe("runInit", () => {
     );
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({ status: "waiting_codex", lastCodexRequestCommentId: 67890 }),
@@ -453,7 +453,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(2);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       2,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       111,
       expect.objectContaining({ status: "initialized" }),
@@ -478,7 +478,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(3);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       3,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       12345,
       expect.objectContaining({ status: "stopped", stopReason: "codex_request_failed" }),
@@ -531,7 +531,7 @@ describe("runInit", () => {
     expect(deps.updateStateComment).toHaveBeenCalledTimes(3);
     expect(deps.updateStateComment).toHaveBeenNthCalledWith(
       3,
-      "Edership",
+      "Edereship",
       "loop-pilot",
       12345,
       expect.objectContaining({ status: "waiting_codex", lastCodexRequestCommentId: 67890 }),

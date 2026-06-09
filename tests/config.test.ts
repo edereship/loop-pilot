@@ -9,7 +9,7 @@ import { loadConfig, loadInitConfig } from "../src/config.js";
  */
 
 const REQUIRED_ENV: Record<string, string> = {
-  GITHUB_REPOSITORY: "Edership/loop-pilot",
+  GITHUB_REPOSITORY: "Edereship/loop-pilot",
   GITHUB_TOKEN: "github-token",
   PR_NUMBER: "99",
 };

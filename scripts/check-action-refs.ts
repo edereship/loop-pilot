@@ -1,6 +1,6 @@
 /**
  * CLI guard run by the release workflow (TY-342). Reads the composite action
- * YAML files that hardcode `Edership/loop-pilot/*@v1` sub-action refs and
+ * YAML files that hardcode `Edereship/loop-pilot/*@v1` sub-action refs and
  * fails if any ref's major differs from the tag being released.
  *
  * Usage: node --import tsx scripts/check-action-refs.ts <tag>
@@ -15,7 +15,7 @@ if (!tag) {
   process.exit(2);
 }
 
-// Files that pin Edership/loop-pilot sub-actions / actions by published
+// Files that pin Edereship/loop-pilot sub-actions / actions by published
 // path@ref. The composite actions reference their sibling sub-actions, and the
 // reusable workflows (TY-345) reference the top-level composite actions — both
 // must move in lockstep with the release major.
@@ -44,4 +44,4 @@ if (failed) {
   );
   process.exit(1);
 }
-console.log(`OK: all Edership/loop-pilot action refs match ${tag}`);
+console.log(`OK: all Edereship/loop-pilot action refs match ${tag}`);

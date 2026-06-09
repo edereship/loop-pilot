@@ -13,7 +13,7 @@ function makeArgs(
   overrides: Partial<LockedStateUpdaterArgs> = {},
 ): LockedStateUpdaterArgs {
   return {
-    owner: "Edership",
+    owner: "Edereship",
     repo: "loop-pilot",
     commentId: 555,
     token: "github-token",
@@ -47,7 +47,7 @@ describe("createLockedStateUpdater", () => {
     expect(ok).toBe(true);
     expect(args.updateStateComment).toHaveBeenCalledTimes(1);
     expect(args.updateStateComment).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       555,
       next,
@@ -81,7 +81,7 @@ describe("createLockedStateUpdater", () => {
     await tryUpdate(makeFixingState(), "first");
 
     expect(args.updateStateComment).toHaveBeenCalledWith(
-      "Edership",
+      "Edereship",
       "loop-pilot",
       555,
       expect.any(Object),

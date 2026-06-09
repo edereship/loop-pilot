@@ -27,7 +27,7 @@ const crashConfig: Config = {
   anthropicApiKey: "",
   claudeCodeOauthToken: "",
   githubToken: "github-token",
-  repoOwner: "Edership",
+  repoOwner: "Edereship",
   repoName: "loop-pilot",
   prNumber: 999,
   triggerCommentId: 0,
@@ -93,7 +93,7 @@ describe("demoteFixingOnCrash", () => {
     const [owner, name, commentId, state, token, options] = (
       deps.updateStateComment as ReturnType<typeof vi.fn>
     ).mock.calls[0];
-    expect(owner).toBe("Edership");
+    expect(owner).toBe("Edereship");
     expect(name).toBe("loop-pilot");
     expect(commentId).toBe(12345);
     expect(token).toBe("github-token");
@@ -113,7 +113,7 @@ describe("demoteFixingOnCrash", () => {
     const [psOwner, psName, psPr, psReason, , , psDetail, psToken] = (
       deps.postStopComment as ReturnType<typeof vi.fn>
     ).mock.calls[0];
-    expect(psOwner).toBe("Edership");
+    expect(psOwner).toBe("Edereship");
     expect(psName).toBe("loop-pilot");
     expect(psPr).toBe(999);
     expect(psReason).toBe("workflow_crashed");

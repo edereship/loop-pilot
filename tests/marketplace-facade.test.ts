@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 // TY-343: the repository-root action.yml is a GitHub Marketplace DISCOVERABILITY
 // FACADE only — a "front door" so LoopPilot is findable on the Marketplace. It is
 // NOT how LoopPilot runs: LoopPilot is event-driven (a PR label + `@codex review`
-// fan out to the reusable workflows Edership/loop-pilot/.github/workflows/
+// fan out to the reusable workflows Edereship/loop-pilot/.github/workflows/
 // {init,loop}.yml@v1, wired up by the `gh looppilot` CLI). GitHub Marketplace
 // lists only Actions/Apps, never `gh` CLI extensions or reusable workflows, so the
 // listed artifact has to be a real root action — but it must stay an inert signpost.
@@ -112,11 +112,11 @@ describe("marketplace facade: stays an inert signpost (never a 2nd code path)", 
 
   it("references no LoopPilot sub-action or local ./ action, so it cannot run the loop", () => {
     expect(rootActionCode).not.toContain("uses: ./");
-    expect(rootActionCode).not.toMatch(/uses:\s*["']?Edership\/loop-pilot/);
+    expect(rootActionCode).not.toMatch(/uses:\s*["']?Edereship\/loop-pilot/);
   });
 
   it("points users at the real install paths (gh looppilot CLI)", () => {
-    expect(rootAction).toContain("gh extension install Edership/gh-looppilot");
+    expect(rootAction).toContain("gh extension install Edereship/gh-looppilot");
   });
 });
 
@@ -128,10 +128,10 @@ describe("marketplace facade: README documents the listing as a non-consumption 
 
   it("both READMEs warn that the bare root ref is not the way to run LoopPilot", () => {
     // The recommended path is the gh looppilot CLI / reusable workflows — NOT
-    // `uses: Edership/loop-pilot@v1` (bare root ref), which only prints guidance.
-    // (The workflow refs are `Edership/loop-pilot/.github/...@v1`; the bare
-    // `Edership/loop-pilot@v1` substring appears only in this warning.)
-    expect(readmeEn).toContain("Edership/loop-pilot@v1");
-    expect(readmeJa).toContain("Edership/loop-pilot@v1");
+    // `uses: Edereship/loop-pilot@v1` (bare root ref), which only prints guidance.
+    // (The workflow refs are `Edereship/loop-pilot/.github/...@v1`; the bare
+    // `Edereship/loop-pilot@v1` substring appears only in this warning.)
+    expect(readmeEn).toContain("Edereship/loop-pilot@v1");
+    expect(readmeJa).toContain("Edereship/loop-pilot@v1");
   });
 });
