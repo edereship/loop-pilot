@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { findMismatchedActionRefs } from "../src/action-ref-check.js";
 
-const OWNER_PREFIX = "team-yubune/loop-pilot";
+const OWNER_PREFIX = "Edership/loop-pilot";
 
 describe("findMismatchedActionRefs", () => {
-  it("returns [] when every team-yubune/loop-pilot ref matches the expected major", () => {
+  it("returns [] when every Edership/loop-pilot ref matches the expected major", () => {
     const yaml = [
       `uses: ${OWNER_PREFIX}/loop/pre-fix@v1`,
       `uses: ${OWNER_PREFIX}/loop/post-fix@v1`,

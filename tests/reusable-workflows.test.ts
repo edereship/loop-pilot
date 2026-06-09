@@ -38,12 +38,12 @@ describe("reusable workflows: workflow_call surface", () => {
 
 describe("reusable workflows: sub-action refs use the published tag, never ./", () => {
   it("reusable loop calls the composite action by published path@v1, not a local ./ ref", () => {
-    expect(loopReusable).toContain("uses: team-yubune/loop-pilot/loop@v1");
+    expect(loopReusable).toContain("uses: Edership/loop-pilot/loop@v1");
     expect(loopReusable).not.toContain("uses: ./loop");
   });
 
   it("reusable init calls the composite action by published path@v1, not a local ./ ref", () => {
-    expect(initReusable).toContain("uses: team-yubune/loop-pilot/init@v1");
+    expect(initReusable).toContain("uses: Edership/loop-pilot/init@v1");
     expect(initReusable).not.toContain("uses: ./init");
   });
 
@@ -254,8 +254,8 @@ describe("agent tool hardening: block the comment tools that could forge hidden 
 
 describe("README documents the cross-org adopter caller", () => {
   it("references the reusable workflows by tagged path", () => {
-    expect(readme).toContain("team-yubune/loop-pilot/.github/workflows/init.yml@v1");
-    expect(readme).toContain("team-yubune/loop-pilot/.github/workflows/loop.yml@v1");
+    expect(readme).toContain("Edership/loop-pilot/.github/workflows/init.yml@v1");
+    expect(readme).toContain("Edership/loop-pilot/.github/workflows/loop.yml@v1");
   });
 
   it("enumerates the cross-org secrets and the actions: read permission", () => {

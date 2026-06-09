@@ -30,7 +30,7 @@ const baseConfig: Config = {
   anthropicApiKey: "",
   claudeCodeOauthToken: "",
   githubToken: "github-token",
-  repoOwner: "team-yubune",
+  repoOwner: "Edership",
   repoName: "loop-pilot",
   prNumber: 99,
   triggerCommentId: 1234,
@@ -192,7 +192,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages[0]).toContain("(iteration 2)");
     expect(deps.pushCalls).toEqual([
       {
-        owner: "team-yubune",
+        owner: "Edership",
         repo: "loop-pilot",
         ref: "linear/TY-237",
         token: "",
@@ -201,7 +201,7 @@ describe("runPostFix", () => {
     expect(deps.postClaudeCodeActionFixSummary).toHaveBeenCalled();
     expect(deps.postCodexReviewRequest).toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -230,7 +230,7 @@ describe("runPostFix", () => {
     // Resolve is invoked with the in-scope finding ids from the (fixing) state
     // and the github-token (pull-requests:write), NOT the push token.
     expect(deps.resolveFindingThreads).toHaveBeenCalledWith({
-      owner: "team-yubune",
+      owner: "Edership",
       repo: "loop-pilot",
       prNumber: 99,
       commentIds: [501, 502],
@@ -261,7 +261,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls.length).toBe(1);
     expect(deps.postCodexReviewRequest).toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "waiting_codex" }),
@@ -304,7 +304,7 @@ describe("runPostFix", () => {
     // crash-recovery rollback must NOT run on this (non-throwing) path.
     expect(deps.demoteFixingOnCrash).not.toHaveBeenCalled();
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "codex_request_failed",
@@ -418,7 +418,7 @@ describe("runPostFix", () => {
     await runPostFix(baseConfig, deps, baseInputs);
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -450,7 +450,7 @@ describe("runPostFix", () => {
     expect(deps.runCheckCommand).not.toHaveBeenCalled();
     expect(deps.commitMessages).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -464,7 +464,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "scope_violation",
@@ -515,7 +515,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([]);
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -526,7 +526,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "secret_leak_suspected",
@@ -667,7 +667,7 @@ describe("runPostFix", () => {
     expect(deps.resetCalls).toBe(1);
     expect(deps.runCheckCommand).not.toHaveBeenCalled();
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "secret_leak_suspected",
@@ -727,7 +727,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.pushCalls).toEqual([]);
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "secret_leak_suspected",
@@ -882,7 +882,7 @@ describe("runPostFix", () => {
     expect(deps.resetCalls).toBe(1);
     expect(deps.commitMessages).toEqual([]);
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "secret_leak_suspected",
@@ -919,7 +919,7 @@ describe("runPostFix", () => {
     // check-runner's per-path rollback; post-fix must reset + clean.
     expect(deps.resetCalls).toBe(1);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -938,7 +938,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postTestFailureComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "tsc error: unexpected token",
@@ -950,7 +950,7 @@ describe("runPostFix", () => {
     // an explicit top-level 🛑 comment so operators see CHECK_COMMAND
     // failures in their inbox / mobile push.
     expect(deps.postTerminalNotification).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       44,
@@ -995,7 +995,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages.length).toBe(1);
     expect(deps.pushCalls).toEqual([
       {
-        owner: "team-yubune",
+        owner: "Edership",
         repo: "loop-pilot",
         ref: "linear/TY-237",
         token: "",
@@ -1003,7 +1003,7 @@ describe("runPostFix", () => {
     ]);
     // The fix summary surfaces every changed file, not just the tracked subset.
     expect(deps.postClaudeCodeActionFixSummary).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       2,
@@ -1075,7 +1075,7 @@ describe("runPostFix", () => {
     await runPostFix({ ...baseConfig, maxReviewIterations: 5 }, deps, baseInputs);
 
     expect(deps.postClaudeCodeActionFixSummary).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       2,
@@ -1109,7 +1109,7 @@ describe("runPostFix", () => {
     expect(deps.runCheckCommand).not.toHaveBeenCalled();
     expect(deps.commitMessages).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
@@ -1131,7 +1131,7 @@ describe("runPostFix", () => {
 
     expect(deps.resetCalls).toBe(1);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_timeout" }),
@@ -1139,7 +1139,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "action_timeout",
@@ -1174,7 +1174,7 @@ describe("runPostFix", () => {
     });
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
@@ -1199,7 +1199,7 @@ describe("runPostFix", () => {
     });
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_failure" }),
@@ -1237,7 +1237,7 @@ describe("runPostFix", () => {
     });
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
@@ -1283,7 +1283,7 @@ describe("runPostFix", () => {
     });
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_failure" }),
@@ -1315,7 +1315,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "action_no_op" }),
@@ -1347,7 +1347,7 @@ describe("runPostFix", () => {
       });
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1377,7 +1377,7 @@ describe("runPostFix", () => {
       await runPostFix(baseConfig, deps, baseInputs);
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1407,7 +1407,7 @@ describe("runPostFix", () => {
       await runPostFix(baseConfig, deps, baseInputs);
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1441,7 +1441,7 @@ describe("runPostFix", () => {
       });
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1480,7 +1480,7 @@ describe("runPostFix", () => {
       await runPostFix(baseConfig, deps, baseInputs);
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1515,7 +1515,7 @@ describe("runPostFix", () => {
       await runPostFix(baseConfig, deps, baseInputs);
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1593,7 +1593,7 @@ describe("runPostFix", () => {
       ),
     ).toBe(true);
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "scope_violation",
@@ -1693,7 +1693,7 @@ describe("runPostFix", () => {
     // Stop notification is posted; the no-op path no longer re-requests
     // Codex review (the auto-retry behavior from TY-273 #B3 was removed).
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "action_no_op",
@@ -1846,7 +1846,7 @@ describe("runPostFix", () => {
     // The operator gets a top-level notification with the underlying error so
     // they can fix Codex auth and `/restart-review` once it's reachable.
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "codex_request_failed",
@@ -2081,7 +2081,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
@@ -2089,7 +2089,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "scope_violation",
@@ -2226,7 +2226,7 @@ describe("runPostFix", () => {
     expect(deps.pushCalls).toEqual([]);
     // Stopped with action_failure; failureExit rolls back iteration accounting.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -2242,7 +2242,7 @@ describe("runPostFix", () => {
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
     // Stop comment posted.
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "action_failure",
@@ -2280,7 +2280,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -2296,7 +2296,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "action_failure",
@@ -2342,7 +2342,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "scope_violation" }),
@@ -2350,7 +2350,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "scope_violation",
@@ -2397,7 +2397,7 @@ describe("runPostFix", () => {
     expect(deps.resetCalls).toBe(1);
     // Stopped with action_failure; failureExit rolls back iteration accounting.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -2410,7 +2410,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "action_failure",
@@ -2459,7 +2459,7 @@ describe("runPostFix", () => {
     expect(deps.resetCalls).toBe(1);
     // Stopped with action_failure; failureExit rolls back iteration accounting.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -2472,7 +2472,7 @@ describe("runPostFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       99,
       "action_failure",
@@ -2630,7 +2630,7 @@ describe("runPostFix", () => {
     expect(deps.commitMessages).toEqual([]);
     expect(deps.pushCalls).toEqual([]);
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       100,
       expect.objectContaining({

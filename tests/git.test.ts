@@ -284,14 +284,14 @@ describe("subprocess wrappers", () => {
       // 3: local --get-regexp (returns matched keys for cleanup)
       if (call === 3) {
         return [
-          "url.https://corp/.insteadOf https://github.com/team-yubune/",
+          "url.https://corp/.insteadOf https://github.com/Edership/",
           "url.https://corp2/.insteadOf https://github.com/",
         ].join("\n") + "\n";
       }
       return undefined;
     }) as unknown as typeof execFileSync);
 
-    git.pushWithToken("team-yubune", "loop-pilot", "claude/some-branch", "push-token");
+    git.pushWithToken("Edership", "loop-pilot", "claude/some-branch", "push-token");
 
     // 1: unset checkout extraheader
     // 2: global get-regexp (exit 1, no global rewrite rules)
@@ -339,7 +339,7 @@ describe("subprocess wrappers", () => {
       "-c",
       `http.extraheader=AUTHORIZATION: Basic ${basic}`,
       "push",
-      "https://github.com/team-yubune/loop-pilot.git",
+      "https://github.com/Edership/loop-pilot.git",
       "HEAD:refs/heads/claude/some-branch",
     ]);
 
@@ -368,7 +368,7 @@ describe("subprocess wrappers", () => {
     }) as unknown as typeof execFileSync);
 
     expect(() =>
-      git.pushWithToken("team-yubune", "loop-pilot", "main", "tok"),
+      git.pushWithToken("Edership", "loop-pilot", "main", "tok"),
     ).not.toThrow();
 
     // 1: failing extraheader unset (status 5), 2: failing global get-regexp,
@@ -387,7 +387,7 @@ describe("subprocess wrappers", () => {
     });
 
     expect(() =>
-      git.pushWithToken("team-yubune", "loop-pilot", "main", "tok"),
+      git.pushWithToken("Edership", "loop-pilot", "main", "tok"),
     ).toThrow(/permission denied/);
 
     // The push must NOT have been attempted: silently swallowing a corrupt
@@ -408,7 +408,7 @@ describe("subprocess wrappers", () => {
       return undefined;
     }) as unknown as typeof execFileSync);
 
-    git.pushWithToken("team-yubune", "loop-pilot", "main", "tok");
+    git.pushWithToken("Edership", "loop-pilot", "main", "tok");
 
     // 1: unset extraheader, 2: global get-regexp, 3: local get-regexp, 4: push.
     expect(execFileSync).toHaveBeenCalledTimes(4);
@@ -440,7 +440,7 @@ describe("subprocess wrappers", () => {
     }) as unknown as typeof execFileSync);
 
     expect(() =>
-      git.pushWithToken("team-yubune", "loop-pilot", "main", "tok"),
+      git.pushWithToken("Edership", "loop-pilot", "main", "tok"),
     ).toThrow(/corrupt/);
 
     expect(execFileSync).toHaveBeenCalledTimes(3);
@@ -459,7 +459,7 @@ describe("subprocess wrappers", () => {
     }) as unknown as typeof execFileSync);
 
     expect(() =>
-      git.pushWithToken("team-yubune", "loop-pilot", "main", "tok"),
+      git.pushWithToken("Edership", "loop-pilot", "main", "tok"),
     ).toThrow(/global git config carries .* url rewrite rule/);
 
     // 1: unset extraheader, 2: global get-regexp (returned rules → throw).
@@ -489,7 +489,7 @@ describe("subprocess wrappers", () => {
     }) as unknown as typeof execFileSync);
 
     expect(() =>
-      git.pushWithToken("team-yubune", "loop-pilot", "main", "tok"),
+      git.pushWithToken("Edership", "loop-pilot", "main", "tok"),
     ).not.toThrow();
 
     // 1: unset extraheader, 2: global get-regexp (rule ignored), 3: local
@@ -514,7 +514,7 @@ describe("subprocess wrappers", () => {
     }) as unknown as typeof execFileSync);
 
     try {
-      git.pushWithToken("team-yubune", "loop-pilot", "main", "tok");
+      git.pushWithToken("Edership", "loop-pilot", "main", "tok");
       throw new Error("expected pushWithToken to throw");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -530,11 +530,11 @@ describe("subprocess wrappers", () => {
   });
 
   it("rewriteValueCanRedirect: matches values that are a prefix of the destination", () => {
-    const dest = "https://github.com/team-yubune/loop-pilot.git";
+    const dest = "https://github.com/Edership/loop-pilot.git";
     expect(git.rewriteValueCanRedirect("https://", dest)).toBe(true);
     expect(git.rewriteValueCanRedirect("https://github.com/", dest)).toBe(true);
     expect(
-      git.rewriteValueCanRedirect("https://github.com/team-yubune/", dest),
+      git.rewriteValueCanRedirect("https://github.com/Edership/", dest),
     ).toBe(true);
     // An empty insteadOf value is a prefix of every URL — git applies it to
     // all pushes, so it must be treated as redirecting (not safe).
@@ -542,7 +542,7 @@ describe("subprocess wrappers", () => {
   });
 
   it("rewriteValueCanRedirect: ignores unrelated rewrite values", () => {
-    const dest = "https://github.com/team-yubune/loop-pilot.git";
+    const dest = "https://github.com/Edership/loop-pilot.git";
     expect(git.rewriteValueCanRedirect("https://gitlab.com/", dest)).toBe(false);
     expect(git.rewriteValueCanRedirect("git@github.com:", dest)).toBe(false);
     expect(
@@ -552,7 +552,7 @@ describe("subprocess wrappers", () => {
     // whose value is a prefix of the URL.
     expect(
       git.rewriteValueCanRedirect(
-        "https://github.com/team-yubune/loop-pilot.git/extra",
+        "https://github.com/Edership/loop-pilot.git/extra",
         dest,
       ),
     ).toBe(false);

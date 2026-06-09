@@ -39,13 +39,13 @@ adopter-facing behavior change to the loop.
   `looppilot` user already exists).
 - README.md / README.ja.md: GitHub Marketplace badge + a note that the listing is a
   discoverability front door, not the way to run LoopPilot (do not use the bare
-  `uses: team-yubune/loop-pilot@v1` ref).
+  `uses: Edership/loop-pilot@v1` ref).
 - `tests/marketplace-facade.test.ts`: CI guards that the root facade meets
   Marketplace listing requirements (name / description / branding) and stays an
   inert signpost (exit 0, no sub-action / `./` refs).
 - `docs/operations/releasing.md`: root `action.yml` added to the documented
   `@v1`-consumed surface; notes it is intentionally excluded from the action-ref
-  scan because it carries no `team-yubune/loop-pilot/...@v<major>` refs.
+  scan because it carries no `Edership/loop-pilot/...@v<major>` refs.
 
 ## [1.4.0] - 2026-05-31
 
@@ -189,5 +189,5 @@ missed (epic TY-352). Every change touches the `@v1`-consumed surface.
 
 ### Added
 - First stable release. Distributes the `init` and `loop` composite actions as
-  `team-yubune/loop-pilot/{init,loop}@v1`, plus the tag-driven release pipeline
+  `Edership/loop-pilot/{init,loop}@v1`, plus the tag-driven release pipeline
   that keeps the moving `v1` tag and GitHub Releases in sync (TY-342).

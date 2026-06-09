@@ -21,7 +21,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     anthropicApiKey: "anth-secret",
     claudeCodeOauthToken: "oauth-secret",
     githubToken: "gh-secret",
-    repoOwner: "team-yubune",
+    repoOwner: "Edership",
     repoName: "loop-pilot",
     prNumber: 1,
     triggerCommentId: 0,

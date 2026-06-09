@@ -11,7 +11,7 @@
 #         pull-requests: write
 #         issues: write
 #         actions: read
-#       uses: team-yubune/loop-pilot/.github/workflows/loop.yml@v1
+#       uses: Edership/loop-pilot/.github/workflows/loop.yml@v1
 #       secrets:
 #         CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 #         LOOPPILOT_PUSH_TOKEN:       ${{ secrets.LOOPPILOT_PUSH_TOKEN }}
@@ -35,7 +35,7 @@
 # an operator variable to the README without also wiring it into `with:` here
 # silently drops it (that omission was the TY-350 scope-policy bug).
 #
-# Sub-action refs MUST be `team-yubune/loop-pilot/loop@v1` (NOT `./loop`): a `./`
+# Sub-action refs MUST be `Edership/loop-pilot/loop@v1` (NOT `./loop`): a `./`
 # ref inside a reusable workflow resolves against the CALLER's checkout, which
 # does not contain this repo's action, and would break for every adopter.
 name: LoopPilot Loop (reusable)
@@ -255,7 +255,7 @@ jobs:
         # Pinned path@ref (NOT `./loop`): inside a reusable workflow a `./` ref
         # resolves against the caller's checkout. Keep this `@v1` in sync with
         # releases — the release.yml ref guard (TY-342) enforces it.
-        uses: team-yubune/loop-pilot/loop@v1
+        uses: Edership/loop-pilot/loop@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}

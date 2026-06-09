@@ -6,15 +6,15 @@
 
 > GitHub Pull Request 向けの AI レビュー修正ループ。LoopPilot は Codex に PR レビューを依頼し、指摘を Claude に修正させ、チェックを実行し、PR がクリーンになるまで繰り返します。
 
-LoopPilot は GitHub Actions の再利用可能 workflow として動きます。サーバー運用やホスティングは不要です。推奨の導入方法は [`gh looppilot` CLI](https://github.com/team-yubune/gh-looppilot) です。
+LoopPilot は GitHub Actions の再利用可能 workflow として動きます。サーバー運用やホスティングは不要です。推奨の導入方法は [`gh looppilot` CLI](https://github.com/Edership/gh-looppilot) です。
 
-> **[GitHub Marketplace の掲載](https://github.com/marketplace/actions/looppilot-pr-review-fix-loop)は発見性のための入口であり、LoopPilot の実行方法ではありません。** LoopPilot はイベント駆動で再利用可能 workflow として動くため、ジョブに追加する step ではありません。`uses: team-yubune/loop-pilot@v1` をジョブに書かないでください — このルート action は導入手順を表示して終了するだけです。導入は下記の `gh looppilot` CLI、または[手動の再利用可能 workflow caller](#手動導入)（`team-yubune/loop-pilot/.github/workflows/{init,loop}.yml@v1`）を使ってください。
+> **[GitHub Marketplace の掲載](https://github.com/marketplace/actions/looppilot-pr-review-fix-loop)は発見性のための入口であり、LoopPilot の実行方法ではありません。** LoopPilot はイベント駆動で再利用可能 workflow として動くため、ジョブに追加する step ではありません。`uses: Edership/loop-pilot@v1` をジョブに書かないでください — このルート action は導入手順を表示して終了するだけです。導入は下記の `gh looppilot` CLI、または[手動の再利用可能 workflow caller](#手動導入)（`Edership/loop-pilot/.github/workflows/{init,loop}.yml@v1`）を使ってください。
 
 ## まずここから
 
 ```bash
 # 1. 一度だけインストール。Node >= 20 と認証済み GitHub CLI が必要です。
-gh extension install team-yubune/gh-looppilot
+gh extension install Edership/gh-looppilot
 
 # 2. LoopPilot を入れたいリポジトリで実行します。
 cd path/to/your-repo
@@ -169,7 +169,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: team-yubune/loop-pilot/.github/workflows/init.yml@v1
+    uses: Edership/loop-pilot/.github/workflows/init.yml@v1
     secrets:
       CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 ```
@@ -192,7 +192,7 @@ jobs:
       pull-requests: write
       issues: write
       actions: read
-    uses: team-yubune/loop-pilot/.github/workflows/loop.yml@v1
+    uses: Edership/loop-pilot/.github/workflows/loop.yml@v1
     secrets:
       CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
       LOOPPILOT_PUSH_TOKEN: ${{ secrets.LOOPPILOT_PUSH_TOKEN }}

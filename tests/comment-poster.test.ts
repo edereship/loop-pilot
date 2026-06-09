@@ -70,9 +70,9 @@ beforeEach(() => {
 describe("buildStatusCommentPermalink (TY-259)", () => {
   it("formats the comment permalink in the GitHub standard form", () => {
     expect(
-      buildStatusCommentPermalink("team-yubune", "loop-pilot", 65, 999),
+      buildStatusCommentPermalink("Edership", "loop-pilot", 65, 999),
     ).toBe(
-      "https://github.com/team-yubune/loop-pilot/pull/65#issuecomment-999",
+      "https://github.com/Edership/loop-pilot/pull/65#issuecomment-999",
     );
   });
 });
@@ -174,7 +174,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
 describe("postTerminalNotification (TY-259)", () => {
   it("posts a top-level comment with the rendered body", async () => {
     await postTerminalNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       STATUS_COMMENT_ID,
@@ -186,7 +186,7 @@ describe("postTerminalNotification (TY-259)", () => {
     const { body } = expectPostCommentInvocation(mockedGhApi.mock.calls[0]);
     expect(body).toContain("LoopPilot completed");
     expect(body).toContain(
-      `https://github.com/team-yubune/loop-pilot/pull/65#issuecomment-${STATUS_COMMENT_ID}`,
+      `https://github.com/Edership/loop-pilot/pull/65#issuecomment-${STATUS_COMMENT_ID}`,
     );
   });
 
@@ -195,7 +195,7 @@ describe("postTerminalNotification (TY-259)", () => {
 
     await expect(
       postTerminalNotification(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         65,
         STATUS_COMMENT_ID,
@@ -214,7 +214,7 @@ describe("postTerminalNotification (TY-259)", () => {
 describe("terminal poster wiring (TY-259)", () => {
   it("postCompletionComment also posts a top-level notification", async () => {
     const result = await postCompletionComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       4,
@@ -231,7 +231,7 @@ describe("terminal poster wiring (TY-259)", () => {
 
   it("postStopComment also posts a top-level notification with the reason label", async () => {
     const result = await postStopComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       "scope_violation",
@@ -252,7 +252,7 @@ describe("terminal poster wiring (TY-259)", () => {
 
   it("postInitIncompleteComment also posts a top-level notification", async () => {
     const result = await postInitIncompleteComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       "token",
@@ -269,7 +269,7 @@ describe("terminal poster wiring (TY-259)", () => {
 
   it("postClaudeCodeActionFixSummary does NOT post a top-level notification (iter progress stays aggregated)", async () => {
     const result = await postClaudeCodeActionFixSummary(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       1,
@@ -285,7 +285,7 @@ describe("terminal poster wiring (TY-259)", () => {
 
   it("postTestFailureComment does NOT post a top-level notification on its own (post-fix follows with postStopComment)", async () => {
     const result = await postTestFailureComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       "FAIL\nFAIL\n",
@@ -313,7 +313,7 @@ describe("terminal poster wiring (TY-259)", () => {
       "~~~",
     ].join("\n");
     await postTestFailureComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       payload,
@@ -343,7 +343,7 @@ describe("terminal poster wiring (TY-259)", () => {
     const longBacktickRun = "`".repeat(500);
     const payload = `before\n${longBacktickRun}\nafter`;
     await postTestFailureComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       payload,
@@ -367,7 +367,7 @@ describe("terminal poster wiring (TY-259)", () => {
   it("caps fence length for pathologically long tilde runs (TY-275 #8, Codex r3257188563)", async () => {
     const longTildeRun = "~".repeat(500);
     await postTestFailureComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       `before\n${longTildeRun}\nafter`,
@@ -383,7 +383,7 @@ describe("terminal poster wiring (TY-259)", () => {
     mockedGhApi.mockRejectedValueOnce(new Error("rate limited"));
 
     const result = await postCompletionComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       2,
@@ -473,7 +473,7 @@ describe("deriveIterationProgress (TY-291 #3)", () => {
 describe("postClaudeCodeActionFixSummary (TY-291 #1)", () => {
   it("writes Current=`Fix committed (iteration N) — queuing Codex re-review` (UX-04)", async () => {
     await postClaudeCodeActionFixSummary(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       3,
@@ -492,7 +492,7 @@ describe("postClaudeCodeActionFixSummary (TY-291 #1)", () => {
 
   it("forwards iteration progress when provided", async () => {
     await postClaudeCodeActionFixSummary(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       3,
@@ -515,7 +515,7 @@ describe("postClaudeCodeActionFixSummary (TY-291 #1)", () => {
 describe("postCompletionComment (TY-291 #4)", () => {
   it("uses the auto-merge imperative when autoMergeOnClean=true", async () => {
     await postCompletionComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       2,
@@ -532,7 +532,7 @@ describe("postCompletionComment (TY-291 #4)", () => {
 
   it("uses the manual-merge imperative when autoMergeOnClean=false", async () => {
     await postCompletionComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       2,
@@ -547,7 +547,7 @@ describe("postCompletionComment (TY-291 #4)", () => {
 
   it("BUG-01: surfaces unparseable Codex comments in the entry body, nextAction, and top-level notification", async () => {
     await postCompletionComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       2,
@@ -570,7 +570,7 @@ describe("postCompletionComment (TY-291 #4)", () => {
 
   it("BUG-01: leaves the completion comment unchanged when no comments were unparseable", async () => {
     await postCompletionComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       2,
@@ -590,7 +590,7 @@ describe("postCompletionComment (TY-291 #4)", () => {
     // so the completion comment must not tell operators that auto-merge will be
     // attempted — that would be contradictory and cause indefinite waiting.
     await postCompletionComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       2,
@@ -609,7 +609,7 @@ describe("postCompletionComment (TY-291 #4)", () => {
 describe("postStopComment (TY-291 #4)", () => {
   it("sets nextAction via nextActionForStopReason instead of generic text", async () => {
     await postStopComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       "max_iterations",
@@ -629,7 +629,7 @@ describe("postStopComment (TY-291 #4)", () => {
 describe("postInitialStatusComment (TY-291 #2)", () => {
   it("seeds the visible status comment with iteration budget = 0 / N", async () => {
     const result = await postInitialStatusComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       20,
@@ -651,7 +651,7 @@ describe("postInitialStatusComment (TY-291 #2)", () => {
 describe("postFixingStartComment (TY-291 #2)", () => {
   it("announces the fixing transition with iteration and tier in the header", async () => {
     await postFixingStartComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       4,
@@ -674,7 +674,7 @@ describe("postFixingStartComment (TY-291 #2)", () => {
 
   it("sets openFindings so operators see the finding count during the repair run (Finding 5)", async () => {
     await postFixingStartComment(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       1,
@@ -693,7 +693,7 @@ describe("postFixingStartComment (TY-291 #2)", () => {
 
 describe("buildAutoMergeSkipBody (TY-295)", () => {
   const RUN_URL =
-    "https://github.com/team-yubune/loop-pilot/actions/runs/12345";
+    "https://github.com/Edership/loop-pilot/actions/runs/12345";
 
   it("starts every body with the AUTO_MERGE_SKIP_PREFIX for operator scannability and dedup", () => {
     // The dedup query in `recentAutoMergeSkipExists` matches on this prefix,
@@ -825,7 +825,7 @@ describe("buildAutoMergeSkipBody (TY-295)", () => {
 
 describe("postAutoMergeSkipNotification (TY-295)", () => {
   const RUN_URL =
-    "https://github.com/team-yubune/loop-pilot/actions/runs/12345";
+    "https://github.com/Edership/loop-pilot/actions/runs/12345";
 
   it("posts when no recent skip notification exists in the dedup window", async () => {
     // First ghApi call: dedup query returns no matching bodies.
@@ -834,7 +834,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     mockedGhApi.mockResolvedValueOnce(String(POSTED_COMMENT_ID)); // postComment
 
     await postAutoMergeSkipNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
@@ -857,7 +857,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     );
 
     await postAutoMergeSkipNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
@@ -877,7 +877,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     mockedGhApi.mockResolvedValueOnce(String(POSTED_COMMENT_ID));
 
     await postAutoMergeSkipNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       { kind: "head_empty" },
@@ -901,7 +901,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
 
     await expect(
       postAutoMergeSkipNotification(
-        "team-yubune",
+        "Edership",
         "loop-pilot",
         65,
         { kind: "head_empty" },
@@ -922,7 +922,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     mockedGhApi.mockResolvedValueOnce(String(POSTED_COMMENT_ID));
 
     await postAutoMergeSkipNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       { kind: "head_empty" },
@@ -940,7 +940,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     mockedGhApi.mockResolvedValueOnce(String(POSTED_COMMENT_ID));
 
     await postAutoMergeSkipNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       { kind: "head_empty" },
@@ -970,7 +970,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     mockedGhApi.mockResolvedValueOnce(bodies);
 
     await postAutoMergeSkipNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
@@ -994,7 +994,7 @@ describe("postAutoMergeSkipNotification (TY-295)", () => {
     mockedGhApi.mockResolvedValueOnce(String(POSTED_COMMENT_ID)); // postComment
 
     await postAutoMergeSkipNotification(
-      "team-yubune",
+      "Edership",
       "loop-pilot",
       65,
       { kind: "ci_failed", failures: [{ name: "ci", conclusion: "failure" }] },
