@@ -5,6 +5,7 @@ import {
   PREVIOUS_CHECK_FAILURE_MAX_CHARS,
   buildClaudeCodeRepairPrompt,
   buildClaudeCodeRepairRequest,
+  selectEmbeddedFindings,
   serializeClaudeCodeRepairRequest,
   truncatePreviousCheckFailure,
   type ClaudeCodeRepairRequest,
@@ -20,6 +21,7 @@ const prContext: PrContext = {
 const findings: Finding[] = [
   {
     severity: "P1",
+    commentId: 0,
     path: "src/auth/middleware.ts",
     line: 42,
     title: "Unauthenticated requests reach protected handler",
@@ -27,6 +29,7 @@ const findings: Finding[] = [
   },
   {
     severity: "P0",
+    commentId: 0,
     path: "src/auth/session.ts",
     line: 84,
     title: "Token refresh path can bypass expiry validation",
@@ -34,6 +37,7 @@ const findings: Finding[] = [
   },
   {
     severity: "P2",
+    commentId: 0,
     path: "src/auth/logger.ts",
     line: 17,
     title: "Debug log leaks request id format",
@@ -145,12 +149,56 @@ function makeP2Finding(index: number, bodyLen = 200): Finding {
   const padded = String(index).padStart(4, "0");
   return {
     severity: "P2",
+    commentId: 0,
     path: `src/synthetic/file-${padded}.ts`,
     line: 1,
     title: `synthetic finding ${padded}`,
     body: `body-${padded}-${"x".repeat(Math.max(0, bodyLen - 10))}`,
   };
 }
+
+describe("selectEmbeddedFindings (TY-360)", () => {
+  it("returns all findings unchanged when under the cap", () => {
+    const fs = Array.from({ length: 5 }, (_, i) => makeP2Finding(i));
+    expect(selectEmbeddedFindings(fs)).toHaveLength(5);
+  });
+
+  it("caps membership at MAX_FINDINGS_PER_REQUEST, keeping highest priority", () => {
+    // commentId encodes original index so we can assert which ids survive.
+    const fs = Array.from({ length: MAX_FINDINGS_PER_REQUEST + 5 }, (_, i) => ({
+      ...makeP2Finding(i),
+      commentId: i,
+    }));
+    const kept = selectEmbeddedFindings(fs);
+    expect(kept).toHaveLength(MAX_FINDINGS_PER_REQUEST);
+    // makeP2Finding sorts by path == index order, so the dropped 5 are the
+    // highest-indexed; the overflow commentIds must be absent.
+    const keptIds = new Set(kept.map((f) => f.commentId));
+    for (let i = MAX_FINDINGS_PER_REQUEST; i < MAX_FINDINGS_PER_REQUEST + 5; i += 1) {
+      expect(keptIds.has(i)).toBe(false);
+    }
+  });
+
+  it("selects exactly the commentIds buildClaudeCodeRepairRequest embeds", () => {
+    // Lock the invariant that the stored resolve set == the forwarded set, even
+    // for >cap inputs presented out of priority order.
+    const fs = Array.from({ length: MAX_FINDINGS_PER_REQUEST + 7 }, (_, i) => ({
+      ...makeP2Finding(MAX_FINDINGS_PER_REQUEST + 7 - i),
+      commentId: i,
+    }));
+    const embeddedPaths = new Set(
+      buildClaudeCodeRepairRequest({
+        prContext,
+        findings: fs,
+        iteration: 1,
+        maxIterations: 20,
+        checkCommand: "npm run check",
+      }).findings.map((f) => f.path),
+    );
+    const selectedPaths = new Set(selectEmbeddedFindings(fs).map((f) => f.path));
+    expect(selectedPaths).toEqual(embeddedPaths);
+  });
+});
 
 describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("embeds all findings when the count is at MAX_FINDINGS_PER_REQUEST - 1", () => {
@@ -225,6 +273,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("keeps bodies untouched at MAX_FINDING_BODY_CHARS - 1 and exactly MAX_FINDING_BODY_CHARS", () => {
     const finding1: Finding = {
       severity: "P1",
+      commentId: 0,
       path: "src/foo.ts",
       line: 1,
       title: "body cap - 1",
@@ -232,6 +281,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     };
     const finding2: Finding = {
       severity: "P1",
+      commentId: 0,
       path: "src/bar.ts",
       line: 1,
       title: "body cap",
@@ -253,6 +303,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("truncates the body once it exceeds MAX_FINDING_BODY_CHARS by one character", () => {
     const finding: Finding = {
       severity: "P1",
+      commentId: 0,
       path: "src/foo.ts",
       line: 1,
       title: "body cap + 1",
@@ -278,6 +329,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
   it("guarantees payload-level ClaudeCodeRepairFinding.body.length <= MAX_FINDING_BODY_CHARS invariant", () => {
     const finding: Finding = {
       severity: "P0",
+      commentId: 0,
       path: "src/huge.ts",
       line: 1,
       title: "huge body",
@@ -305,6 +357,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     );
     const oversized: Finding = {
       severity: "P0",
+      commentId: 0,
       path: "src/aaa-oversized.ts",
       line: 1,
       title: "oversized body",
@@ -351,6 +404,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     const longBodyB = "B".repeat(MAX_FINDING_BODY_CHARS + 100);
     const f1: Finding = {
       severity: "P2",
+      commentId: 0,
       path: "src/same.ts",
       line: 1,
       title: "same",
@@ -358,6 +412,7 @@ describe("buildClaudeCodeRepairRequest finding caps", () => {
     };
     const f2: Finding = {
       severity: "P2",
+      commentId: 0,
       path: "src/same.ts",
       line: 1,
       title: "same",
@@ -518,6 +573,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
     const fs: Finding[] = [
       {
         severity: "P1",
+        commentId: 0,
         path: "src/auth/session.ts",
         line: null,
         title: "File-level concern",
@@ -525,6 +581,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
       },
       {
         severity: "P2",
+        commentId: 0,
         path: "src/auth/logger.ts",
         line: 17,
         title: "Inline concern",
@@ -549,6 +606,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
     const fs: Finding[] = [
       {
         severity: "P1",
+        commentId: 0,
         path: "src/foo.ts",
         line: 5,
         title: "Inline at line 5",
@@ -556,6 +614,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
       },
       {
         severity: "P1",
+        commentId: 0,
         path: "src/foo.ts",
         line: null,
         title: "File-level for foo",
@@ -582,6 +641,7 @@ describe("buildClaudeCodeRepairPrompt", () => {
       { length: MAX_FINDINGS_PER_REQUEST + 5 },
       (_, i) => ({
         severity: "P2",
+        commentId: 0,
         path: `src/synthetic/file-${String(i).padStart(4, "0")}.ts`,
         line: 1,
         title: `synthetic ${i}`,

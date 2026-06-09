@@ -1,9 +1,30 @@
 /** Severity ラベル。urgency 順 (P0 が最も緊急、P3 が最低)。 */
 export type Severity = "P0" | "P1" | "P2" | "P3";
 
+/**
+ * A GitHub PR review comment id (REST `pulls/{n}/comments[].id`). Per the
+ * GitHub API contract the GraphQL `reviewThreads.comments.nodes.databaseId`
+ * exposes this same underlying value, which is what lets TY-360 map a finding
+ * to its review thread by exact id match. The whole resolve feature relies on
+ * that equivalence and degrades gracefully (every id reported `unmatched`) if
+ * GitHub ever changes it. Bare alias (not a brand) on purpose — it documents
+ * the shared id space without forcing casts at every JSON/REST boundary; the
+ * thread node id is a distinct `string`, so the dangerous mix-up is already
+ * caught by the compiler.
+ */
+export type CommentId = number;
+
 /** Codex インラインコメントから抽出した指摘 */
 export interface Finding {
   severity: Severity;
+  /**
+   * Comment id of the Codex inline review comment this finding was parsed from.
+   * Used by post-fix to resolve the matching review thread after a repair
+   * (TY-360). Intentionally NOT part of `computeFindingsHash` — the hash keys
+   * on (severity, path, body) only, so carrying the id here does not perturb
+   * loop detection.
+   */
+  commentId: CommentId;
   path: string;
   /**
    * 1-based line number where Codex anchored the comment, or `null` for
@@ -64,6 +85,21 @@ export interface ReviewState {
    * stale" so existing in-flight PRs do not regress to `state_corrupted`.
    */
   fixingStartedAt: string | null;
+  /**
+   * Comment ids of the findings actually embedded in the repair prompt for the
+   * current `fixing` iteration (TY-360). Pre-fix Phase 3 records the
+   * `selectEmbeddedFindings` subset when it claims `fixing` (the overflow past
+   * `MAX_FINDINGS_PER_REQUEST` is excluded — those threads were never sent for
+   * repair); post-fix reads them after a successful commit/push to resolve the
+   * matching Codex review threads (best-effort), then clears the list on every
+   * terminal transition (`waiting_codex` / `done` / `stopped` / stale recovery).
+   * Empty for legacy state comments (normalized by `deserializeState`) and
+   * whenever the iteration was not driven by in-scope findings. Only
+   * finding-derived ids land here, so below-threshold / unparseable Codex
+   * threads are never resolved. Bounded to `MAX_FINDING_COMMENT_IDS` (500) on
+   * both the serialize (write) and validate (read) paths in `state-manager`.
+   */
+  currentIterationFindingCommentIds: CommentId[];
 }
 
 export interface FindingsHashEntry {
@@ -132,7 +168,7 @@ export interface PrContext {
 
 /** GitHub API から取得した review comment の生データ */
 export interface RawReviewComment {
-  id: number;
+  id: CommentId;
   user: { login: string };
   body: string;
   path: string;

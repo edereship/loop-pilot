@@ -4,6 +4,7 @@ import type { Finding } from "../src/types.js";
 
 const finding = (severity: "P0" | "P1" | "P2"): Finding => ({
   severity,
+  commentId: 1,
   path: "src/foo.ts",
   line: 1,
   title: "t",

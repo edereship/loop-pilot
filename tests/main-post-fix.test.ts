@@ -114,6 +114,12 @@ function makeDeps(
       reposts: 0,
       lastCommentId: 22,
     }),
+    resolveFindingThreads: vi.fn().mockResolvedValue({
+      resolved: 0,
+      alreadyResolved: 0,
+      failed: 0,
+      unmatched: 0,
+    }),
     postStopComment: vi.fn().mockResolvedValue(33),
     postTestFailureComment: vi.fn().mockResolvedValue(44),
     postTerminalNotification: vi.fn().mockResolvedValue(undefined),
@@ -210,6 +216,60 @@ describe("runPostFix", () => {
     );
   });
 
+  it("TY-360: resolves the iteration's in-scope finding threads after a clean push (github-token)", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState({ currentIterationFindingCommentIds: [501, 502] }),
+    });
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    // Resolve is invoked with the in-scope finding ids from the (fixing) state
+    // and the github-token (pull-requests:write), NOT the push token.
+    expect(deps.resolveFindingThreads).toHaveBeenCalledWith({
+      owner: "team-yubune",
+      repo: "loop-pilot",
+      prNumber: 99,
+      commentIds: [501, 502],
+      token: "github-token",
+    });
+    // It runs after the repair was committed/pushed and before the re-review.
+    expect(deps.commitMessages.length).toBe(1);
+    expect(deps.pushCalls.length).toBe(1);
+    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+  });
+
+  it("TY-360: a resolve failure is best-effort — the loop still re-requests Codex and reaches waiting_codex", async () => {
+    const deps = makeDeps({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state: makeState({ currentIterationFindingCommentIds: [501] }),
+    });
+    // Even if the (already best-effort) resolver somehow throws, post-fix must
+    // not let it break the commit / @codex review / state transition.
+    (deps.resolveFindingThreads as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("graphql exploded"),
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    expect(deps.pushCalls.length).toBe(1);
+    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+    expect(deps.updateStateComment).toHaveBeenCalledWith(
+      "team-yubune",
+      "loop-pilot",
+      100,
+      expect.objectContaining({ status: "waiting_codex" }),
+      "github-token",
+      expect.any(Object),
+    );
+  });
+
   it("TY-327: a non-412 waiting_codex write failure after a successful push preserves the committed iteration (no rollback)", async () => {
     const deps = makeDeps({
       found: true,
@@ -281,6 +341,34 @@ describe("runPostFix", () => {
     expect(lastState.findingsHashHistory).toHaveLength(1);
     expect(deps.postClaudeCodeActionFixSummary).not.toHaveBeenCalled();
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+  });
+
+  it("TY-360: clears currentIterationFindingCommentIds on the failureExit stop path (no commit pushed)", async () => {
+    // The failureExit clear at main-post-fix.ts is load-bearing:
+    // `rollbackFixingClaim` does NOT touch the comment ids, so without the
+    // explicit `[]` a stop reached without a pushed commit would carry the
+    // in-scope ids into the stopped state. A soft /restart-review would then
+    // resolve threads for findings this iteration never actually repaired.
+    const deps = makeDeps(
+      {
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T12:00:00Z",
+        state: makeState({ currentIterationFindingCommentIds: [9001, 9002] }),
+      },
+      { hasStagedChanges: () => false },
+    );
+
+    await runPostFix(baseConfig, deps, baseInputs);
+
+    const calls = (deps.updateStateComment as ReturnType<typeof vi.fn>).mock.calls;
+    const lastState = calls[calls.length - 1][3] as ReviewState;
+    expect(lastState.status).toBe("stopped");
+    expect(lastState.stopReason).toBe("action_no_op");
+    expect(lastState.currentIterationFindingCommentIds).toEqual([]);
+    // No commit was pushed, so the resolve pass must never run on this path.
+    expect(deps.resolveFindingThreads).not.toHaveBeenCalled();
   });
 
   it("TY-286 #A: does NOT emit state_conflict 🛑 when the Phase 4 2nd write conflicts; warns instead", async () => {

@@ -19433,6 +19433,7 @@ var VALID_STOP_REASONS = new Set(Object.keys(STOP_REASON_LABELS));
 var LAST_CLAUDE_COMMIT_SHA_MAX_CHARS = 64;
 var FINDINGS_HASH_MAX_CHARS = 64;
 var TIMESTAMP_MAX_CHARS = 64;
+var MAX_FINDING_COMMENT_IDS = 500;
 var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
 var TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 function getTrustedStateCommentAuthors(env = process.env) {
@@ -19487,6 +19488,15 @@ function validateState(obj) {
   s.fixingStartedAt.length > TIMESTAMP_MAX_CHARS)) {
     return false;
   }
+  if ("currentIterationFindingCommentIds" in s) {
+    const ids = s.currentIterationFindingCommentIds;
+    if (!Array.isArray(ids) || ids.length > MAX_FINDING_COMMENT_IDS)
+      return false;
+    for (const id of ids) {
+      if (!Number.isSafeInteger(id) || id < 0)
+        return false;
+    }
+  }
   for (const entry2 of s.findingsHashHistory) {
     if (typeof entry2 !== "object" || entry2 === null)
       return false;
@@ -19506,24 +19516,28 @@ function serializeState(state) {
     const json = JSON.stringify(s, null, 2);
     return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
   };
-  const step1 = {
+  const boundedState = state.currentIterationFindingCommentIds.length > MAX_FINDING_COMMENT_IDS ? {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
+    currentIterationFindingCommentIds: state.currentIterationFindingCommentIds.slice(0, MAX_FINDING_COMMENT_IDS)
+  } : state;
+  const step1 = {
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
   const body1 = wrap(step1);
   if (body1.length <= MAX_SERIALIZED_BYTES)
     return body1;
   const step2 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
-    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
+    previousCheckFailure: boundedState.previousCheckFailure ? truncatePreviousCheckFailure(boundedState.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
   const body2 = wrap(step2);
   if (body2.length <= MAX_SERIALIZED_BYTES)
     return body2;
   const step3 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
     previousCheckFailure: null
   };
   return wrap(step3);
@@ -19548,7 +19562,11 @@ function deserializeState(commentBody) {
       // TY-301 #2: legacy state comments lack this field. Normalize to `null`
       // so the dedup check in pre-fix falls back to id-only comparison
       // (preserving the pre-TY-301 behaviour for in-flight PRs).
-      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null
+      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null,
+      // TY-360: legacy state comments lack this field. Normalize to `[]` so
+      // post-fix can rely on it being a real array (no resolve targets) instead
+      // of guarding for undefined.
+      currentIterationFindingCommentIds: parsed.currentIterationFindingCommentIds ?? []
     };
     return normalized;
   } catch {
@@ -21101,6 +21119,197 @@ function parseGitNumstat(output) {
   return files;
 }
 
+// dist/review-thread-resolver.js
+var REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      reviewThreads(first:100,after:$cursor){
+        pageInfo{hasNextPage endCursor}
+        nodes{
+          id
+          isResolved
+          comments(first:50){pageInfo{hasNextPage} nodes{databaseId}}
+        }
+      }
+    }
+  }
+}`;
+var RESOLVE_THREAD_MUTATION = `mutation($threadId:ID!){
+  resolveReviewThread(input:{threadId:$threadId}){
+    thread{id isResolved}
+  }
+}`;
+var MAX_REVIEW_THREAD_PAGES = 50;
+function parseReviewThreadsResponse(stdout) {
+  const parsed = JSON.parse(stdout);
+  const threads = parsed.data?.repository?.pullRequest?.reviewThreads;
+  const malformed = threads === void 0 || threads === null;
+  const rawNodes = Array.isArray(threads?.nodes) ? threads.nodes : [];
+  const nodes = [];
+  let malformedNodeCount = 0;
+  let truncatedThreadCount = 0;
+  for (const node of rawNodes) {
+    if (typeof node !== "object" || node === null) {
+      malformedNodeCount += 1;
+      continue;
+    }
+    const n = node;
+    if (typeof n.id !== "string") {
+      malformedNodeCount += 1;
+      continue;
+    }
+    const commentNodes = Array.isArray(n.comments?.nodes) ? n.comments.nodes : [];
+    const commentDatabaseIds = [];
+    for (const c of commentNodes) {
+      const dbId = c?.databaseId;
+      if (typeof dbId === "number")
+        commentDatabaseIds.push(dbId);
+    }
+    if (n.comments?.pageInfo?.hasNextPage === true)
+      truncatedThreadCount += 1;
+    nodes.push({
+      id: n.id,
+      isResolved: n.isResolved === true,
+      commentDatabaseIds
+    });
+  }
+  const hasNextPage = threads?.pageInfo?.hasNextPage === true;
+  const endCursorRaw = threads?.pageInfo?.endCursor;
+  const endCursor = typeof endCursorRaw === "string" ? endCursorRaw : null;
+  return {
+    nodes,
+    hasNextPage,
+    endCursor,
+    malformed,
+    malformedNodeCount,
+    truncatedThreadCount
+  };
+}
+async function fetchReviewThreads(owner, repo, prNumber, token, warn = (m) => warning(m)) {
+  const all = [];
+  let cursor = null;
+  let moreRemaining = false;
+  let malformedNodes = 0;
+  let truncatedThreads = 0;
+  for (let page = 0; page < MAX_REVIEW_THREAD_PAGES; page += 1) {
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${REVIEW_THREADS_QUERY}`,
+      "-f",
+      `owner=${owner}`,
+      "-f",
+      `name=${repo}`,
+      "-F",
+      `number=${prNumber}`
+    ];
+    if (cursor !== null) {
+      args.push("-f", `cursor=${cursor}`);
+    }
+    const stdout = await ghApi(args, token);
+    const pageResult = parseReviewThreadsResponse(stdout);
+    if (pageResult.malformed) {
+      warn(`[review-thread-resolver] GraphQL returned no reviewThreads container for ${owner}/${repo}#${prNumber} (page ${page}); the token may lack access to the PR or the API shape changed. Treating as zero threads.`);
+      break;
+    }
+    all.push(...pageResult.nodes);
+    malformedNodes += pageResult.malformedNodeCount;
+    truncatedThreads += pageResult.truncatedThreadCount;
+    if (!pageResult.hasNextPage || pageResult.endCursor === null)
+      break;
+    cursor = pageResult.endCursor;
+    moreRemaining = page === MAX_REVIEW_THREAD_PAGES - 1;
+  }
+  if (moreRemaining) {
+    warn(`[review-thread-resolver] Hit MAX_REVIEW_THREAD_PAGES (${MAX_REVIEW_THREAD_PAGES}) for ${owner}/${repo}#${prNumber} with more pages remaining; the resolved set may be incomplete.`);
+  }
+  if (malformedNodes > 0) {
+    warn(`[review-thread-resolver] Dropped ${malformedNodes} review-thread node(s) lacking a usable id for ${owner}/${repo}#${prNumber}; their findings cannot be resolved and will count as unmatched. The GraphQL node shape may have changed.`);
+  }
+  if (truncatedThreads > 0) {
+    warn(`[review-thread-resolver] ${truncatedThreads} review thread(s) on ${owner}/${repo}#${prNumber} have more than 50 comments; a finding anchored past the 50th comment will not match and will count as unmatched.`);
+  }
+  return all;
+}
+async function resolveReviewThread(threadId, token) {
+  await ghApi([
+    "api",
+    "graphql",
+    "-f",
+    `query=${RESOLVE_THREAD_MUTATION}`,
+    "-f",
+    `threadId=${threadId}`
+  ], token);
+}
+function selectThreadsToResolve(threads, commentIds) {
+  const wanted = new Set(commentIds);
+  if (wanted.size === 0) {
+    return { toResolve: [], alreadyResolved: 0, unmatched: 0 };
+  }
+  const toResolve = [];
+  let alreadyResolved = 0;
+  const matchedCommentIds = /* @__PURE__ */ new Set();
+  for (const thread of threads) {
+    const matchedHere = thread.commentDatabaseIds.filter((id) => wanted.has(id));
+    if (matchedHere.length === 0)
+      continue;
+    for (const id of matchedHere)
+      matchedCommentIds.add(id);
+    if (thread.isResolved) {
+      alreadyResolved += 1;
+    } else {
+      toResolve.push(thread.id);
+    }
+  }
+  const unmatched = [...wanted].filter((id) => !matchedCommentIds.has(id)).length;
+  return { toResolve, alreadyResolved, unmatched };
+}
+var defaultDeps3 = {
+  fetchReviewThreads,
+  resolveReviewThread,
+  info: (message) => info(message),
+  warning: (message) => warning(message)
+};
+async function resolveFindingThreads(params, deps = defaultDeps3) {
+  const empty = {
+    resolved: 0,
+    alreadyResolved: 0,
+    failed: 0,
+    unmatched: 0
+  };
+  if (params.commentIds.length === 0)
+    return empty;
+  let threads;
+  try {
+    threads = await deps.fetchReviewThreads(params.owner, params.repo, params.prNumber, params.token);
+  } catch (error2) {
+    deps.warning(`[review-thread-resolver] Could not fetch review threads to resolve fixed findings: ${error2 instanceof Error ? error2.message : String(error2)}. Continuing \u2014 threads will remain open. If this persists across runs (not a transient 5xx), check that github-token still has 'pull-requests:write' on this repo.`);
+    return empty;
+  }
+  const { toResolve, alreadyResolved, unmatched } = selectThreadsToResolve(threads, params.commentIds);
+  let resolved = 0;
+  let failed = 0;
+  for (const threadId of toResolve) {
+    try {
+      await deps.resolveReviewThread(threadId, params.token);
+      resolved += 1;
+    } catch (error2) {
+      failed += 1;
+      deps.warning(`[review-thread-resolver] Failed to resolve review thread ${threadId}: ${error2 instanceof Error ? error2.message : String(error2)}. Continuing.`);
+    }
+  }
+  if (resolved > 0 || alreadyResolved > 0 || failed > 0 || unmatched > 0) {
+    const summary2 = `[review-thread-resolver] Resolved ${resolved} review thread(s) for fixed findings (already-resolved: ${alreadyResolved}, failed: ${failed}, unmatched: ${unmatched}).`;
+    if (failed > 0 || unmatched > 0) {
+      deps.warning(summary2);
+    } else {
+      deps.info(summary2);
+    }
+  }
+  return { resolved, alreadyResolved, failed, unmatched };
+}
+
 // dist/codex-ack.js
 var defaultCodexAckDeps = {
   getEyesReactors: async (owner, repo, commentId, token) => {
@@ -21218,7 +21427,7 @@ async function ensureCodexAck(params, deps = defaultCodexAckDeps) {
 }
 
 // dist/main-post-fix.js
-var defaultDeps3 = {
+var defaultDeps4 = {
   readState,
   updateStateComment,
   runCheckCommand,
@@ -21226,6 +21435,7 @@ var defaultDeps3 = {
   postClaudeCodeActionFixSummary,
   postCodexReviewRequest,
   ensureCodexAck: (params) => ensureCodexAck(params),
+  resolveFindingThreads,
   postStopComment,
   postTestFailureComment,
   postTerminalNotification,
@@ -21427,7 +21637,7 @@ function formatScopeViolationDetail(violation, maxFiles, maxLines) {
       ].join("\n");
   }
 }
-async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInputs()) {
+async function runPostFix(config, deps = defaultDeps4, inputs = readPostFixInputs()) {
   registerAllSecrets(config, deps.setSecret);
   deps.info(`[post-fix] Starting post-fix for PR #${config.prNumber}, iteration ${inputs.iteration}, action outcome: ${inputs.actionOutcome}`);
   const stateResult = await deps.readState(config.repoOwner, config.repoName, config.prNumber, config.githubToken);
@@ -21467,7 +21677,11 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
       stopReason: opts.stopReason,
       previousCheckFailure,
       // TY-273 #B4: leaving stale entry would mislead the next pre-fix run.
-      fixingStartedAt: null
+      fixingStartedAt: null,
+      // TY-360: no commit was pushed on this path, so the iteration's in-scope
+      // findings were not fixed — clear the ids so a soft /restart-review does
+      // not resolve threads for findings that were never repaired.
+      currentIterationFindingCommentIds: []
     };
     if (!await updateStateCommentLocked(stoppedState, `Could not stop after ${opts.stopReason}.`)) {
       return;
@@ -21970,7 +22184,13 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
     stopReason: null,
     previousCheckFailure: null,
     // TY-273 #B4: see no-op path and failureExit.
-    fixingStartedAt: null
+    fixingStartedAt: null,
+    // TY-360: the iteration's findings are fixed + committed; clear the ids
+    // from the persisted state. The resolve pass below reads the original
+    // `state.currentIterationFindingCommentIds` (captured at post-fix entry),
+    // so clearing here only prevents the next iteration's pre-fix / post-fix
+    // from re-seeing a stale set.
+    currentIterationFindingCommentIds: []
   };
   try {
     if (!await updateStateCommentLocked(waitingState, "Could not return state to waiting_codex after committing fixes.")) {
@@ -21995,6 +22215,17 @@ async function runPostFix(config, deps = defaultDeps3, inputs = readPostFixInput
       await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `The repair commit ${commitSha || "(unknown sha)"} was pushed, but persisting the waiting_codex state failed: ${message}. The commit is preserved on the branch; use /restart-review to resume.`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
     }
     return;
+  }
+  try {
+    await deps.resolveFindingThreads({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      prNumber: config.prNumber,
+      commentIds: state.currentIterationFindingCommentIds,
+      token: config.githubToken
+    });
+  } catch (resolveError) {
+    deps.warning(`[post-fix] Unexpected error resolving fixed review threads (continuing): ${resolveError instanceof Error ? resolveError.message : String(resolveError)}`);
   }
   deps.info("[post-fix] Posting @codex review request...");
   const codexRequestedAt = (/* @__PURE__ */ new Date()).toISOString();

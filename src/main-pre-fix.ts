@@ -44,6 +44,7 @@ import {
 import {
   buildClaudeCodeRepairRequest,
   buildClaudeCodeRepairPrompt,
+  selectEmbeddedFindings,
   type ClaudeCodeRepairScopePolicy,
 } from "./claude-code-repair-request.js";
 import { buildScopePolicy } from "./scope-checker.js";
@@ -432,6 +433,10 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       status: "stopped",
       stopReason: "workflow_crashed",
       fixingStartedAt: null,
+      // TY-360: this is a terminal transition; clear the in-scope ids so a soft
+      // /restart-review does not later resolve threads for findings the crashed
+      // iteration never actually repaired.
+      currentIterationFindingCommentIds: [],
     };
     if (
       !(await updateStateCommentLocked(
@@ -526,6 +531,14 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       // null, but a hand-edited / legacy state could carry a stale timestamp
       // that the spread would otherwise preserve into a `stopped` state.
       fixingStartedAt: null,
+      // TY-360: this branch spreads `...state` (it runs before
+      // `updatedStateBase` is built), so unlike the done / max_iterations /
+      // loop_detected paths it does not inherit the cleared array. Clear it
+      // explicitly with the same defense-in-depth reasoning as `fixingStartedAt`
+      // above: a hand-edited / legacy `waiting_codex` state carrying stale ids
+      // must not leak them into a `stopped` state where a soft /restart-review
+      // could later resolve threads for findings this run never repaired.
+      currentIterationFindingCommentIds: [],
     };
     if (
       !(await updateStateCommentLocked(
@@ -654,6 +667,12 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     // /restart-review that preserves this timestamp.
     lastCodexReviewReceivedAt:
       latestCommentTime || deps.now().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    // TY-360: clear any in-scope finding ids carried in from the previous
+    // iteration's `fixing` claim. Only the `fixingState` write below (Phase 3)
+    // repopulates this with the current iteration's findings; every terminal
+    // write derived from this base (done / loop_detected / max_iterations / …)
+    // keeps it empty so post-fix never resolves threads for a non-fixing state.
+    currentIterationFindingCommentIds: [],
   };
 
   if (findings.length === 0) {
@@ -905,6 +924,18 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     // stale-detector in subsequent pre-fix runs can distinguish a genuinely
     // hung `fixing` from one that legitimately resumed via /restart-review.
     fixingStartedAt: deps.now().toISOString(),
+    // TY-360: persist the comment ids of the findings actually embedded in the
+    // repair prompt so post-fix resolves only the threads sent for repair.
+    // `selectEmbeddedFindings` applies the same priority sort + count cap as the
+    // prompt builder, so when more than MAX_FINDINGS_PER_REQUEST in-scope
+    // findings exist the overflow ids are NOT stored (those threads were never
+    // forwarded to claude-code-action and must stay open). `findings` is already
+    // the severity-filtered in-scope set (below-threshold / unparseable were
+    // excluded by `filterAndParseComments`), so only fixable threads are ever
+    // targeted.
+    currentIterationFindingCommentIds: selectEmbeddedFindings(findings).map(
+      (f) => f.commentId,
+    ),
   };
   if (
     !(await updateStateCommentLocked(

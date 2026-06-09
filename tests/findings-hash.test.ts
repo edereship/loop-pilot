@@ -4,6 +4,7 @@ import type { Finding } from "../src/types.js";
 
 const baseFinding: Finding = {
   severity: "P1",
+  commentId: 1001,
   path: "src/foo.ts",
   line: 10,
   title: "Unused variable",
@@ -19,6 +20,7 @@ describe("computeFindingsHash", () => {
   it("returns the same hash regardless of input order (order independent)", () => {
     const finding2: Finding = {
       severity: "P0",
+      commentId: 1002,
       path: "src/bar.ts",
       line: 42,
       title: "Null dereference",

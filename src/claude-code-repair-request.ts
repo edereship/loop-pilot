@@ -177,10 +177,17 @@ function toRepairFinding(finding: Finding): ClaudeCodeRepairFinding {
   };
 }
 
-function compareFindings(
-  a: ClaudeCodeRepairFinding,
-  b: ClaudeCodeRepairFinding
-): number {
+/**
+ * Fields the count-cap ordering keys on. Both `Finding` and
+ * `ClaudeCodeRepairFinding` satisfy this, so `compareFindings` /
+ * `selectEmbeddedFindings` can rank either shape with one comparator.
+ */
+type SortableFinding = Pick<
+  Finding,
+  "severity" | "path" | "line" | "title" | "body"
+>;
+
+function compareFindings(a: SortableFinding, b: SortableFinding): number {
   const sev = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
   if (sev !== 0) return sev;
   if (a.path !== b.path) return a.path < b.path ? -1 : 1;
@@ -266,6 +273,26 @@ function applyFindingCaps(findings: ClaudeCodeRepairFinding[]): {
   };
 }
 
+/** Sort a copy of `findings` into the repair prompt's priority order. */
+function sortByPriority<T extends SortableFinding>(findings: readonly T[]): T[] {
+  return [...findings].sort(compareFindings);
+}
+
+/**
+ * The findings actually embedded in the repair prompt: the priority-sorted set
+ * truncated to `MAX_FINDINGS_PER_REQUEST`. Body truncation never changes
+ * membership, so this is the authoritative "forwarded to claude-code-action"
+ * set. TY-360 uses it to resolve only the review threads whose findings were
+ * actually sent for repair — never the dropped overflow findings. Shares
+ * `sortByPriority` + the cap constant with `buildClaudeCodeRepairRequest`, so
+ * the two cannot drift.
+ */
+export function selectEmbeddedFindings<T extends SortableFinding>(
+  findings: readonly T[],
+): T[] {
+  return sortByPriority(findings).slice(0, MAX_FINDINGS_PER_REQUEST);
+}
+
 const INSTRUCTION_LINES: readonly string[] = [
   "1. Each Codex finding's `path` and `line` mark an investigation entry point, NOT the bounded scope of the fix. Explore related files, callers, type definitions, existing tests, and configuration as needed to produce a consistent repair.",
   "2. Treat existing tests as the specification. If a test captures the intended behavior, do not weaken or rewrite it to make a faulty fix pass; fix the production code instead.",
@@ -299,7 +326,10 @@ export function buildClaudeCodeRepairRequest(input: {
 }): ClaudeCodeRepairRequest {
   // Sort once, then apply count + body caps in that locked order. Do not
   // re-sort afterwards — body truncation would otherwise alter the tiebreaker.
-  const sorted = input.findings.map(toRepairFinding).sort(compareFindings);
+  // `sortByPriority` is the same ordering `selectEmbeddedFindings` uses, so the
+  // findings embedded here are exactly the set TY-360 records for thread
+  // resolution.
+  const sorted = sortByPriority(input.findings).map(toRepairFinding);
   const { kept: findings, stats: findingsTruncated } = applyFindingCaps(sorted);
 
   const previousCheckFailure =

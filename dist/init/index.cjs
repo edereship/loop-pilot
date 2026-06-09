@@ -19461,6 +19461,7 @@ var VALID_STOP_REASONS = new Set(Object.keys(STOP_REASON_LABELS));
 var LAST_CLAUDE_COMMIT_SHA_MAX_CHARS = 64;
 var FINDINGS_HASH_MAX_CHARS = 64;
 var TIMESTAMP_MAX_CHARS = 64;
+var MAX_FINDING_COMMENT_IDS = 500;
 var DEFAULT_TRUSTED_STATE_AUTHOR = "github-actions[bot]";
 var TRUSTED_STATE_AUTHORS_ENV = "LOOPPILOT_STATE_COMMENT_AUTHORS";
 function getTrustedStateCommentAuthors(env = process.env) {
@@ -19515,6 +19516,15 @@ function validateState(obj) {
   s.fixingStartedAt.length > TIMESTAMP_MAX_CHARS)) {
     return false;
   }
+  if ("currentIterationFindingCommentIds" in s) {
+    const ids = s.currentIterationFindingCommentIds;
+    if (!Array.isArray(ids) || ids.length > MAX_FINDING_COMMENT_IDS)
+      return false;
+    for (const id of ids) {
+      if (!Number.isSafeInteger(id) || id < 0)
+        return false;
+    }
+  }
   for (const entry2 of s.findingsHashHistory) {
     if (typeof entry2 !== "object" || entry2 === null)
       return false;
@@ -19541,7 +19551,8 @@ function createInitialState() {
     status: "initialized",
     stopReason: null,
     previousCheckFailure: null,
-    fixingStartedAt: null
+    fixingStartedAt: null,
+    currentIterationFindingCommentIds: []
   };
 }
 var PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS = 4e3;
@@ -19550,24 +19561,28 @@ function serializeState(state) {
     const json = JSON.stringify(s, null, 2);
     return STATE_COMMENT_VISIBLE_TEXT + "\n\n" + STATE_COMMENT_OPEN + "\n" + json + "\n" + STATE_COMMENT_CLOSE;
   };
-  const step1 = {
+  const boundedState = state.currentIterationFindingCommentIds.length > MAX_FINDING_COMMENT_IDS ? {
     ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
+    currentIterationFindingCommentIds: state.currentIterationFindingCommentIds.slice(0, MAX_FINDING_COMMENT_IDS)
+  } : state;
+  const step1 = {
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES)
   };
   const body1 = wrap(step1);
   if (body1.length <= MAX_SERIALIZED_BYTES)
     return body1;
   const step2 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
-    previousCheckFailure: state.previousCheckFailure ? truncatePreviousCheckFailure(state.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
+    previousCheckFailure: boundedState.previousCheckFailure ? truncatePreviousCheckFailure(boundedState.previousCheckFailure, PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS) : null
   };
   const body2 = wrap(step2);
   if (body2.length <= MAX_SERIALIZED_BYTES)
     return body2;
   const step3 = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
     previousCheckFailure: null
   };
   return wrap(step3);
@@ -19592,7 +19607,11 @@ function deserializeState(commentBody) {
       // TY-301 #2: legacy state comments lack this field. Normalize to `null`
       // so the dedup check in pre-fix falls back to id-only comparison
       // (preserving the pre-TY-301 behaviour for in-flight PRs).
-      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null
+      lastProcessedTriggerSource: parsed.lastProcessedTriggerSource ?? null,
+      // TY-360: legacy state comments lack this field. Normalize to `[]` so
+      // post-fix can rely on it being a real array (no resolve targets) instead
+      // of guarding for undefined.
+      currentIterationFindingCommentIds: parsed.currentIterationFindingCommentIds ?? []
     };
     return normalized;
   } catch {

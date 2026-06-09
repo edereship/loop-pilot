@@ -56,6 +56,19 @@ const FINDINGS_HASH_MAX_CHARS = 64;
 // (→ `state_corrupted`, symmetric with the SHA / hash fields).
 const TIMESTAMP_MAX_CHARS = 64;
 
+// TY-360: `currentIterationFindingCommentIds` is a variable-length array, so it
+// must be length-bounded for the "body fits under MAX_SERIALIZED_BYTES"
+// guarantee to hold — same reasoning as the string-length caps above. In-scope
+// findings per iteration are realistically a handful (Codex rarely emits dozens
+// of inline comments and the repair prompt itself caps embedding at
+// MAX_FINDINGS_PER_REQUEST = 30); a numeric comment id serializes to ~12 chars,
+// so 500 ids (~6 KB) stays far under the floor. The bound is enforced on BOTH
+// sides: `serializeState` clamps it on the write path (so an in-memory state is
+// never persisted over-budget), and `validateState` rejects an over-cap array
+// on the read path (a tampered / pathological state → `state_corrupted`,
+// symmetric with the SHA / hash / timestamp fields).
+const MAX_FINDING_COMMENT_IDS = 500;
+
 // TY-272 #A: trust-boundary author filter for the hidden state comment.
 //
 // Public PRs let any commenter post a body that contains our hidden state
@@ -200,6 +213,18 @@ function validateState(obj: unknown): obj is ReviewState {
   ) {
     return false;
   }
+  // TY-360: currentIterationFindingCommentIds was added after the initial
+  // release; tolerate missing (legacy) and explicit shapes. When present it
+  // must be a bounded array of non-negative safe-integer comment ids so a
+  // forged state cannot smuggle in a huge array (serialize-floor DoS) or
+  // non-numeric thread targets. Missing is normalized to `[]` below.
+  if ("currentIterationFindingCommentIds" in s) {
+    const ids = s.currentIterationFindingCommentIds;
+    if (!Array.isArray(ids) || ids.length > MAX_FINDING_COMMENT_IDS) return false;
+    for (const id of ids) {
+      if (!Number.isSafeInteger(id) || (id as number) < 0) return false;
+    }
+  }
 
   // Validate each hash history entry shape
   for (const entry of s.findingsHashHistory) {
@@ -244,6 +269,7 @@ export function createInitialState(): ReviewState {
     stopReason: null,
     previousCheckFailure: null,
     fixingStartedAt: null,
+    currentIterationFindingCommentIds: [],
   };
 }
 
@@ -294,10 +320,27 @@ export function serializeState(state: ReviewState): string {
     );
   };
 
+  // TY-360: clamp the comment-id array on the write path so an in-memory state
+  // (which never passes through `validateState`) cannot serialize an over-budget
+  // body. Producers stay well under the cap (`selectEmbeddedFindings` is bounded
+  // by MAX_FINDINGS_PER_REQUEST = 30), so this only ever fires on a bug.
+  const boundedState: ReviewState =
+    state.currentIterationFindingCommentIds.length > MAX_FINDING_COMMENT_IDS
+      ? {
+          ...state,
+          currentIterationFindingCommentIds:
+            state.currentIterationFindingCommentIds.slice(
+              0,
+              MAX_FINDING_COMMENT_IDS,
+            ),
+        }
+      : state;
+
   // Step 1: normal path — keep up to MAX_HISTORY_ENTRIES of history.
   const step1: ReviewState = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES),
+    ...boundedState,
+    findingsHashHistory:
+      boundedState.findingsHashHistory.slice(-MAX_HISTORY_ENTRIES),
   };
   const body1 = wrap(step1);
   if (body1.length <= MAX_SERIALIZED_BYTES) return body1;
@@ -305,11 +348,11 @@ export function serializeState(state: ReviewState): string {
   // Step 2: shrink history to 1 entry AND aggressively trim a legacy
   // oversized previousCheckFailure to the fallback budget.
   const step2: ReviewState = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
-    previousCheckFailure: state.previousCheckFailure
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
+    previousCheckFailure: boundedState.previousCheckFailure
       ? truncatePreviousCheckFailure(
-          state.previousCheckFailure,
+          boundedState.previousCheckFailure,
           PREVIOUS_CHECK_FAILURE_FALLBACK_CHARS,
         )
       : null,
@@ -321,8 +364,8 @@ export function serializeState(state: ReviewState): string {
   // other field is fixed-size (or bounded by validateState upstream), so
   // this guarantees the body fits.
   const step3: ReviewState = {
-    ...state,
-    findingsHashHistory: state.findingsHashHistory.slice(-1),
+    ...boundedState,
+    findingsHashHistory: boundedState.findingsHashHistory.slice(-1),
     previousCheckFailure: null,
   };
   return wrap(step3);
@@ -370,6 +413,12 @@ export function deserializeState(commentBody: string): ReviewState | null {
       lastProcessedTriggerSource:
         (parsed as { lastProcessedTriggerSource?: "comment" | "review" | null })
           .lastProcessedTriggerSource ?? null,
+      // TY-360: legacy state comments lack this field. Normalize to `[]` so
+      // post-fix can rely on it being a real array (no resolve targets) instead
+      // of guarding for undefined.
+      currentIterationFindingCommentIds:
+        (parsed as { currentIterationFindingCommentIds?: number[] })
+          .currentIterationFindingCommentIds ?? [],
     };
     return normalized;
   } catch {
