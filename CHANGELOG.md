@@ -10,6 +10,17 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-06-11
+
+### Added
+- Auto-resolve Codex review threads after a successful repair (TY-360 / #32).
+  When post-fix confirms that CHECK_COMMAND passed and the repair commit was
+  pushed, it now resolves the PR review threads whose in-scope findings were
+  fixed in the iteration. Only threads matching in-scope comment ids at or above
+  the severity threshold are targeted; below-threshold / unparseable threads are
+  left open. Best-effort: a resolve failure logs a warning and the loop
+  continues. New module `src/review-thread-resolver.ts` with full test coverage.
+
 ## [1.5.1] - 2026-06-01
 
 ### Fixed
