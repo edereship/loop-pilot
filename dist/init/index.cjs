@@ -20167,7 +20167,7 @@ function buildTerminalNotificationBody(kind, permalink) {
       const label = STOP_REASON_LABELS[kind.stopReason];
       const actionLine = kind.remainingFindings !== void 0 ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.` : "Manual intervention required.";
       return [
-        `\u{1F6D1} **LoopPilot stopped** \u2014 ${label}.`,
+        `\u26A0\uFE0F **LoopPilot stopped** \u2014 ${label}.`,
         "",
         actionLine,
         `See the [status comment](${permalink}) for the full history.`

@@ -20457,7 +20457,7 @@ function buildTerminalNotificationBody(kind, permalink) {
       const label = STOP_REASON_LABELS[kind.stopReason];
       const actionLine = kind.remainingFindings !== void 0 ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.` : "Manual intervention required.";
       return [
-        `\u{1F6D1} **LoopPilot stopped** \u2014 ${label}.`,
+        `\u26A0\uFE0F **LoopPilot stopped** \u2014 ${label}.`,
         "",
         actionLine,
         `See the [status comment](${permalink}) for the full history.`
@@ -21554,16 +21554,16 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   }
   const hasPermission = await canRestart(context, deps);
   if (!hasPermission) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, `\u274C Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`, context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, `\u26A0\uFE0F Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`, context.githubToken);
     return { handled: true };
   }
   if (command.invalidReason) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.", context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u26A0\uFE0F Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.", context.githubToken);
     return { handled: true };
   }
   if (!context.stateResult.found && context.stateResult.corrupted) {
     const rejection = [
-      "\u274C Restart cannot apply: hidden `looppilot-state` comment is unparseable JSON.",
+      "\u26A0\uFE0F Restart cannot apply: hidden `looppilot-state` comment is unparseable JSON.",
       "",
       "**`/restart-review --hard` will return the same rejection** \u2014 state read fails before the `--hard` clear logic runs, so this path requires manual surgery.",
       "",
@@ -21579,13 +21579,13 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
     return { handled: true };
   }
   if (!context.stateResult.found) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, "\u274C Restart cannot apply: LoopPilot state was not found.", context.githubToken);
+    await deps.postComment(context.owner, context.repo, context.prNumber, "\u26A0\uFE0F Restart cannot apply: LoopPilot state was not found.", context.githubToken);
     return { handled: true };
   }
   const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
   if (!preflight.ok) {
     const rejection = preflight.reason === "unsupported_status" && context.stateResult.state.status === "fixing" && command.mode !== "hard" ? [
-      "\u274C Restart cannot apply: a fix is currently in progress (`fixing`).",
+      "\u26A0\uFE0F Restart cannot apply: a fix is currently in progress (`fixing`).",
       "",
       "If a Workflow B run is still active for this PR, wait for it to finish \u2014 it returns the loop to `waiting_codex` on its own.",
       "If the previous run crashed or was cancelled (e.g. a job timeout) and left the state stuck at `fixing`, a soft `/restart-review` cannot recover it. Confirm no auto-fix run is active, then use `/restart-review --hard` to clear iteration history and resume.",
@@ -21744,13 +21744,13 @@ function parseRoles(raw, warn) {
 function restartRejectionMessage(reason) {
   switch (reason) {
     case "state_corrupted":
-      return "\u274C Restart cannot apply: state is corrupted. Soft `/restart-review` is rejected from a corrupted-state stop because the hidden state may not reflect reality. Use `/restart-review --hard` to clear iteration history and resume \u2014 `--hard` resets iterationCount + findingsHashHistory so the next run starts from scratch (TY-282 #1C). See docs/operations/stop-and-recovery.md.";
+      return "\u26A0\uFE0F Restart cannot apply: state is corrupted. Soft `/restart-review` is rejected from a corrupted-state stop because the hidden state may not reflect reality. Use `/restart-review --hard` to clear iteration history and resume \u2014 `--hard` resets iterationCount + findingsHashHistory so the next run starts from scratch (TY-282 #1C). See docs/operations/stop-and-recovery.md.";
     case "unsupported_status":
-      return "\u274C Restart cannot apply: current review status is not restartable.";
+      return "\u26A0\uFE0F Restart cannot apply: current review status is not restartable.";
     case "secret_leak_requires_hard_restart":
-      return "\u274C Restart cannot apply: this PR stopped with `secret_leak_suspected`. Soft `/restart-review` would let the same Codex finding hash re-trigger the leak. Review the affected files manually first, then use `/restart-review --hard` to clear iteration history and resume. See docs/operations/security.md (secret-scanner \u30DD\u30EA\u30B7\u30FC) and docs/operations/stop-and-recovery.md.";
+      return "\u26A0\uFE0F Restart cannot apply: this PR stopped with `secret_leak_suspected`. Soft `/restart-review` would let the same Codex finding hash re-trigger the leak. Review the affected files manually first, then use `/restart-review --hard` to clear iteration history and resume. See docs/operations/security.md (secret-scanner \u30DD\u30EA\u30B7\u30FC) and docs/operations/stop-and-recovery.md.";
     case "max_iterations_requires_hard_restart":
-      return "\u274C Restart cannot apply: this PR stopped at `max_iterations`. Soft `/restart-review` keeps `iterationCount` at the cap, so the next run would immediately re-stop with the same reason. Use `/restart-review --hard` to reset the iteration count (and findings history) and resume. See docs/operations/stop-and-recovery.md.";
+      return "\u26A0\uFE0F Restart cannot apply: this PR stopped at `max_iterations`. Soft `/restart-review` keeps `iterationCount` at the cap, so the next run would immediately re-stop with the same reason. Use `/restart-review --hard` to reset the iteration count (and findings history) and resume. See docs/operations/stop-and-recovery.md.";
   }
 }
 async function getPrAuthor(owner, repo, prNumber, token) {
