@@ -325,7 +325,7 @@ jobs:
       # API outage, Node process killed before the catch handler runs, or a
       # job-level timeout that cancels the step). This step talks to the
       # GitHub API directly with the workflow's bundled `GITHUB_TOKEN` and
-      # posts a top-level 🛑 comment so the operator at least *knows* the
+      # posts a top-level ⚠️ comment so the operator at least *knows* the
       # loop stopped, even when every code-path inside the action has
       # already gone silent. The comment intentionally links the workflow
       # run rather than the (potentially stale) status comment.
@@ -344,8 +344,8 @@ jobs:
       # without it, `if:` defaults to an implicit `success()` AND.
       #
       # Dedup with 2A (Codex review on PR #96): when `demoteFixingOnCrash`
-      # successfully posts the in-process 🛑 stop notification, this step
-      # would otherwise post a *second* 🛑 comment for the same crash. The
+      # successfully posts the in-process ⚠️ stop notification, this step
+      # would otherwise post a *second* ⚠️ comment for the same crash. The
       # design intent of 2B is to backstop 2A when 2A *cannot* fire — so
       # before posting we check whether a recent in-process stop comment
       # exists from `github-actions[bot]`. If so, 2A handled it cleanly
@@ -376,7 +376,7 @@ jobs:
           # mid auto-merge wait) is NOT a crash — the in-job Codex ACK poll
           # (post-fix, TY-334) or the done-path auto-merge wait can run long
           # enough to be cancelled here even though the loop succeeded. Posting
-          # "🛑 LoopPilot crashed … /restart-review --hard" then misleads the
+          # "⚠️ LoopPilot crashed … /restart-review --hard" then misleads the
           # operator into wiping iteration history and double-posting `@codex
           # review`.
           #
@@ -430,7 +430,7 @@ jobs:
               exit 0
             fi
           fi
-          # Dedup window: look for any `🛑 **LoopPilot stopped**` body
+          # Dedup window: look for any `⚠️ **LoopPilot stopped**` body
           # authored by github-actions[bot] in the last 90s. That string
           # is the literal prefix `buildTerminalNotificationBody` emits
           # for every `stopped` terminal notification, so a hit means 2A
@@ -449,13 +449,13 @@ jobs:
           # `-gt 0` numeric test below.
           RECENT_STOP=$(gh api --paginate \
             "repos/${REPO}/issues/${PR_NUM}/comments?since=${SINCE}" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("🛑 **LoopPilot stopped**"))) | .id' \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("⚠️ **LoopPilot stopped**"))) | .id' \
             2>/dev/null | grep -c . || true)
           if [ "${RECENT_STOP:-0}" -gt 0 ]; then
             echo "::notice::TY-282 2A already posted a top-level stop notification within 90s (${RECENT_STOP} found); skipping 2B fail-safe to avoid duplicate."
             exit 0
           fi
-          BODY=$'🛑 **LoopPilot crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post.\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
+          BODY=$'⚠️ **LoopPilot crashed** — the auto-fix loop step ended with conclusion `'"$LOOP_CONCLUSION"$'` before the in-process stop notification could post.\n\nThe hidden state may still be `fixing`; the next `/restart-review` (or the next pre-fix run on this PR) will demote it to `stopped / workflow_crashed`. Use `/restart-review` to resume — add `--hard` if iteration history needs clearing.\n\nWorkflow run: '"$RUN_URL"
           gh api "repos/${REPO}/issues/${PR_NUM}/comments" \
             --method POST \
             --raw-field body="$BODY" \

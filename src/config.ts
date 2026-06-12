@@ -320,7 +320,7 @@ function loadBaseConfig(): BaseConfig {
   // 2 × debounceSeconds) precedes `mergeIfChecksPass` (autoMergeTimeoutMinutes).
   // Their individual maxima sum to 2×600 + 25×60 = 2700s — far past the 30-min
   // (1800s) job timeout — so a slow auto-merge would be cancelled mid-poll and
-  // trip the workflow #2B fail-safe into posting "🛑 Auto-review crashed" on a
+  // trip the workflow #2B fail-safe into posting "⚠️ Auto-review crashed" on a
   // PR whose hidden state is already `done` (a contradictory operator signal).
   // Validate the *sum* (mirroring the STABILIZE product cap above) so that
   // contradiction cannot occur. Only enforced when auto-merge is enabled —

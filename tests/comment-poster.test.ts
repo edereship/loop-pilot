@@ -131,7 +131,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
       },
       permalink,
     );
-    expect(body).toContain("🛑");
+    expect(body).toContain("⚠️");
     expect(body).toContain("LoopPilot stopped");
     expect(body).toContain(STOP_REASON_LABELS.max_turns_exceeded);
     expect(body).toContain("Open in-scope findings remaining: 2");
@@ -147,7 +147,7 @@ describe("buildTerminalNotificationBody (TY-259)", () => {
       },
       permalink,
     );
-    expect(body).toContain("🛑");
+    expect(body).toContain("⚠️");
     expect(body).toContain("LoopPilot stopped");
     expect(body).toContain("Manual intervention required");
     expect(body).not.toContain("Open in-scope findings remaining");

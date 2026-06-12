@@ -789,7 +789,7 @@ describe("handleRestartCommand", () => {
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
     expect(deps.updateStateComment).not.toHaveBeenCalled();
     expect(deps.postComment.mock.calls[0][3]).toContain(
-      "❌ Restart rejected: insufficient permission.",
+      "⚠️ Restart rejected: insufficient permission.",
     );
   });
 
@@ -835,7 +835,7 @@ describe("handleRestartCommand", () => {
     // write and `@codex review` was already posted, so a 412 on the 2nd
     // write (which only records lastCodexRequestCommentId) leaves the loop
     // healthy — the next Codex review trigger reconciles automatically.
-    // Surfacing a 🛑 state_conflict stop here would mislead operators into
+    // Surfacing a ⚠️ state_conflict stop here would mislead operators into
     // re-issuing `/restart-review` and posting a second `@codex review`.
     const deps = makeDeps();
     deps.updateStateComment
@@ -1056,7 +1056,7 @@ describe("handleRestartCommand", () => {
       expect.stringContaining("invalid GitHub login"),
     );
     expect(deps.postComment.mock.calls[0][3]).toContain(
-      "❌ Restart rejected: insufficient permission.",
+      "⚠️ Restart rejected: insufficient permission.",
     );
   });
 });
@@ -1237,7 +1237,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
     // comment never appears, because permission is checked first.
     expect(deps.postComment).toHaveBeenCalledTimes(1);
     expect(deps.postComment.mock.calls[0][3]).toContain(
-      "❌ Restart rejected: insufficient permission.",
+      "⚠️ Restart rejected: insufficient permission.",
     );
     expect(deps.postComment.mock.calls[0][3]).not.toContain("unparseable JSON");
     expect(deps.updateStateComment).not.toHaveBeenCalled();
@@ -1348,7 +1348,7 @@ describe("handleRestartCommand permission gate (TY-272 #E)", () => {
 
     expect(deps.postComment).toHaveBeenCalledTimes(1);
     expect(deps.postComment.mock.calls[0][3]).toContain(
-      "❌ Restart rejected: insufficient permission.",
+      "⚠️ Restart rejected: insufficient permission.",
     );
     expect(deps.postComment.mock.calls[0][3]).not.toContain("unsupported option");
   });

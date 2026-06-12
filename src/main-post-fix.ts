@@ -100,7 +100,7 @@ export interface PostFixDeps {
   postStopComment: typeof defaultPostStopComment;
   postTestFailureComment: typeof defaultPostTestFailureComment;
   /**
-   * Posts a new top-level 🛑 / ✅ / ⚠️ PR comment to restore GitHub
+   * Posts a new top-level ⚠️ / ✅ PR comment to restore GitHub
    * notifications on terminal events. `postStopComment` calls this internally,
    * but the `test_failure` branch uses `postTestFailureComment` (which only
    * edits the aggregated status comment) and must invoke this explicitly so
@@ -118,12 +118,12 @@ export interface PostFixDeps {
    * `steps.loop.conclusion == 'failure' || 'cancelled'`) does not fire and the
    * PR receives no top-level notification. Use this instead of a silent
    * `return` whenever post-fix cannot proceed and the operator must intervene,
-   * so the workflow YAML fail-safe posts the 🛑 comment.
+   * so the workflow YAML fail-safe posts the ⚠️ comment.
    */
   setFailed: (message: string) => void;
   /**
    * Demotes a hidden `status: fixing` state to `stopped/workflow_crashed`
-   * (TY-282), then best-effort posts the 🛑 notification. No-op when the state
+   * (TY-282), then best-effort posts the ⚠️ notification. No-op when the state
    * is not `fixing`. Injected (TY-310 #2) so the `!found` entry path can fire it
    * explicitly: that path exits via `setFailed + return` rather than throwing,
    * so `runIfNotVitest`'s `onError` — which is the only other caller — never
@@ -653,7 +653,7 @@ export async function runPostFix(
   );
   if (!stateResult.found) {
     // TY-297 #2: end the step in `failure` so the looppilot-loop.yml #2B
-    // fail-safe posts the top-level 🛑 notification. A silent `return` would
+    // fail-safe posts the top-level ⚠️ notification. A silent `return` would
     // leave the workflow step in `success` and the fail-safe would not fire.
     //
     // TY-310 #2: also demote a still-`fixing` hidden state here. Because this
@@ -768,7 +768,7 @@ export async function runPostFix(
       // TY-259 split `postTerminalNotification` out of the status upsert).
       // CHECK_COMMAND failures need operator attention to triage the failing
       // test / lint / typecheck output, so we follow the status update with
-      // an explicit top-level 🛑 comment via `postTerminalNotification`.
+      // an explicit top-level ⚠️ comment via `postTerminalNotification`.
       const statusCommentId = await deps.postTestFailureComment(
         config.repoOwner,
         config.repoName,
@@ -1748,7 +1748,7 @@ export async function runPostFix(
     // idempotency. The hidden state was already advanced to `waiting_codex`
     // by the 1st write and the `@codex review` comment has been posted, so
     // the loop is healthy regardless of this write's outcome. Surfacing a
-    // `state_conflict` 🛑 stop here would falsely tell operators the
+    // `state_conflict` ⚠️ stop here would falsely tell operators the
     // LoopPilot halted while it is actually still waiting for the next
     // Codex review trigger.
     //

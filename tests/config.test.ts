@@ -153,7 +153,7 @@ describe("loadInitConfig — integer input range validation (TY-267 #15)", () =>
   // TY-357: individual upper-bound caps (TY-331/TY-333). loop-pilot's intInput
   // gained the `max` arg in TY-334 but these four call sites never received the
   // PoC's caps, so an oversized value could sleep past the 30-min job timeout →
-  // cancel → wedge (and a spurious "🛑 crashed" #2B notice). Lock each cap.
+  // cancel → wedge (and a spurious "⚠️ crashed" #2B notice). Lock each cap.
   it("TY-331: rejects DEBOUNCE_SECONDS above the 600s cap", () => {
     process.env.DEBOUNCE_SECONDS = "601";
     expect(() => loadInitConfig()).toThrow(/debounce-seconds.*must be <= 600/);

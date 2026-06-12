@@ -227,7 +227,7 @@ export function buildTerminalNotificationBody(
           ? `Open in-scope findings remaining: ${kind.remainingFindings}. Manual intervention required.`
           : "Manual intervention required.";
       return [
-        `🛑 **LoopPilot stopped** — ${label}.`,
+        `⚠️ **LoopPilot stopped** — ${label}.`,
         "",
         actionLine,
         `See the [status comment](${permalink}) for the full history.`,

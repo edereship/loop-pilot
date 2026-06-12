@@ -371,12 +371,12 @@ describe("runPostFix", () => {
     expect(deps.resolveFindingThreads).not.toHaveBeenCalled();
   });
 
-  it("TY-286 #A: does NOT emit state_conflict 🛑 when the Phase 4 2nd write conflicts; warns instead", async () => {
+  it("TY-286 #A: does NOT emit state_conflict ⚠️ when the Phase 4 2nd write conflicts; warns instead", async () => {
     // The 1st write (waiting_codex) succeeded and `@codex review` was
     // posted, so the loop is already healthy. A 412 on the 2nd write (which
     // only records `lastCodexRequestCommentId`) must not surface a top-level
     // stop comment that contradicts the live state — operators would
-    // otherwise see "🛑 LoopPilot stopped" while the next Codex review
+    // otherwise see "⚠️ LoopPilot stopped" while the next Codex review
     // trigger silently reconciles.
     const deps = makeDeps({
       found: true,
@@ -947,7 +947,7 @@ describe("runPostFix", () => {
     );
     // TY-290 #2: status-comment edit does not fire GitHub notifications, so
     // `failureExit` must follow `postTestFailureComment` (status update) with
-    // an explicit top-level 🛑 comment so operators see CHECK_COMMAND
+    // an explicit top-level ⚠️ comment so operators see CHECK_COMMAND
     // failures in their inbox / mobile push.
     expect(deps.postTerminalNotification).toHaveBeenCalledWith(
       "team-yubune",

@@ -111,7 +111,7 @@ export interface PreFixDeps {
    * misrepresented the implementation). The throw propagates through
    * `runPreFix` and is caught by `runIfNotVitest`'s `onError`, which calls
    * `core.setFailed` + `demoteFixingOnCrash`. That, in turn, lets the
-   * `looppilot-loop.yml` #2B fail-safe post the top-level 🛑 notification.
+   * `looppilot-loop.yml` #2B fail-safe post the top-level ⚠️ notification.
    *
    * Must be invoked BEFORE the `fixingState` write (TY-285 #4) so a checkout
    * failure does not consume an iteration slot or append a finding-hash

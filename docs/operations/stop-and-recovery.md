@@ -133,7 +133,7 @@ Codex が `@codex review` 要求に対して通常のレビュー結果ではな
 
 ### Workflow crash (`workflow_crashed`)
 
-pre-fix / post-fix が `failureExit` を呼ぶ前に例外で死んだ場合 (state-comment-locker の予期せぬ throw / Claude API error / Node unhandled rejection / network 障害など) は、`runIfNotVitest` の `onError` から `demoteFixingOnCrash` (`src/crash-recovery.ts`) が走り、`fixing` だった hidden state を `stopped / workflow_crashed` に降格させた上で `postStopComment` で top-level 🛑 通知を投稿する。
+pre-fix / post-fix が `failureExit` を呼ぶ前に例外で死んだ場合 (state-comment-locker の予期せぬ throw / Claude API error / Node unhandled rejection / network 障害など) は、`runIfNotVitest` の `onError` から `demoteFixingOnCrash` (`src/crash-recovery.ts`) が走り、`fixing` だった hidden state を `stopped / workflow_crashed` に降格させた上で `postStopComment` で top-level ⚠️ 通知を投稿する。
 
 これは「workflow が `conclusion=failure` で終わるが通知が出ない silent failure」の構造的対策。この降格を行わないと hidden state が `fixing` のまま残り、`/restart-review` が拒否され続け、運用者は hidden state を手編集するしかなくなる。
 
@@ -145,9 +145,9 @@ pre-fix / post-fix が `failureExit` を呼ぶ前に例外で死んだ場合 (st
 
 ##### dedup ロジック
 
-2A (`demoteFixingOnCrash` の `postStopComment`) と 2B (YAML fail-safe step) は **片方が死んでも通知が届くこと** を目的にしているため、両方成功すると 🛑 通知が重複する。
+2A (`demoteFixingOnCrash` の `postStopComment`) と 2B (YAML fail-safe step) は **片方が死んでも通知が届くこと** を目的にしているため、両方成功すると ⚠️ 通知が重複する。
 
-2B step は post する直前に「直前 90 秒以内に `github-actions[bot]` が `🛑 **LoopPilot stopped**` で始まる top-level コメントを投稿しているか」を `gh api` で check し、ある場合は skip する (`::notice::` ログのみ残す)。dedup check が API 障害等で失敗した場合は **fall open** (post を強行) するので 2B の safety-net 性質は保たれる。
+2B step は post する直前に「直前 90 秒以内に `github-actions[bot]` が `⚠️ **LoopPilot stopped**` で始まる top-level コメントを投稿しているか」を `gh api` で check し、ある場合は skip する (`::notice::` ログのみ残す)。dedup check が API 障害等で失敗した場合は **fall open** (post を強行) するので 2B の safety-net 性質は保たれる。
 
 90 秒という短い window は、無関係な過去の停止通知を誤って dedup 対象にしないため。`demoteFixingOnCrash` は crash 検出から数秒以内に 2A を投稿するので、この window で取りこぼすことはない。
 
@@ -156,11 +156,11 @@ pre-fix / post-fix が `failureExit` を呼ぶ前に例外で死んだ場合 (st
 `demoteFixingOnCrash` の `updateStateComment` が失敗 (412 conflict / 5xx / token 失効) した場合、`postStopComment` は **呼び出されない**。理由は次の通り:
 
 - `updateStateComment` 失敗 ⇒ hidden state は `fixing` のまま
-- そこで `postStopComment` を呼ぶと、可視 status comment header が `Stopped — workflow_crashed` に書き換わり、top-level 🛑 通知も「stopped」を主張する
+- そこで `postStopComment` を呼ぶと、可視 status comment header が `Stopped — workflow_crashed` に書き換わり、top-level ⚠️ 通知も「stopped」を主張する
 - 運用者は `/restart-review` を投げるが `applyRestartToState` は hidden state が `fixing` のため reject
 - 結果: 「Stopped が見えるのに restart できない」silent-unrecoverable UX が再発する
 
-代わりに 2B step が `🛑 LoopPilot crashed` (`stopped` ではない) を post する。これは demotion を主張しないので状態不整合は起きない。ただし hidden state は `fixing` のままなので、`/restart-review` は STALE_THRESHOLD_MS (30 分) 経過後の pre-fix stale check で初めて demote される。30 分以内に復旧したい場合は hidden state comment を手編集する必要がある。
+代わりに 2B step が `⚠️ LoopPilot crashed` (`stopped` ではない) を post する。これは demotion を主張しないので状態不整合は起きない。ただし hidden state は `fixing` のままなので、`/restart-review` は STALE_THRESHOLD_MS (30 分) 経過後の pre-fix stale check で初めて demote される。30 分以内に復旧したい場合は hidden state comment を手編集する必要がある。
 
 トレードオフ:
 
@@ -222,7 +222,7 @@ Detail: ...
 ### 2. 新規 top-level コメント (通知用) 例
 
 ```markdown
-🛑 **LoopPilot stopped** — max iterations reached — `/restart-review --hard` to retry.
+⚠️ **LoopPilot stopped** — max iterations reached — `/restart-review --hard` to retry.
 
 Open in-scope findings remaining: 1. Manual intervention required.
 See the [status comment](https://github.com/<owner>/<repo>/pull/<N>#issuecomment-<id>) for the full history.
@@ -237,7 +237,7 @@ See the [status comment](https://github.com/<owner>/<repo>/pull/<N>#issuecomment
 CHECK_COMMAND 失敗 (`stop_reason: test_failure`) のときは、status コメントに `postTestFailureComment` が nonce-fence 付きで CHECK_COMMAND 出力を記録した上で、別途同じ `stopped` フォーマットの top-level 通知が投稿される。出力本文の二重投稿は避けるため、top-level 側はリンクのみで簡潔に出る:
 
 ```markdown
-🛑 **LoopPilot stopped** — CHECK_COMMAND failed after the repair — fix the failure and `/restart-review`.
+⚠️ **LoopPilot stopped** — CHECK_COMMAND failed after the repair — fix the failure and `/restart-review`.
 
 Open in-scope findings remaining: 0. Manual intervention required.
 See the [status comment](https://github.com/<owner>/<repo>/pull/<N>#issuecomment-<id>) for the full history.

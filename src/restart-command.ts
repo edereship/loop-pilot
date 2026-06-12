@@ -299,7 +299,7 @@ export async function handleRestartCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      `❌ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`,
+      `⚠️ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`,
       context.githubToken,
     );
     return { handled: true };
@@ -310,7 +310,7 @@ export async function handleRestartCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      "❌ Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.",
+      "⚠️ Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.",
       context.githubToken,
     );
     return { handled: true };
@@ -327,7 +327,7 @@ export async function handleRestartCommand(
     // recovery only applies to the *parseable* `state_corrupted` stop reason,
     // not to this unparseable-JSON path).
     const rejection = [
-      "❌ Restart cannot apply: hidden `looppilot-state` comment is unparseable JSON.",
+      "⚠️ Restart cannot apply: hidden `looppilot-state` comment is unparseable JSON.",
       "",
       "**`/restart-review --hard` will return the same rejection** — state read fails before the `--hard` clear logic runs, so this path requires manual surgery.",
       "",
@@ -353,7 +353,7 @@ export async function handleRestartCommand(
       context.owner,
       context.repo,
       context.prNumber,
-      "❌ Restart cannot apply: LoopPilot state was not found.",
+      "⚠️ Restart cannot apply: LoopPilot state was not found.",
       context.githubToken,
     );
     return { handled: true };
@@ -375,7 +375,7 @@ export async function handleRestartCommand(
       context.stateResult.state.status === "fixing" &&
       command.mode !== "hard"
         ? [
-            "❌ Restart cannot apply: a fix is currently in progress (`fixing`).",
+            "⚠️ Restart cannot apply: a fix is currently in progress (`fixing`).",
             "",
             "If a Workflow B run is still active for this PR, wait for it to finish — it returns the loop to `waiting_codex` on its own.",
             "If the previous run crashed or was cancelled (e.g. a job timeout) and left the state stuck at `fixing`, a soft `/restart-review` cannot recover it. Confirm no auto-fix run is active, then use `/restart-review --hard` to clear iteration history and resume.",
@@ -437,7 +437,7 @@ export async function handleRestartCommand(
   // exits via `runIfNotVitest`'s `onError` → `demoteFixingOnCrash`. The
   // demoter is a no-op for non-`fixing` statuses, so the state stays at
   // `waiting_codex` with `lastCodexRequestCommentId: null` and the workflow
-  // YAML #2B fail-safe posts only a generic "🛑 LoopPilot crashed" without
+  // YAML #2B fail-safe posts only a generic "⚠️ LoopPilot crashed" without
   // a `codex_request_failed` stop reason. Re-issuing `/restart-review` walks
   // the same path. Mirror post-fix Phase 4 (`src/main-post-fix.ts:1486-1509`)
   // by downgrading the state to `stopped / codex_request_failed` here and
@@ -727,23 +727,23 @@ function restartRejectionMessage(reason: Exclude<RestartApplyResult, { ok: true 
   switch (reason) {
     case "state_corrupted":
       return (
-        "❌ Restart cannot apply: state is corrupted. " +
+        "⚠️ Restart cannot apply: state is corrupted. " +
         "Soft `/restart-review` is rejected from a corrupted-state stop because the hidden state may not reflect reality. " +
         "Use `/restart-review --hard` to clear iteration history and resume — `--hard` resets iterationCount + findingsHashHistory so the next run starts from scratch (TY-282 #1C). " +
         "See docs/operations/stop-and-recovery.md."
       );
     case "unsupported_status":
-      return "❌ Restart cannot apply: current review status is not restartable.";
+      return "⚠️ Restart cannot apply: current review status is not restartable.";
     case "secret_leak_requires_hard_restart":
       return (
-        "❌ Restart cannot apply: this PR stopped with `secret_leak_suspected`. " +
+        "⚠️ Restart cannot apply: this PR stopped with `secret_leak_suspected`. " +
         "Soft `/restart-review` would let the same Codex finding hash re-trigger the leak. " +
         "Review the affected files manually first, then use `/restart-review --hard` to clear iteration history and resume. " +
         "See docs/operations/security.md (secret-scanner ポリシー) and docs/operations/stop-and-recovery.md."
       );
     case "max_iterations_requires_hard_restart":
       return (
-        "❌ Restart cannot apply: this PR stopped at `max_iterations`. " +
+        "⚠️ Restart cannot apply: this PR stopped at `max_iterations`. " +
         "Soft `/restart-review` keeps `iterationCount` at the cap, so the next run would immediately re-stop with the same reason. " +
         "Use `/restart-review --hard` to reset the iteration count (and findings history) and resume. " +
         "See docs/operations/stop-and-recovery.md."

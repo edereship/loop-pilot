@@ -138,7 +138,7 @@ describe("createLockedStateUpdater", () => {
 
     expect(ok).toBe(false);
     // The override fires instead of the default — callers can opt out of the
-    // terminal "post a 🛑 stop comment" behaviour for non-terminal 2nd writes.
+    // terminal "post a ⚠️ stop comment" behaviour for non-terminal 2nd writes.
     expect(overrideOnConflict).toHaveBeenCalledWith("follow-up write detail");
     expect(defaultOnConflict).not.toHaveBeenCalled();
     // Warning is still emitted so the conflict is observable in operator logs.

@@ -177,12 +177,12 @@ describe("demoteFixingOnCrash", () => {
     // `updateStateComment` fails (412 conflict from a concurrent writer,
     // transient 5xx, etc.) the hidden state remains `fixing`. Calling
     // `postStopComment` in that branch would publish a "Stopped" entry on
-    // the visible status comment and a top-level "🛑 LoopPilot stopped"
+    // the visible status comment and a top-level "⚠️ LoopPilot stopped"
     // notification, while the hidden state still claims `fixing`. The
     // operator sees the "Stopped" signal, tries `/restart-review`,
     // `applyRestartToState` rejects it — exactly the silent-unrecoverable
     // UX TY-282 set out to fix. The workflow YAML 2B fail-safe step posts
-    // a distinct "🛑 LoopPilot crashed" message in this case, which does
+    // a distinct "⚠️ LoopPilot crashed" message in this case, which does
     // NOT claim demotion happened.
     const deps = makeDeps({
       updateStateComment: vi.fn().mockRejectedValue(new Error("412 conflict")),

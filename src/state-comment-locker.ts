@@ -42,7 +42,7 @@ export type LockedStateUpdater = (
  * sequence is informational only: the hidden state machine has already been
  * advanced to a healthy `waiting_codex` and a Codex review has already been
  * posted, so a 412 here should warn (so operators can see it in logs) rather
- * than emit a misleading `🛑 LoopPilot stopped` comment that contradicts
+ * than emit a misleading `⚠️ LoopPilot stopped` comment that contradicts
  * the live state.
  */
 export interface LockedStateUpdaterCallOptions {

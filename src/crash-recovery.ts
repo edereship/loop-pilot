@@ -15,7 +15,7 @@ export interface CrashRecoveryDeps {
   updateStateComment: typeof defaultUpdateStateComment;
   /**
    * Best-effort top-level stop comment posted after the state demotion so the
-   * operator gets a 🛑 notification on the PR even when the workflow died
+   * operator gets a ⚠️ notification on the PR even when the workflow died
    * before `failureExit` could run. Failures are caught and logged.
    */
   postStopComment: typeof defaultPostStopComment;
@@ -73,7 +73,7 @@ export function rollbackFixingClaim(state: ReviewState): Pick<
  * Recover from a crash in pre-fix / post-fix: if the hidden state was left at
  * `status === "fixing"`, demote it back to `stopped + workflow_crashed` so the
  * next trigger can proceed without manual intervention, and best-effort post
- * a top-level 🛑 notification so the operator notices the crash.
+ * a top-level ⚠️ notification so the operator notices the crash.
  *
  * TY-282 #2A: previously this path wrote `state_corrupted`, which
  * `applyRestartToState` rejects outright. That combined with the silent
@@ -87,13 +87,13 @@ export function rollbackFixingClaim(state: ReviewState): Pick<
  * **gated on successful state demotion**. Previously, if `updateStateComment`
  * failed (e.g. 412 conflict from a concurrent writer, or transient 5xx),
  * `postStopComment` would still run and stamp `Stopped — workflow_crashed`
- * onto the visible status comment plus a top-level "🛑 LoopPilot stopped"
+ * onto the visible status comment plus a top-level "⚠️ LoopPilot stopped"
  * notification — while the hidden state remained `fixing`. That contradicts
  * operator expectations (operator sees "Stopped", tries `/restart-review`,
  * `applyRestartToState` rejects because hidden state is `fixing`) and
  * recreates exactly the silent-unrecoverable-state UX TY-282 was meant to
  * cure. With gating, demotion-failure cases fall through to the workflow
- * YAML 2B fail-safe step, which posts a distinct "🛑 LoopPilot crashed"
+ * YAML 2B fail-safe step, which posts a distinct "⚠️ LoopPilot crashed"
  * message that does NOT claim the state was demoted.
  *
  * Never throws — recovery failures are logged via `core.error` and swallowed
@@ -150,7 +150,7 @@ export async function demoteFixingOnCrash(
       // different terminal state, or a transient GitHub API error. We
       // deliberately do NOT fall through to `postStopComment` here (see the
       // function docstring): publishing a "Stopped" status entry and a
-      // top-level 🛑 notification while the hidden state is still `fixing`
+      // top-level ⚠️ notification while the hidden state is still `fixing`
       // misleads operators into restart attempts that `applyRestartToState`
       // will reject. The workflow YAML 2B fail-safe step posts a distinct
       // "LoopPilot crashed" notification that does not claim demotion.
