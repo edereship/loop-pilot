@@ -2,10 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyRestartToState,
   handleRestartCommand,
+  handleRestartCaseB,
   isRestartCommandLike,
   isValidGitHubLogin,
   parseRestartCommand,
+  validateRestartCommand,
+  executeRestartWithCodexReview,
   type RestartCommandDeps,
+  type RestartValidation,
 } from "../src/restart-command.js";
 import {
   StateUpdateConflictError,
@@ -1457,5 +1461,308 @@ describe("isValidGitHubLogin", () => {
   it("rejects bot logins so restart cannot be issued by automation accounts", () => {
     expect(isValidGitHubLogin("chatgpt-codex-connector[bot]")).toBe(false);
     expect(isValidGitHubLogin("github-actions[bot]")).toBe(false);
+  });
+});
+
+describe("validateRestartCommand (ES-413)", () => {
+  it("returns valid=true with the RestartValidation when permissions and state checks pass", async () => {
+    const deps = makeDeps();
+    const state = makeState({ status: "stopped", stopReason: "test_failure" });
+
+    const result = await validateRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(state),
+      },
+      deps,
+    );
+
+    expect(result.valid).toBe(true);
+    if (!result.valid) throw new Error("expected valid");
+    expect(result.validation.mode).toBe("soft");
+    expect(result.validation.nextState.status).toBe("waiting_codex");
+    expect(result.validation.previousStopReason).toBe("test_failure");
+    expect(result.validation.commentId).toBe(999);
+  });
+
+  it("returns valid=false, handled=false for non-restart comments", async () => {
+    const deps = makeDeps();
+
+    const result = await validateRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "just a comment",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    expect(result).toEqual({ valid: false, handled: false });
+  });
+
+  it("returns valid=false, handled=true when permission is denied", async () => {
+    const deps = makeDeps();
+    deps.getCollaboratorPermission.mockResolvedValue("read");
+
+    const result = await validateRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "stranger",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(makeState()),
+      },
+      deps,
+    );
+
+    expect(result).toEqual({ valid: false, handled: true });
+    expect(deps.postComment.mock.calls[0][3]).toContain("insufficient permission");
+  });
+});
+
+describe("handleRestartCaseB (ES-413)", () => {
+  function makeValidation(overrides: Partial<RestartValidation> = {}): RestartValidation {
+    return {
+      mode: "soft",
+      nextState: {
+        ...createInitialState(),
+        status: "waiting_codex",
+        stopReason: null,
+        iterationCount: 2,
+        lastCodexReviewReceivedAt: "2026-06-01T10:00:00Z",
+        findingsHashHistory: [
+          { iteration: 1, hash: "hash-a", modelTier: "base" as const },
+          { iteration: 2, hash: "hash-b", modelTier: "base" as const },
+        ],
+        lastFindingsHash: "hash-b",
+      },
+      previousStopReason: null,
+      commentId: 999,
+      commentUpdatedAt: "2026-06-01T10:00:00Z",
+      ...overrides,
+    };
+  }
+
+  const sampleFindings = [
+    {
+      severity: "P1" as const,
+      commentId: 300,
+      path: "src/foo.ts",
+      line: 10,
+      title: "Missing null guard",
+      body: "Guard the dereference.",
+    },
+    {
+      severity: "P2" as const,
+      commentId: 301,
+      path: "src/bar.ts",
+      line: 20,
+      title: "Minor nit",
+      body: "Wording is unclear.",
+    },
+  ];
+
+  it("writes a fixing state with incremented iteration and hash history, posts audit, and returns repair context", async () => {
+    const deps = makeDeps();
+    const validation = makeValidation();
+    const fixedNow = () => new Date("2026-06-01T12:00:00Z");
+
+    const result = await handleRestartCaseB(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(validation.nextState),
+      },
+      validation,
+      sampleFindings,
+      "base",
+      deps,
+      fixedNow,
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.fixingState.status).toBe("fixing");
+    expect(result!.fixingState.iterationCount).toBe(3);
+    expect(result!.fixingState.fixingStartedAt).toBe("2026-06-01T12:00:00.000Z");
+    expect(result!.fixingState.findingsHashHistory).toHaveLength(3);
+    expect(result!.fixingState.findingsHashHistory[2].iteration).toBe(3);
+    expect(result!.fixingState.findingsHashHistory[2].modelTier).toBe("base");
+    expect(result!.fixingState.currentIterationFindingCommentIds).toEqual([300, 301]);
+    expect(result!.findings).toBe(sampleFindings);
+    expect(result!.mode).toBe("soft");
+
+    expect(deps.updateStateComment).toHaveBeenCalledTimes(1);
+    expect(deps.postComment.mock.calls[0][3]).toContain("2 unresolved finding(s)");
+    expect(deps.postComment.mock.calls[0][3]).toContain("fixing before requesting new review");
+    expect(deps.addRestartReaction).toHaveBeenCalledWith(
+      "team-yubune",
+      "loop-pilot",
+      777,
+      "token",
+    );
+  });
+
+  it("works with --hard restart (cleared history)", async () => {
+    const deps = makeDeps();
+    const validation = makeValidation({
+      mode: "hard",
+      nextState: {
+        ...createInitialState(),
+        status: "waiting_codex",
+        stopReason: "max_iterations",
+        iterationCount: 0,
+        findingsHashHistory: [],
+        lastFindingsHash: null,
+      },
+      previousStopReason: "max_iterations",
+    });
+    const fixedNow = () => new Date("2026-06-01T12:00:00Z");
+
+    const result = await handleRestartCaseB(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review --hard",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(validation.nextState),
+      },
+      validation,
+      sampleFindings,
+      "escalated",
+      deps,
+      fixedNow,
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.fixingState.iterationCount).toBe(1);
+    expect(result!.fixingState.findingsHashHistory).toHaveLength(1);
+    expect(result!.fixingState.findingsHashHistory[0].modelTier).toBe("escalated");
+    expect(result!.mode).toBe("hard");
+    expect(result!.previousStopReason).toBe("max_iterations");
+  });
+
+  it("returns null on state write conflict", async () => {
+    const deps = makeDeps();
+    deps.updateStateComment.mockRejectedValueOnce(
+      new StateUpdateConflictError("412 Precondition Failed"),
+    );
+
+    const result = await handleRestartCaseB(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(makeValidation().nextState),
+      },
+      makeValidation(),
+      sampleFindings,
+      "base",
+      deps,
+    );
+
+    expect(result).toBeNull();
+    expect(deps.postStopComment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      "state_conflict",
+      expect.anything(),
+      expect.anything(),
+      expect.stringContaining("Restart aborted"),
+      expect.anything(),
+    );
+  });
+});
+
+describe("handleRestartCommand refactored (ES-413)", () => {
+  it("still works end-to-end (validate + execute) — behavior identical to pre-ES-413", async () => {
+    const deps = makeDeps();
+    const state = makeState();
+
+    const result = await handleRestartCommand(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(state),
+      },
+      deps,
+    );
+
+    expect(result).toEqual({ handled: true });
+    expect(deps.postCodexReviewRequest).toHaveBeenCalled();
+    expect(deps.postComment.mock.calls[0][3]).toContain("🟢 LoopPilot restarted");
   });
 });

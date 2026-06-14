@@ -40,7 +40,21 @@ import {
 import {
   handleRestartCommand as defaultHandleRestartCommand,
   isRestartCommandLike,
+  validateRestartCommand as defaultValidateRestartCommand,
+  executeRestartWithCodexReview as defaultExecuteRestartWithCodexReview,
+  handleRestartCaseB as defaultHandleRestartCaseB,
 } from "./restart-command.js";
+import type {
+  RestartCommandContext,
+  RestartRepairContext,
+  RestartValidation,
+  ValidateRestartResult,
+} from "./restart-command.js";
+import {
+  fetchUnresolvedCodexFindings as defaultFetchUnresolvedCodexFindings,
+  fetchPrHeadCommitDate as defaultFetchPrHeadCommitDate,
+  hasPushSinceLastReview,
+} from "./unresolved-findings.js";
 import {
   buildClaudeCodeRepairRequest,
   buildClaudeCodeRepairPrompt,
@@ -54,7 +68,7 @@ import {
 } from "./check-command-allowlist.js";
 import { selectModel } from "./model-selector.js";
 import { isCodexUsageLimitMessage } from "./codex-status.js";
-import type { PrContext, ReviewState } from "./types.js";
+import type { Finding, PrContext, ReviewState, Severity } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
 function sleep(ms: number): Promise<void> {
@@ -96,6 +110,34 @@ export interface PreFixDeps {
   mergeIfChecksPass: typeof defaultMergeIfChecksPass;
   fetchPrLabels: typeof defaultFetchPrLabels;
   handleRestartCommand: typeof defaultHandleRestartCommand;
+  validateRestartCommand: (
+    context: RestartCommandContext,
+  ) => Promise<ValidateRestartResult>;
+  executeRestartWithCodexReview: (
+    context: RestartCommandContext,
+    validation: RestartValidation,
+  ) => Promise<void>;
+  handleRestartCaseB: (
+    context: RestartCommandContext,
+    validation: RestartValidation,
+    unresolvedFindings: import("./types.js").Finding[],
+    modelTier: "base" | "escalated",
+    now: () => Date,
+  ) => Promise<RestartRepairContext | null>;
+  fetchUnresolvedCodexFindings: (
+    owner: string,
+    repo: string,
+    prNumber: number,
+    codexBotLogin: string,
+    severityThreshold: import("./types.js").Severity,
+    token: string,
+  ) => Promise<import("./types.js").Finding[]>;
+  fetchPrHeadCommitDate: (
+    owner: string,
+    repo: string,
+    prNumber: number,
+    token: string,
+  ) => Promise<string>;
   setSecret: (secret: string) => void;
   setOutput: (name: PreFixOutputName, value: string) => void;
   info: (message: string) => void;
@@ -150,6 +192,14 @@ const defaultDeps: PreFixDeps = {
   mergeIfChecksPass: defaultMergeIfChecksPass,
   fetchPrLabels: defaultFetchPrLabels,
   handleRestartCommand: defaultHandleRestartCommand,
+  validateRestartCommand: (context) => defaultValidateRestartCommand(context),
+  executeRestartWithCodexReview: (context, validation) =>
+    defaultExecuteRestartWithCodexReview(context, validation),
+  handleRestartCaseB: (context, validation, findings, modelTier, now) =>
+    defaultHandleRestartCaseB(context, validation, findings, modelTier, undefined, now),
+  fetchUnresolvedCodexFindings: (owner, repo, prNumber, codexBotLogin, threshold, token) =>
+    defaultFetchUnresolvedCodexFindings(owner, repo, prNumber, codexBotLogin, threshold, token),
+  fetchPrHeadCommitDate: defaultFetchPrHeadCommitDate,
   setSecret: (secret) => core.setSecret(secret),
   setOutput: (name, value) => core.setOutput(name, value),
   info: (message) => core.info(message),
@@ -306,7 +356,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   }
 
   if (isCommandTrigger) {
-    const restartResult = await deps.handleRestartCommand({
+    const restartContext: RestartCommandContext = {
       owner: config.repoOwner,
       repo: config.repoName,
       prNumber: config.prNumber,
@@ -321,10 +371,199 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       codexAckPollIntervalSeconds: config.codexAckPollIntervalSeconds,
       codexAckMaxReposts: config.codexAckMaxReposts,
       stateResult,
-    });
-    if (restartResult.handled) {
+    };
+
+    const vr = await deps.validateRestartCommand(restartContext);
+    if (vr.valid) {
+      // ─── ES-413: Case B detection ──────────────────────────────────────
+      // Check for unresolved Codex findings on the PR. If unresolved findings
+      // exist AND no push occurred since the last Codex review, repair them
+      // first (Case B) instead of posting a new @codex review.
+      const unresolvedFindings = await deps.fetchUnresolvedCodexFindings(
+        config.repoOwner,
+        config.repoName,
+        config.prNumber,
+        config.codexBotLogin,
+        config.severityThreshold,
+        config.githubToken,
+      );
+      const commitDate = await deps.fetchPrHeadCommitDate(
+        config.repoOwner,
+        config.repoName,
+        config.prNumber,
+        config.githubToken,
+      );
+      const hasPush = hasPushSinceLastReview(
+        vr.validation.nextState.lastCodexReviewReceivedAt,
+        commitDate,
+      );
+
+      if (unresolvedFindings.length > 0 && !hasPush) {
+        // ─── Case B: repair unresolved findings before new review ──────
+        deps.info(
+          `[pre-fix] Restart Case B: ${unresolvedFindings.length} unresolved finding(s), no push since last review. Repairing first.`,
+        );
+
+        // Model selection uses the post-restart state (validation.nextState)
+        const currentHash = computeFindingsHash(unresolvedFindings);
+        const previousEntry =
+          vr.validation.nextState.findingsHashHistory.length > 0
+            ? vr.validation.nextState.findingsHashHistory[
+                vr.validation.nextState.findingsHashHistory.length - 1
+              ]
+            : null;
+        const repeatedFinding =
+          previousEntry !== null &&
+          previousEntry.hash === currentHash &&
+          (previousEntry.modelTier ?? "escalated") === "base";
+        const previousMaxTurnsExceeded =
+          vr.validation.nextState.stopReason === "max_turns_exceeded";
+
+        const selection = selectModel({
+          baseModel: config.claudeCodeModelBase,
+          escalatedModel: config.claudeCodeModelEscalated,
+          findings: unresolvedFindings,
+          previousCheckFailure:
+            vr.validation.nextState.previousCheckFailure ?? null,
+          repeatedFinding,
+          previousMaxTurnsExceeded,
+        });
+        deps.info(
+          `[pre-fix] Case B model tier=${selection.tier} model=${selection.model}` +
+            (selection.escalationReasons.length > 0
+              ? ` reasons=${selection.escalationReasons.join(",")}`
+              : ""),
+        );
+
+        const repairContext = await deps.handleRestartCaseB(
+          restartContext,
+          vr.validation,
+          unresolvedFindings,
+          selection.tier,
+          deps.now,
+        );
+        if (!repairContext) return;
+
+        // Phase 3 work: checkout, build prompt, set outputs
+        const prHeadRef = config.prHeadRef;
+        if (
+          !prHeadRef ||
+          prHeadRef.length === 0 ||
+          prHeadRef.startsWith("-") ||
+          prHeadRef.includes("..")
+        ) {
+          throw new Error(`[pre-fix] Invalid branch name: ${prHeadRef}`);
+        }
+        deps.checkoutBranch(prHeadRef);
+        const headSha = deps.readHeadSha();
+
+        try {
+          await deps.postFixingStartComment(
+            config.repoOwner,
+            config.repoName,
+            config.prNumber,
+            repairContext.fixingState.iterationCount,
+            selection.tier,
+            config.maxReviewIterations,
+            unresolvedFindings.length,
+            config.githubToken,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          deps.warning(
+            `[pre-fix] Failed to update fixing-start status: ${message}`,
+          );
+        }
+
+        const prContext: PrContext = {
+          number: config.prNumber,
+          title: config.prTitle,
+          branch: prHeadRef,
+        };
+
+        let scopePolicyForPrompt: ClaudeCodeRepairScopePolicy | null = null;
+        try {
+          const effectivePolicy = buildScopePolicy({
+            blockPathsSpec: config.autoReviewBlockPaths,
+            maxFiles:
+              config.scopeMaxFiles > 0 ? config.scopeMaxFiles : undefined,
+            maxLines:
+              config.scopeMaxLines > 0 ? config.scopeMaxLines : undefined,
+          });
+          scopePolicyForPrompt = {
+            blockedPaths: effectivePolicy.blockPatterns.map((p) => ({
+              path: p.path,
+              locked: p.locked,
+            })),
+            maxFiles: effectivePolicy.maxFiles,
+            maxLines: effectivePolicy.maxLines,
+            exemptedRootDotfiles: effectivePolicy.exemptedRootDotfiles
+              ? [...effectivePolicy.exemptedRootDotfiles].sort()
+              : [],
+          };
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          deps.warning(
+            `[pre-fix] Failed to derive scope policy for the repair prompt; the section will be omitted. Reason: ${reason}`,
+          );
+        }
+
+        const repairRequest = buildClaudeCodeRepairRequest({
+          prContext,
+          headSha,
+          findings: unresolvedFindings,
+          iteration: repairContext.fixingState.iterationCount,
+          maxIterations: config.maxReviewIterations,
+          checkCommand: config.checkCommand,
+          previousCheckFailure:
+            vr.validation.nextState.previousCheckFailure ?? null,
+          scopePolicy: scopePolicyForPrompt,
+        });
+        const prompt = buildClaudeCodeRepairPrompt(repairRequest);
+
+        const allowedBashTools = deriveAllowedBashTools(config.checkCommand);
+        if (allowedBashTools.rejection !== null) {
+          deps.warning(
+            `[pre-fix] CHECK_COMMAND '${config.checkCommand}' not added to Bash allowlist: ${allowedBashTools.rejection}. claude-code-action may fail to verify; set CHECK_COMMAND to a whitelisted binary (see docs/operations/security.md).`,
+          );
+        }
+
+        deps.setOutput("should_run", "true");
+        deps.setOutput("prompt", prompt);
+        deps.setOutput(
+          "iteration",
+          String(repairContext.fixingState.iterationCount),
+        );
+        deps.setOutput("check_command", config.checkCommand);
+        deps.setOutput("pr_head_ref", prHeadRef);
+        deps.setOutput("head_sha", headSha);
+        deps.setOutput("comment_id", String(vr.validation.commentId));
+        deps.setOutput("trigger_comment_id", String(triggerCommentId));
+        deps.setOutput("findings_count", String(unresolvedFindings.length));
+        deps.setOutput(
+          "allowed_bash_tools",
+          serializeAllowedBashTools(allowedBashTools.tools),
+        );
+        deps.setOutput("model", selection.model);
+
+        deps.info(
+          `[pre-fix] Case B prep complete. iteration=${repairContext.fixingState.iterationCount}, findings=${unresolvedFindings.length}.`,
+        );
+        return;
+      }
+
+      // ─── Cases A/C: existing Codex flow ──────────────────────────────
+      deps.info(
+        unresolvedFindings.length > 0
+          ? `[pre-fix] Restart Case A: ${unresolvedFindings.length} unresolved finding(s) but push detected since last review. Requesting new Codex review.`
+          : "[pre-fix] Restart Case C: no unresolved findings. Requesting new Codex review.",
+      );
+      await deps.executeRestartWithCodexReview(restartContext, vr.validation);
       return;
     }
+    if (vr.handled) return;
+    // Not a restart command — fall through to normal flow
   }
 
   if (!stateResult.found && !stateResult.corrupted) {

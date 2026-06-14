@@ -73,6 +73,11 @@ function makeDeps(
     mergeIfChecksPass: vi.fn().mockResolvedValue(undefined),
     fetchPrLabels: vi.fn().mockResolvedValue(["loop-pilot"]),
     handleRestartCommand: vi.fn().mockResolvedValue({ handled: false }),
+    validateRestartCommand: vi.fn().mockResolvedValue({ valid: false, handled: false }),
+    executeRestartWithCodexReview: vi.fn().mockResolvedValue(undefined),
+    handleRestartCaseB: vi.fn().mockResolvedValue(null),
+    fetchUnresolvedCodexFindings: vi.fn().mockResolvedValue([]),
+    fetchPrHeadCommitDate: vi.fn().mockResolvedValue(""),
     setSecret: vi.fn(),
     setOutput: (name: PreFixOutputName, value: string) => {
       outputs[name] = value;
@@ -2007,6 +2012,339 @@ describe("runPreFix", () => {
         }),
         "github-token",
         expect.any(Object),
+      );
+    });
+  });
+
+  // ── ES-413: restart Case B ──────────────────────────────────────────────
+  describe("ES-413: restart Case B (repair unresolved findings before new review)", () => {
+    const restartConfig: Config = {
+      ...baseConfig,
+      triggerCommentBody: "/restart-review",
+      triggerUserLogin: "operator",
+    };
+
+    it("Case B: repairs unresolved findings when no push since last review", async () => {
+      const state = makeState({
+        status: "stopped",
+        stopReason: "test_failure",
+        iterationCount: 2,
+        lastCodexReviewReceivedAt: "2026-06-01T10:00:00Z",
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state,
+      });
+
+      const caseBFindings = [
+        {
+          severity: "P1" as const,
+          commentId: 300,
+          path: "src/foo.ts",
+          line: 10,
+          title: "Missing null guard",
+          body: "Guard the dereference.",
+        },
+      ];
+
+      deps.validateRestartCommand = vi.fn().mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft",
+          nextState: {
+            ...state,
+            status: "waiting_codex",
+            lastProcessedReviewId: null,
+          },
+          previousStopReason: "test_failure",
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+        },
+      });
+      deps.fetchUnresolvedCodexFindings = vi.fn().mockResolvedValue(caseBFindings);
+      deps.fetchPrHeadCommitDate = vi.fn().mockResolvedValue("2026-06-01T09:00:00Z");
+      deps.handleRestartCaseB = vi.fn().mockResolvedValue({
+        findings: caseBFindings,
+        fixingState: {
+          ...state,
+          status: "fixing",
+          iterationCount: 3,
+          fixingStartedAt: "2026-06-01T12:00:00.000Z",
+          currentIterationFindingCommentIds: [300],
+        },
+        mode: "soft",
+        previousStopReason: "test_failure",
+      });
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.validateRestartCommand).toHaveBeenCalledTimes(1);
+      expect(deps.fetchUnresolvedCodexFindings).toHaveBeenCalledWith(
+        "team-yubune",
+        "loop-pilot",
+        99,
+        "chatgpt-codex-connector[bot]",
+        "P2",
+        "github-token",
+      );
+      expect(deps.handleRestartCaseB).toHaveBeenCalledTimes(1);
+      expect(deps.executeRestartWithCodexReview).not.toHaveBeenCalled();
+      expect(deps.outputs.should_run).toBe("true");
+      expect(deps.outputs.iteration).toBe("3");
+      expect(deps.outputs.prompt).toContain("Missing null guard");
+      expect(deps.outputs.findings_count).toBe("1");
+    });
+
+    it("Case A: falls through to existing Codex flow when push detected after last review", async () => {
+      const state = makeState({
+        status: "stopped",
+        stopReason: "test_failure",
+        lastCodexReviewReceivedAt: "2026-06-01T10:00:00Z",
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state,
+      });
+
+      deps.validateRestartCommand = vi.fn().mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft",
+          nextState: { ...state, status: "waiting_codex" },
+          previousStopReason: "test_failure",
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+        },
+      });
+      deps.fetchUnresolvedCodexFindings = vi.fn().mockResolvedValue([
+        {
+          severity: "P1" as const,
+          commentId: 300,
+          path: "src/foo.ts",
+          line: 10,
+          title: "Finding",
+          body: "Body.",
+        },
+      ]);
+      deps.fetchPrHeadCommitDate = vi
+        .fn()
+        .mockResolvedValue("2026-06-01T11:00:00Z");
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.executeRestartWithCodexReview).toHaveBeenCalledTimes(1);
+      expect(deps.handleRestartCaseB).not.toHaveBeenCalled();
+      expect(deps.outputs.should_run).toBe("false");
+    });
+
+    it("Case C: falls through to existing Codex flow when no unresolved findings", async () => {
+      const state = makeState({
+        status: "stopped",
+        stopReason: "no_findings",
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state,
+      });
+
+      deps.validateRestartCommand = vi.fn().mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft",
+          nextState: { ...state, status: "waiting_codex" },
+          previousStopReason: "no_findings",
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+        },
+      });
+      deps.fetchUnresolvedCodexFindings = vi.fn().mockResolvedValue([]);
+      deps.fetchPrHeadCommitDate = vi
+        .fn()
+        .mockResolvedValue("2026-06-01T09:00:00Z");
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.executeRestartWithCodexReview).toHaveBeenCalledTimes(1);
+      expect(deps.handleRestartCaseB).not.toHaveBeenCalled();
+    });
+
+    it("Case B with --hard: still detects unresolved findings and repairs", async () => {
+      const state = makeState({
+        status: "stopped",
+        stopReason: "max_iterations",
+        iterationCount: 20,
+        lastCodexReviewReceivedAt: "2026-06-01T10:00:00Z",
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state,
+      });
+
+      const caseBFindings = [
+        {
+          severity: "P1" as const,
+          commentId: 500,
+          path: "src/auth.ts",
+          line: 42,
+          title: "Auth bypass",
+          body: "Details.",
+        },
+      ];
+
+      deps.validateRestartCommand = vi.fn().mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "hard",
+          nextState: {
+            ...state,
+            status: "waiting_codex",
+            iterationCount: 0,
+            findingsHashHistory: [],
+            lastFindingsHash: null,
+          },
+          previousStopReason: "max_iterations",
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+        },
+      });
+      deps.fetchUnresolvedCodexFindings = vi.fn().mockResolvedValue(caseBFindings);
+      deps.fetchPrHeadCommitDate = vi.fn().mockResolvedValue("2026-06-01T09:00:00Z");
+      deps.handleRestartCaseB = vi.fn().mockResolvedValue({
+        findings: caseBFindings,
+        fixingState: {
+          ...state,
+          status: "fixing",
+          iterationCount: 1,
+          fixingStartedAt: "2026-06-01T12:00:00.000Z",
+          currentIterationFindingCommentIds: [500],
+          findingsHashHistory: [],
+        },
+        mode: "hard",
+        previousStopReason: "max_iterations",
+      });
+
+      await runPreFix(
+        { ...restartConfig, triggerCommentBody: "/restart-review --hard" },
+        deps,
+      );
+
+      expect(deps.handleRestartCaseB).toHaveBeenCalledTimes(1);
+      expect(deps.outputs.should_run).toBe("true");
+      expect(deps.outputs.iteration).toBe("1");
+    });
+
+    it("Case B: returns when handleRestartCaseB returns null (state conflict)", async () => {
+      const state = makeState({
+        status: "stopped",
+        stopReason: "test_failure",
+        lastCodexReviewReceivedAt: "2026-06-01T10:00:00Z",
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state,
+      });
+
+      deps.validateRestartCommand = vi.fn().mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft",
+          nextState: { ...state, status: "waiting_codex" },
+          previousStopReason: "test_failure",
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+        },
+      });
+      deps.fetchUnresolvedCodexFindings = vi.fn().mockResolvedValue([
+        {
+          severity: "P1" as const,
+          commentId: 300,
+          path: "src/foo.ts",
+          line: 10,
+          title: "Finding",
+          body: "Body.",
+        },
+      ]);
+      deps.fetchPrHeadCommitDate = vi.fn().mockResolvedValue("2026-06-01T09:00:00Z");
+      deps.handleRestartCaseB = vi.fn().mockResolvedValue(null);
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("false");
+      expect(deps.checkoutBranch).not.toHaveBeenCalled();
+    });
+
+    it("validation rejection still returns early", async () => {
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state: makeState({ status: "stopped" }),
+      });
+
+      deps.validateRestartCommand = vi.fn().mockResolvedValue({
+        valid: false,
+        handled: true,
+      });
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.fetchUnresolvedCodexFindings).not.toHaveBeenCalled();
+      expect(deps.executeRestartWithCodexReview).not.toHaveBeenCalled();
+      expect(deps.outputs.should_run).toBe("false");
+    });
+
+    it("uses severity threshold from config for unresolved findings filter", async () => {
+      const state = makeState({
+        status: "stopped",
+        stopReason: "no_findings",
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+        state,
+      });
+
+      deps.validateRestartCommand = vi.fn().mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft",
+          nextState: { ...state, status: "waiting_codex" },
+          previousStopReason: "no_findings",
+          commentId: 100,
+          commentUpdatedAt: "2026-05-14T11:00:00Z",
+        },
+      });
+      deps.fetchUnresolvedCodexFindings = vi.fn().mockResolvedValue([]);
+      deps.fetchPrHeadCommitDate = vi.fn().mockResolvedValue("");
+
+      const customConfig = { ...restartConfig, severityThreshold: "P1" as const };
+      await runPreFix(customConfig, deps);
+
+      expect(deps.fetchUnresolvedCodexFindings).toHaveBeenCalledWith(
+        "team-yubune",
+        "loop-pilot",
+        99,
+        "chatgpt-codex-connector[bot]",
+        "P1",
+        "github-token",
       );
     });
   });
