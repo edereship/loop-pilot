@@ -20,7 +20,7 @@ const UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int
           path
           line
           comments(first:1){
-            nodes{databaseId author{login} body createdAt}
+            nodes{databaseId fullDatabaseId author{login} body createdAt}
           }
         }
       }
@@ -67,6 +67,7 @@ interface RawThreadNode {
   comments?: {
     nodes?: Array<{
       databaseId?: unknown;
+      fullDatabaseId?: unknown;
       author?: { login?: unknown };
       body?: unknown;
       createdAt?: unknown;
@@ -85,6 +86,23 @@ interface ParsedPage {
   skippedBelowThreshold: number;
   skippedMalformedId: number;
   skippedMalformedNode: number;
+}
+
+/**
+ * Extract a numeric review-comment id from a GraphQL value. GitHub's
+ * `PullRequestReviewComment.databaseId` (Int) is deprecated because it cannot
+ * represent 64-bit ids and is null for newer comments; `fullDatabaseId` (BigInt,
+ * serialized as a numeric string) is the replacement. We accept either a JSON
+ * number or a numeric string and require a safe integer so the id stays
+ * compatible with the REST `CommentId` space used for thread resolution.
+ */
+function parseCommentId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function parsePage(
@@ -181,15 +199,19 @@ function parsePage(
       continue;
     }
 
-    const databaseId = firstComment.databaseId;
-    if (typeof databaseId !== "number") {
+    // Prefer the 64-bit-safe `fullDatabaseId`; fall back to the deprecated
+    // `databaseId` for older comments / API responses that still populate it.
+    const commentId =
+      parseCommentId(firstComment.fullDatabaseId) ??
+      parseCommentId(firstComment.databaseId);
+    if (commentId === null) {
       skippedMalformedId += 1;
       continue;
     }
 
     findings.push({
       severity: result.severity,
-      commentId: databaseId,
+      commentId,
       path: typeof node.path === "string" ? node.path : "",
       line: typeof node.line === "number" ? node.line : null,
       title: result.title,
@@ -315,7 +337,7 @@ export async function fetchUnresolvedCodexFindings(
   if (totalSkippedMalformedId > 0) {
     deps.warning(
       `[unresolved-findings] Dropped ${totalSkippedMalformedId} unresolved Codex thread(s) ` +
-        `with non-numeric databaseId; the GraphQL comment schema may have changed.`,
+        `with no usable databaseId/fullDatabaseId; the GraphQL comment schema may have changed.`,
     );
   }
   if (totalSkippedMalformedNode > 0) {

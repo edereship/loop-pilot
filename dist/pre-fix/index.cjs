@@ -21955,7 +21955,7 @@ var UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,
           path
           line
           comments(first:1){
-            nodes{databaseId author{login} body createdAt}
+            nodes{databaseId fullDatabaseId author{login} body createdAt}
           }
         }
       }
@@ -21969,6 +21969,15 @@ var UnresolvedFindingsFetchError = class extends Error {
     this.name = "UnresolvedFindingsFetchError";
   }
 };
+function parseCommentId(value) {
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
 function parsePage(stdout, codexBotLogin, severityThreshold) {
   let parsed;
   try {
@@ -22038,14 +22047,14 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       skippedBelowThreshold += 1;
       continue;
     }
-    const databaseId = firstComment.databaseId;
-    if (typeof databaseId !== "number") {
+    const commentId = parseCommentId(firstComment.fullDatabaseId) ?? parseCommentId(firstComment.databaseId);
+    if (commentId === null) {
       skippedMalformedId += 1;
       continue;
     }
     findings.push({
       severity: result.severity,
-      commentId: databaseId,
+      commentId,
       path: typeof node.path === "string" ? node.path : "",
       line: typeof node.line === "number" ? node.line : null,
       title: result.title,
@@ -22119,7 +22128,7 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
     deps.warning(`[unresolved-findings] Skipped ${totalSkippedBelowThreshold} unresolved Codex thread(s) below severity threshold (${params.severityThreshold}).`);
   }
   if (totalSkippedMalformedId > 0) {
-    deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedId} unresolved Codex thread(s) with non-numeric databaseId; the GraphQL comment schema may have changed.`);
+    deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedId} unresolved Codex thread(s) with no usable databaseId/fullDatabaseId; the GraphQL comment schema may have changed.`);
   }
   if (totalSkippedMalformedNode > 0) {
     deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedNode} null/malformed reviewThreads node(s); GitHub returned entries the token cannot resolve.`);

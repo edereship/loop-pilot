@@ -36,7 +36,8 @@ function makeThread(opts: {
   line?: number | null;
   authorLogin?: string;
   body?: string;
-  databaseId?: number;
+  databaseId?: number | null;
+  fullDatabaseId?: string | null;
   createdAt?: string;
 }) {
   return {
@@ -47,7 +48,9 @@ function makeThread(opts: {
     comments: {
       nodes: [
         {
-          databaseId: opts.databaseId ?? 1,
+          databaseId: opts.databaseId === undefined ? 1 : opts.databaseId,
+          fullDatabaseId:
+            opts.fullDatabaseId === undefined ? null : opts.fullDatabaseId,
           author: { login: opts.authorLogin ?? "codex-bot" },
           body: opts.body ?? "P1 Memory leak in parser",
           createdAt: opts.createdAt ?? "2026-05-10T08:00:00Z",
@@ -226,6 +229,62 @@ describe("fetchUnresolvedCodexFindings", () => {
     expect(findings[0].commentId).toBe(801);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("null/malformed"),
+    );
+  });
+
+  it("uses fullDatabaseId when databaseId is null (64-bit ids)", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({
+          databaseId: null,
+          fullDatabaseId: "9007199254740000",
+          body: "P1 64-bit id finding",
+        }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].commentId).toBe(9007199254740000);
+  });
+
+  it("prefers fullDatabaseId over the deprecated databaseId", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({
+          databaseId: 111,
+          fullDatabaseId: "222",
+          body: "P1 Both ids present",
+        }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].commentId).toBe(222);
+  });
+
+  it("drops a thread when both databaseId and fullDatabaseId are unusable", async () => {
+    const warn = vi.fn();
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({
+          databaseId: null,
+          fullDatabaseId: null,
+          body: "P1 No id",
+        }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings(defaultParams, {
+      warning: warn,
+    });
+
+    expect(findings).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("databaseId/fullDatabaseId"),
     );
   });
 
