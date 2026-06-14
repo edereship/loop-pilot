@@ -29,6 +29,12 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 - Extracted `buildAndEmitRepairOutputs` helper in `main-pre-fix.ts` to
   deduplicate the prompt-building pipeline between Phase 3 and Case A.
 
+## [1.6.1] - 2026-06-12
+
+### Fixed
+- Unified error comment prefix to `⚠️` across all stop/rejection comments
+  (ES-398 / #34).
+
 ## [1.6.0] - 2026-06-11
 
 ### Added
