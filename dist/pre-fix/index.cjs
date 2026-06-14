@@ -21725,20 +21725,22 @@ async function handleRestartWithRepair(context, validation, unresolvedFindings, 
   const base = validation.preflight.nextState;
   const currentHash = computeFindingsHash(unresolvedFindings);
   const newIteration = base.iterationCount + 1;
-  const nowIso2 = now().toISOString();
+  const fixingStartedAt = now().toISOString();
+  const repairReviewBaseline = fixingStartedAt.replace(/\.\d{3}Z$/, "Z");
   const fixingState = {
     ...base,
     status: "fixing",
-    fixingStartedAt: nowIso2,
+    fixingStartedAt,
     // ES-413 (Codex P2): advance the Codex review baseline to the restart
     // repair time. The unresolved findings claimed here are old Codex inline
     // comments; without bumping `lastCodexReviewReceivedAt`, the next pre-fix
     // pass — which fetches REST review comments by timestamp only — would
     // re-parse these already-repaired comments as fresh findings (the soft
     // restart preserves whatever stale/null baseline `base` carried). Every
-    // comment in this set predates the restart, so `nowIso` is safely after
-    // all of them and only genuinely new post-repair reviews are reconsidered.
-    lastCodexReviewReceivedAt: nowIso2,
+    // comment in this set predates the restart, so this baseline is safely
+    // after all of them and only genuinely new post-repair reviews are
+    // reconsidered.
+    lastCodexReviewReceivedAt: repairReviewBaseline,
     iterationCount: newIteration,
     lastFindingsHash: currentHash,
     findingsHashHistory: [

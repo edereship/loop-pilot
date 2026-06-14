@@ -1874,12 +1874,16 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
 
     expect(result).not.toBeNull();
     if (result === null) throw new Error("expected non-null");
+    // Second-truncated (no milliseconds) so it compares correctly against
+    // GitHub's second-precision `created_at` (Codex P2 follow-up).
     expect(result.fixingState.lastCodexReviewReceivedAt).toBe(
-      "2026-05-14T12:00:00.000Z",
+      "2026-05-14T12:00:00Z",
     );
+    // fixingStartedAt keeps millisecond precision (duration-based stale check).
+    expect(result.fixingState.fixingStartedAt).toBe("2026-05-14T12:00:00.000Z");
     expect(deps.updateStateComment.mock.calls[0][3]).toMatchObject({
       status: "fixing",
-      lastCodexReviewReceivedAt: "2026-05-14T12:00:00.000Z",
+      lastCodexReviewReceivedAt: "2026-05-14T12:00:00Z",
     });
   });
 

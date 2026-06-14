@@ -644,21 +644,33 @@ export async function handleRestartWithRepair(
   const base = validation.preflight.nextState;
   const currentHash = computeFindingsHash(unresolvedFindings);
   const newIteration = base.iterationCount + 1;
-  const nowIso = now().toISOString();
+  const fixingStartedAt = now().toISOString();
+  // ES-413 (Codex P2): second-truncate the review baseline. GitHub
+  // `created_at` is second-precision (`...00Z`), which sorts lexicographically
+  // *after* a millisecond stamp (`...00.123Z`) because "Z" > ".". Storing the
+  // raw millisecond `toISOString()` would make a Codex comment created in the
+  // same second as this restart compare as "newer" than the baseline, so the
+  // next pre-fix pass would re-parse the already-repaired comment as a fresh
+  // finding. The normal pre-fix path truncates the same field for this reason
+  // (see `main-pre-fix.ts`). `fixingStartedAt` keeps millisecond precision —
+  // it is only used for duration-based stale detection, never lexicographic
+  // comparison against `created_at`.
+  const repairReviewBaseline = fixingStartedAt.replace(/\.\d{3}Z$/, "Z");
 
   const fixingState: ReviewState = {
     ...base,
     status: "fixing",
-    fixingStartedAt: nowIso,
+    fixingStartedAt,
     // ES-413 (Codex P2): advance the Codex review baseline to the restart
     // repair time. The unresolved findings claimed here are old Codex inline
     // comments; without bumping `lastCodexReviewReceivedAt`, the next pre-fix
     // pass — which fetches REST review comments by timestamp only — would
     // re-parse these already-repaired comments as fresh findings (the soft
     // restart preserves whatever stale/null baseline `base` carried). Every
-    // comment in this set predates the restart, so `nowIso` is safely after
-    // all of them and only genuinely new post-repair reviews are reconsidered.
-    lastCodexReviewReceivedAt: nowIso,
+    // comment in this set predates the restart, so this baseline is safely
+    // after all of them and only genuinely new post-repair reviews are
+    // reconsidered.
+    lastCodexReviewReceivedAt: repairReviewBaseline,
     iterationCount: newIteration,
     lastFindingsHash: currentHash,
     findingsHashHistory: [
