@@ -1939,6 +1939,83 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
     expect(result.fixingState.lastCodexReviewReceivedAt).toBe(newerBaseline);
   });
 
+  it("does not advance the baseline past unembedded overflow findings (ES-413 Codex P2)", async () => {
+    const deps = makeDeps();
+    // 30 high-severity findings (embedded) created NEWER than one low-severity
+    // overflow finding created OLDER. selectEmbeddedFindings ranks by severity,
+    // so the P3 is dropped despite being oldest — the baseline must stay below
+    // it so the next pass still repairs it.
+    const embedded: Finding[] = Array.from({ length: 30 }, (_, i) => ({
+      severity: "P0" as const,
+      commentId: 100 + i,
+      path: `src/f${i}.ts`,
+      line: i + 1,
+      title: `High ${i}`,
+      body: `body ${i}`,
+      createdAt: "2026-05-12T10:00:00Z",
+    }));
+    const overflow: Finding = {
+      severity: "P3",
+      commentId: 999,
+      path: "src/old.ts",
+      line: 1,
+      title: "Low priority but old",
+      body: "old body",
+      createdAt: "2026-05-11T10:00:00Z",
+    };
+    const findings = [...embedded, overflow];
+
+    const result = await handleRestartWithRepair(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(makeState({ lastCodexReviewReceivedAt: null })),
+      },
+      makeValidation({
+        preflight: {
+          nextState: {
+            ...makeState({ lastCodexReviewReceivedAt: null }),
+            status: "waiting_codex",
+            lastProcessedReviewId: null,
+            fixingStartedAt: null,
+          },
+          previousStopReason: null,
+        },
+      }),
+      findings,
+      "escalated",
+      () => new Date("2026-05-14T12:00:00Z"),
+      deps,
+    );
+
+    expect(result).not.toBeNull();
+    if (result === null) throw new Error("expected non-null");
+    // Baseline clamped to one second before the overflow finding's created_at.
+    expect(result.fixingState.lastCodexReviewReceivedAt).toBe(
+      "2026-05-11T09:59:59Z",
+    );
+    // Overflow finding stays visible (created_at > baseline) for a later pass.
+    expect(
+      "2026-05-11T10:00:00Z" > result.fixingState.lastCodexReviewReceivedAt!,
+    ).toBe(true);
+    // Only the embedded subset is recorded as processed (not the overflow id).
+    expect(result.fixingState.currentIterationFindingCommentIds).toHaveLength(30);
+    expect(result.fixingState.currentIterationFindingCommentIds).not.toContain(
+      999,
+    );
+  });
+
   it("does not abort when the audit comment fails (ES-413 Codex P2, best-effort)", async () => {
     const deps = makeDeps();
     deps.postComment.mockRejectedValueOnce(new Error("secondary rate limit"));
@@ -1982,10 +2059,10 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
 });
 
 describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
-  function finding(createdAt?: string): Finding {
+  function finding(createdAt: string | undefined, commentId = 1): Finding {
     return {
       severity: "P1",
-      commentId: 1,
+      commentId,
       path: "src/x.ts",
       line: 1,
       title: "t",
@@ -1994,21 +2071,23 @@ describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
     };
   }
 
-  it("returns the newest fetched finding's created_at", () => {
+  it("returns the newest embedded finding's created_at", () => {
     expect(
       computeRepairReviewBaseline(
         null,
         [finding("2026-05-10T08:00:00Z"), finding("2026-05-11T09:30:00Z")],
+        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-11T09:30:00Z");
   });
 
-  it("keeps an existing baseline that is newer than every finding", () => {
+  it("keeps an existing baseline that is newer than every embedded finding", () => {
     expect(
       computeRepairReviewBaseline(
         "2026-05-20T00:00:00Z",
         [finding("2026-05-10T08:00:00Z")],
+        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-20T00:00:00Z");
@@ -2019,6 +2098,7 @@ describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
       computeRepairReviewBaseline(
         "2026-05-20T00:00:00.123Z",
         [finding("2026-05-10T08:00:00Z")],
+        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-20T00:00:00Z");
@@ -2029,8 +2109,35 @@ describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
       computeRepairReviewBaseline(
         null,
         [finding(undefined)],
+        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-14T12:00:00Z");
+  });
+
+  it("clamps below the oldest overflow finding so it is not skipped (Codex P2)", () => {
+    // Embedded (high severity) is NEWER than an overflow (low severity, older)
+    // finding. Without the clamp the baseline would pass the overflow's
+    // created_at and the next pass would silently drop it.
+    const baseline = computeRepairReviewBaseline(
+      null,
+      [finding("2026-05-12T10:00:00Z", 1)],
+      [finding("2026-05-11T10:00:00Z", 2)],
+      "2026-05-14T12:00:00.000Z",
+    );
+    expect(baseline).toBe("2026-05-11T09:59:59Z");
+    // The overflow finding (2026-05-11T10:00:00Z) is now strictly > baseline.
+    expect("2026-05-11T10:00:00Z" > baseline).toBe(true);
+  });
+
+  it("does not clamp when overflow is newer than the baseline", () => {
+    expect(
+      computeRepairReviewBaseline(
+        null,
+        [finding("2026-05-11T10:00:00Z", 1)],
+        [finding("2026-05-12T10:00:00Z", 2)],
+        "2026-05-14T12:00:00.000Z",
+      ),
+    ).toBe("2026-05-11T10:00:00Z");
   });
 });

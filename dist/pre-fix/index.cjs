@@ -21721,19 +21721,35 @@ async function executeRestartWithCodexReview(context, validation, deps = default
 function secondTruncateIso(iso) {
   return iso.replace(/\.\d{3}Z$/, "Z");
 }
-function computeRepairReviewBaseline(existingBaseline, findings, fixingStartedAt) {
+function isoMinusOneSecond(iso) {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms))
+    return null;
+  return secondTruncateIso(new Date(ms - 1e3).toISOString());
+}
+function maxIso(values) {
+  return values.reduce((a, b) => a >= b ? a : b);
+}
+function computeRepairReviewBaseline(existingBaseline, embeddedFindings, overflowFindings, fixingStartedAt) {
   const candidates = [];
   if (existingBaseline)
     candidates.push(secondTruncateIso(existingBaseline));
-  for (const finding of findings) {
+  for (const finding of embeddedFindings) {
     if (typeof finding.createdAt === "string" && finding.createdAt.length > 0) {
       candidates.push(secondTruncateIso(finding.createdAt));
     }
   }
-  if (candidates.length === 0) {
-    return secondTruncateIso(fixingStartedAt);
+  let baseline = candidates.length > 0 ? maxIso(candidates) : secondTruncateIso(fixingStartedAt);
+  const overflowCreated = overflowFindings.map((f) => f.createdAt).filter((c) => typeof c === "string" && c.length > 0).map(secondTruncateIso);
+  if (overflowCreated.length > 0) {
+    const oldestOverflow = overflowCreated.reduce((a, b) => a <= b ? a : b);
+    if (baseline >= oldestOverflow) {
+      const clamped = isoMinusOneSecond(oldestOverflow);
+      if (clamped !== null)
+        baseline = clamped;
+    }
   }
-  return candidates.reduce((a, b) => a >= b ? a : b);
+  return baseline;
 }
 async function handleRestartWithRepair(context, validation, unresolvedFindings, modelTier, now = () => /* @__PURE__ */ new Date(), deps = defaultRestartCommandDeps) {
   if (!context.stateResult.found) {
@@ -21743,7 +21759,10 @@ async function handleRestartWithRepair(context, validation, unresolvedFindings, 
   const currentHash = computeFindingsHash(unresolvedFindings);
   const newIteration = base.iterationCount + 1;
   const fixingStartedAt = now().toISOString();
-  const repairReviewBaseline = computeRepairReviewBaseline(base.lastCodexReviewReceivedAt, unresolvedFindings, fixingStartedAt);
+  const embeddedFindings = selectEmbeddedFindings(unresolvedFindings);
+  const embeddedIds = new Set(embeddedFindings.map((f) => f.commentId));
+  const overflowFindings = unresolvedFindings.filter((f) => !embeddedIds.has(f.commentId));
+  const repairReviewBaseline = computeRepairReviewBaseline(base.lastCodexReviewReceivedAt, embeddedFindings, overflowFindings, fixingStartedAt);
   const fixingState = {
     ...base,
     status: "fixing",
@@ -21764,7 +21783,7 @@ async function handleRestartWithRepair(context, validation, unresolvedFindings, 
       ...base.findingsHashHistory,
       { iteration: newIteration, hash: currentHash, modelTier }
     ],
-    currentIterationFindingCommentIds: selectEmbeddedFindings(unresolvedFindings).map((f) => f.commentId)
+    currentIterationFindingCommentIds: embeddedFindings.map((f) => f.commentId)
   };
   const updateStateCommentLocked = createLockedStateUpdater({
     owner: context.owner,
