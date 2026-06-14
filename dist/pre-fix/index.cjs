@@ -21997,6 +21997,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
     };
   }
   const rawNodes = Array.isArray(threads.nodes) ? threads.nodes : [];
+  const codexLoginBase = codexBotLogin.replace(/\[bot\]$/i, "");
   const findings = [];
   let skippedNonCodex = 0;
   let skippedResolved = 0;
@@ -22017,7 +22018,8 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
     const firstComment = Array.isArray(node.comments?.nodes) ? node.comments.nodes[0] : void 0;
     if (!firstComment)
       continue;
-    if (firstComment.author?.login !== codexBotLogin) {
+    const authorLogin = typeof firstComment.author?.login === "string" ? firstComment.author.login : "";
+    if (authorLogin !== codexBotLogin && authorLogin !== codexLoginBase) {
       skippedNonCodex += 1;
       continue;
     }
