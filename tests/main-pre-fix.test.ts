@@ -2044,7 +2044,7 @@ describe("runPreFix", () => {
         commentId: 100,
         commentUpdatedAt: "2026-05-14T11:00:00Z",
       });
-      deps.validateRestartCommand.mockResolvedValue({
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
         valid: true,
         validation: {
           mode: "soft" as const,
@@ -2059,8 +2059,8 @@ describe("runPreFix", () => {
           },
         },
       });
-      deps.fetchUnresolvedCodexFindings.mockResolvedValue(sampleFindings);
-      deps.handleRestartWithRepair.mockResolvedValue({
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.handleRestartWithRepair).mockResolvedValue({
         fixingState: {
           ...waitingState,
           status: "fixing",
@@ -2097,7 +2097,7 @@ describe("runPreFix", () => {
         commentId: 100,
         commentUpdatedAt: "2026-05-14T11:00:00Z",
       });
-      deps.validateRestartCommand.mockResolvedValue({
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
         valid: true,
         validation: {
           mode: "soft" as const,
@@ -2112,7 +2112,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      deps.fetchUnresolvedCodexFindings.mockResolvedValue([]);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue([]);
 
       await runPreFix(restartConfig, deps);
 
@@ -2135,7 +2135,7 @@ describe("runPreFix", () => {
         commentId: 100,
         commentUpdatedAt: "2026-05-14T11:00:00Z",
       });
-      deps.validateRestartCommand.mockResolvedValue({
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
         valid: true,
         validation: {
           mode: "hard" as const,
@@ -2154,8 +2154,8 @@ describe("runPreFix", () => {
           },
         },
       });
-      deps.fetchUnresolvedCodexFindings.mockResolvedValue(sampleFindings);
-      deps.handleRestartWithRepair.mockResolvedValue({
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.handleRestartWithRepair).mockResolvedValue({
         fixingState: {
           ...stoppedState,
           status: "fixing",
@@ -2185,7 +2185,7 @@ describe("runPreFix", () => {
         commentId: 100,
         commentUpdatedAt: "2026-05-14T11:00:00Z",
       });
-      deps.validateRestartCommand.mockResolvedValue({
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
         valid: true,
         validation: {
           mode: "soft" as const,
@@ -2200,8 +2200,8 @@ describe("runPreFix", () => {
           },
         },
       });
-      deps.fetchUnresolvedCodexFindings.mockResolvedValue(sampleFindings);
-      deps.handleRestartWithRepair.mockResolvedValue(null);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.handleRestartWithRepair).mockResolvedValue(null);
 
       await runPreFix(restartConfig, deps);
 
@@ -2216,7 +2216,7 @@ describe("runPreFix", () => {
         commentId: 100,
         commentUpdatedAt: "2026-05-14T11:00:00Z",
       });
-      deps.validateRestartCommand.mockResolvedValue({
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
         valid: false,
         handled: true,
       });
