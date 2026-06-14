@@ -1830,4 +1830,97 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
     expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
     expect(deps.ensureCodexAck).not.toHaveBeenCalled();
   });
+
+  it("advances lastCodexReviewReceivedAt to the repair time (ES-413 Codex P2)", async () => {
+    const deps = makeDeps();
+
+    const result = await handleRestartWithRepair(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        // Stale baseline: a soft restart would otherwise preserve this and the
+        // next pre-fix pass would re-parse the old Codex comments as fresh.
+        stateResult: foundState(
+          makeState({ lastCodexReviewReceivedAt: "2026-05-01T00:00:00Z" }),
+        ),
+      },
+      makeValidation({
+        preflight: {
+          nextState: {
+            ...makeState({ lastCodexReviewReceivedAt: "2026-05-01T00:00:00Z" }),
+            status: "waiting_codex",
+            lastProcessedReviewId: null,
+            fixingStartedAt: null,
+          },
+          previousStopReason: null,
+        },
+      }),
+      sampleFindings,
+      "base",
+      () => new Date("2026-05-14T12:00:00Z"),
+      deps,
+    );
+
+    expect(result).not.toBeNull();
+    if (result === null) throw new Error("expected non-null");
+    expect(result.fixingState.lastCodexReviewReceivedAt).toBe(
+      "2026-05-14T12:00:00.000Z",
+    );
+    expect(deps.updateStateComment.mock.calls[0][3]).toMatchObject({
+      status: "fixing",
+      lastCodexReviewReceivedAt: "2026-05-14T12:00:00.000Z",
+    });
+  });
+
+  it("does not abort when the audit comment fails (ES-413 Codex P2, best-effort)", async () => {
+    const deps = makeDeps();
+    deps.postComment.mockRejectedValueOnce(new Error("secondary rate limit"));
+
+    const result = await handleRestartWithRepair(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(makeState()),
+      },
+      makeValidation(),
+      sampleFindings,
+      "base",
+      () => new Date("2026-05-14T12:00:00Z"),
+      deps,
+    );
+
+    // The fixing state was already persisted, so the repair must proceed even
+    // though the public audit comment threw.
+    expect(result).not.toBeNull();
+    if (result === null) throw new Error("expected non-null");
+    expect(result.fixingState.status).toBe("fixing");
+    expect(deps.updateStateComment).toHaveBeenCalledTimes(1);
+    expect(deps.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to post Case A repair audit comment"),
+    );
+    // Reaction still attempted after the swallowed audit failure.
+    expect(deps.addRestartReaction).toHaveBeenCalledTimes(1);
+  });
 });

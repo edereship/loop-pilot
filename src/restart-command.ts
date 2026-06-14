@@ -644,11 +644,21 @@ export async function handleRestartWithRepair(
   const base = validation.preflight.nextState;
   const currentHash = computeFindingsHash(unresolvedFindings);
   const newIteration = base.iterationCount + 1;
+  const nowIso = now().toISOString();
 
   const fixingState: ReviewState = {
     ...base,
     status: "fixing",
-    fixingStartedAt: now().toISOString(),
+    fixingStartedAt: nowIso,
+    // ES-413 (Codex P2): advance the Codex review baseline to the restart
+    // repair time. The unresolved findings claimed here are old Codex inline
+    // comments; without bumping `lastCodexReviewReceivedAt`, the next pre-fix
+    // pass — which fetches REST review comments by timestamp only — would
+    // re-parse these already-repaired comments as fresh findings (the soft
+    // restart preserves whatever stale/null baseline `base` carried). Every
+    // comment in this set predates the restart, so `nowIso` is safely after
+    // all of them and only genuinely new post-repair reviews are reconsidered.
+    lastCodexReviewReceivedAt: nowIso,
     iterationCount: newIteration,
     lastFindingsHash: currentHash,
     findingsHashHistory: [
@@ -691,18 +701,34 @@ export async function handleRestartWithRepair(
     return null;
   }
 
-  await deps.postComment(
-    context.owner,
-    context.repo,
-    context.prNumber,
-    [
-      `🔧 Found ${unresolvedFindings.length} unresolved finding(s) — fixing before requesting new review.`,
-      "",
-      `mode: ${validation.mode}`,
-      `iteration: ${newIteration}`,
-    ].join("\n"),
-    context.githubToken,
-  );
+  // ES-413 (Codex P2): best-effort audit comment. The hidden `fixing` state
+  // (written above) is the durable acknowledgement. If this public notification
+  // fails — e.g. a transient API error or secondary-rate-limit — letting it
+  // throw here would abort Case A *after* the state has already moved to
+  // `fixing` but *before* pre-fix emits `should_run=true`; the top-level crash
+  // handler would then demote the state instead of letting Claude repair the
+  // unresolved findings. Swallow the failure like the reaction/status updates
+  // and continue so output emission proceeds.
+  try {
+    await deps.postComment(
+      context.owner,
+      context.repo,
+      context.prNumber,
+      [
+        `🔧 Found ${unresolvedFindings.length} unresolved finding(s) — fixing before requesting new review.`,
+        "",
+        `mode: ${validation.mode}`,
+        `iteration: ${newIteration}`,
+      ].join("\n"),
+      context.githubToken,
+    );
+  } catch (error) {
+    deps.warning(
+      `[restart] Failed to post Case A repair audit comment (continuing): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
   if (context.triggerCommentId !== 0) {
     try {
       await deps.addRestartReaction(

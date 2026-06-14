@@ -21725,10 +21725,20 @@ async function handleRestartWithRepair(context, validation, unresolvedFindings, 
   const base = validation.preflight.nextState;
   const currentHash = computeFindingsHash(unresolvedFindings);
   const newIteration = base.iterationCount + 1;
+  const nowIso2 = now().toISOString();
   const fixingState = {
     ...base,
     status: "fixing",
-    fixingStartedAt: now().toISOString(),
+    fixingStartedAt: nowIso2,
+    // ES-413 (Codex P2): advance the Codex review baseline to the restart
+    // repair time. The unresolved findings claimed here are old Codex inline
+    // comments; without bumping `lastCodexReviewReceivedAt`, the next pre-fix
+    // pass — which fetches REST review comments by timestamp only — would
+    // re-parse these already-repaired comments as fresh findings (the soft
+    // restart preserves whatever stale/null baseline `base` carried). Every
+    // comment in this set predates the restart, so `nowIso` is safely after
+    // all of them and only genuinely new post-repair reviews are reconsidered.
+    lastCodexReviewReceivedAt: nowIso2,
     iterationCount: newIteration,
     lastFindingsHash: currentHash,
     findingsHashHistory: [
@@ -21754,12 +21764,16 @@ async function handleRestartWithRepair(context, validation, unresolvedFindings, 
   if (!writeOk) {
     return null;
   }
-  await deps.postComment(context.owner, context.repo, context.prNumber, [
-    `\u{1F527} Found ${unresolvedFindings.length} unresolved finding(s) \u2014 fixing before requesting new review.`,
-    "",
-    `mode: ${validation.mode}`,
-    `iteration: ${newIteration}`
-  ].join("\n"), context.githubToken);
+  try {
+    await deps.postComment(context.owner, context.repo, context.prNumber, [
+      `\u{1F527} Found ${unresolvedFindings.length} unresolved finding(s) \u2014 fixing before requesting new review.`,
+      "",
+      `mode: ${validation.mode}`,
+      `iteration: ${newIteration}`
+    ].join("\n"), context.githubToken);
+  } catch (error2) {
+    deps.warning(`[restart] Failed to post Case A repair audit comment (continuing): ${error2 instanceof Error ? error2.message : String(error2)}`);
+  }
   if (context.triggerCommentId !== 0) {
     try {
       await deps.addRestartReaction(context.owner, context.repo, context.triggerCommentId, context.githubToken);
@@ -22664,6 +22678,38 @@ async function handleRestartCaseA(config, restartContext, validation, unresolved
   const base = validation.preflight.nextState;
   const previousMaxTurnsExceeded = base.stopReason === "max_turns_exceeded";
   const currentHash = computeFindingsHash(unresolvedFindings);
+  if (isLoop(unresolvedFindings, base.findingsHashHistory)) {
+    deps.info("[pre-fix] Case A: unresolved findings match a prior iteration \u2014 loop detected. Stopping.");
+    if (!restartContext.stateResult.found) {
+      throw new Error("[pre-fix] stateResult must be found after validation");
+    }
+    const stoppedState = {
+      ...base,
+      status: "stopped",
+      stopReason: "loop_detected",
+      // Mirror the normal-flow loop stop: defense-in-depth clear so the
+      // invariant "fixingStartedAt === null whenever status !== 'fixing'" holds.
+      fixingStartedAt: null
+    };
+    const updateStoppedStateLocked = createLockedStateUpdater({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      commentId: restartContext.stateResult.commentId,
+      token: config.githubToken,
+      initialExpectedUpdatedAt: restartContext.stateResult.commentUpdatedAt,
+      label: "pre-fix",
+      updateStateComment: deps.updateStateComment,
+      warning: deps.warning,
+      onConflict: async (detail) => {
+        await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "state_conflict", config.triggerCommentId, 0, `${detail} Hidden comment was updated by another workflow run before this run could record the loop stop. Re-run after the active workflow finishes if needed.`, config.githubToken);
+      }
+    });
+    if (!await updateStoppedStateLocked(stoppedState, "Could not stop after detecting a Case A findings loop.")) {
+      return;
+    }
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "loop_detected", config.triggerCommentId, unresolvedFindings.length, "Same findings hash detected in a previous iteration. Use /restart-review --hard to clear iteration history and retry.", config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
+    return;
+  }
   const previousEntry = base.findingsHashHistory.length > 0 ? base.findingsHashHistory[base.findingsHashHistory.length - 1] : null;
   const repeatedFinding = previousEntry !== null && previousEntry.hash === currentHash && (previousEntry.modelTier ?? "escalated") === "base";
   const selection = selectModel({

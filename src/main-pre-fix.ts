@@ -1152,6 +1152,73 @@ async function handleRestartCaseA(
   const previousMaxTurnsExceeded = base.stopReason === "max_turns_exceeded";
 
   const currentHash = computeFindingsHash(unresolvedFindings);
+
+  // ES-413 (Codex P2): a soft `/restart-review` preserves `findingsHashHistory`,
+  // so the same unresolved findings LoopPilot already classified as a loop would
+  // otherwise be re-attempted here — bypassing the Phase 2 `isLoop` stop and
+  // rerunning Claude on findings already known to oscillate. Honor the same loop
+  // predicate before claiming a new `fixing` iteration. `--hard` clears the
+  // history (see `applyRestartToState`), so `isLoop` returns false and a hard
+  // restart remains the documented escape hatch.
+  if (isLoop(unresolvedFindings, base.findingsHashHistory)) {
+    deps.info(
+      "[pre-fix] Case A: unresolved findings match a prior iteration — loop detected. Stopping.",
+    );
+    if (!restartContext.stateResult.found) {
+      throw new Error("[pre-fix] stateResult must be found after validation");
+    }
+    const stoppedState: ReviewState = {
+      ...base,
+      status: "stopped",
+      stopReason: "loop_detected",
+      // Mirror the normal-flow loop stop: defense-in-depth clear so the
+      // invariant "fixingStartedAt === null whenever status !== 'fixing'" holds.
+      fixingStartedAt: null,
+    };
+    const updateStoppedStateLocked = createLockedStateUpdater({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      commentId: restartContext.stateResult.commentId,
+      token: config.githubToken,
+      initialExpectedUpdatedAt: restartContext.stateResult.commentUpdatedAt,
+      label: "pre-fix",
+      updateStateComment: deps.updateStateComment,
+      warning: deps.warning,
+      onConflict: async (detail) => {
+        await deps.postStopComment(
+          config.repoOwner,
+          config.repoName,
+          config.prNumber,
+          "state_conflict",
+          config.triggerCommentId,
+          0,
+          `${detail} Hidden comment was updated by another workflow run before this run could record the loop stop. Re-run after the active workflow finishes if needed.`,
+          config.githubToken,
+        );
+      },
+    });
+    if (
+      !(await updateStoppedStateLocked(
+        stoppedState,
+        "Could not stop after detecting a Case A findings loop.",
+      ))
+    ) {
+      return;
+    }
+    await deps.postStopComment(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      "loop_detected",
+      config.triggerCommentId,
+      unresolvedFindings.length,
+      "Same findings hash detected in a previous iteration. Use /restart-review --hard to clear iteration history and retry.",
+      config.githubToken,
+      deriveIterationProgress(stoppedState, config.maxReviewIterations),
+    );
+    return;
+  }
+
   const previousEntry =
     base.findingsHashHistory.length > 0
       ? base.findingsHashHistory[base.findingsHashHistory.length - 1]

@@ -2208,6 +2208,135 @@ describe("runPreFix", () => {
       expect(deps.outputs.should_run).toBe("false");
     });
 
+    it("Case A: stops with loop_detected when unresolved findings match prior history (ES-413 Codex P2)", async () => {
+      // sampleFindings hashes to the same value the preserved history already
+      // recorded — a soft restart after loop_detected would otherwise rerun
+      // Claude on a known loop.
+      const loopHash = computeFindingsHash(sampleFindings);
+      const waitingState = makeState({
+        status: "waiting_codex",
+        iterationCount: 3,
+        findingsHashHistory: [
+          { iteration: 2, hash: loopHash, modelTier: "escalated" as const },
+          { iteration: 3, hash: "other", modelTier: "escalated" as const },
+        ],
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: waitingState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft" as const,
+          preflight: {
+            nextState: {
+              ...waitingState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+            },
+            previousStopReason: "loop_detected",
+          },
+        },
+      });
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("false");
+      expect(deps.handleRestartWithRepair).not.toHaveBeenCalled();
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "loop-pilot",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "loop_detected",
+          fixingStartedAt: null,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+      expect(deps.postStopComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "loop-pilot",
+        expect.anything(),
+        "loop_detected",
+        expect.anything(),
+        1,
+        expect.stringContaining("--hard"),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("Case A with --hard: cleared history bypasses the loop guard and repairs", async () => {
+      // Same colliding findings as the loop test, but --hard cleared the
+      // history, so isLoop returns false and the repair proceeds.
+      const stoppedState = makeState({
+        status: "stopped",
+        stopReason: "loop_detected",
+        iterationCount: 5,
+      });
+      const hardConfig = {
+        ...restartConfig,
+        triggerCommentBody: "/restart-review --hard",
+      };
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: stoppedState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "hard" as const,
+          preflight: {
+            nextState: {
+              ...stoppedState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+              iterationCount: 0,
+              findingsHashHistory: [],
+              lastFindingsHash: null,
+              previousCheckFailure: null,
+            },
+            previousStopReason: "loop_detected",
+          },
+        },
+      });
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.handleRestartWithRepair).mockResolvedValue({
+        fixingState: {
+          ...stoppedState,
+          status: "fixing",
+          iterationCount: 1,
+          fixingStartedAt: "2026-05-14T12:00:00Z",
+          currentIterationFindingCommentIds: [2001],
+          lastFindingsHash: computeFindingsHash(sampleFindings),
+          findingsHashHistory: [
+            {
+              iteration: 1,
+              hash: computeFindingsHash(sampleFindings),
+              modelTier: "base" as const,
+            },
+          ],
+        },
+      });
+
+      await runPreFix(hardConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("true");
+      expect(deps.handleRestartWithRepair).toHaveBeenCalledTimes(1);
+    });
+
     it("validation failure returns early without checking unresolved findings", async () => {
       const deps = makeDeps({
         found: true,
