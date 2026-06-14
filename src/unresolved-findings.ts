@@ -20,7 +20,7 @@ const UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int
           path
           line
           comments(first:1){
-            nodes{databaseId author{login} body}
+            nodes{databaseId author{login} body createdAt}
           }
         }
       }
@@ -29,6 +29,22 @@ const UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int
 }`;
 
 const MAX_PAGES = 50;
+
+/**
+ * Thrown when the unresolved-thread GraphQL query fails transiently or returns
+ * an unusable shape. ES-413 (Codex P2): `/restart-review` must fail closed on
+ * this instead of treating it as "zero unresolved findings" — otherwise a
+ * transient fetch error would route a recovery restart into Case B (post a
+ * fresh `@codex review`) and silently skip the intended Case A repair, leaving
+ * the PR wedged behind the same unresolved threads. Surfacing it as an error
+ * makes the run retryable (re-issue `/restart-review` once the API recovers).
+ */
+export class UnresolvedFindingsFetchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnresolvedFindingsFetchError";
+  }
+}
 
 export interface FetchUnresolvedCodexFindingsParams {
   owner: string;
@@ -53,6 +69,7 @@ interface RawThreadNode {
       databaseId?: unknown;
       author?: { login?: unknown };
       body?: unknown;
+      createdAt?: unknown;
     }>;
   };
 }
@@ -67,6 +84,7 @@ interface ParsedPage {
   skippedUnparseable: number;
   skippedBelowThreshold: number;
   skippedMalformedId: number;
+  skippedMalformedNode: number;
 }
 
 function parsePage(
@@ -88,6 +106,7 @@ function parsePage(
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
+      skippedMalformedNode: 0,
     };
   }
   const typed = parsed as {
@@ -114,6 +133,7 @@ function parsePage(
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
+      skippedMalformedNode: 0,
     };
   }
 
@@ -124,8 +144,18 @@ function parsePage(
   let skippedUnparseable = 0;
   let skippedBelowThreshold = 0;
   let skippedMalformedId = 0;
+  let skippedMalformedNode = 0;
 
   for (const raw of rawNodes) {
+    // ES-413 (Codex P2): GitHub's GraphQL `reviewThreads.nodes` can contain a
+    // `null` entry (e.g. a thread the viewer cannot see). Reading `.isResolved`
+    // off `null` would throw outside the `ghApi` try/catch and crash the whole
+    // `/restart-review` instead of skipping one malformed thread, so guard the
+    // node shape before touching any property.
+    if (raw === null || typeof raw !== "object") {
+      skippedMalformedNode += 1;
+      continue;
+    }
     const node = raw as RawThreadNode;
     if (node.isResolved === true) {
       skippedResolved += 1;
@@ -164,6 +194,10 @@ function parsePage(
       line: typeof node.line === "number" ? node.line : null,
       title: result.title,
       body: result.body,
+      createdAt:
+        typeof firstComment.createdAt === "string"
+          ? firstComment.createdAt
+          : undefined,
     });
   }
 
@@ -180,6 +214,7 @@ function parsePage(
     skippedUnparseable,
     skippedBelowThreshold,
     skippedMalformedId,
+    skippedMalformedNode,
   };
 }
 
@@ -198,6 +233,7 @@ export async function fetchUnresolvedCodexFindings(
   let totalSkippedUnparseable = 0;
   let totalSkippedBelowThreshold = 0;
   let totalSkippedMalformedId = 0;
+  let totalSkippedMalformedNode = 0;
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const args = [
@@ -219,13 +255,15 @@ export async function fetchUnresolvedCodexFindings(
     try {
       stdout = await ghApi(args, params.token);
     } catch (error) {
-      deps.warning(
+      // ES-413 (Codex P2): fail closed — do NOT return [] (which the caller
+      // would treat as "no unresolved findings" and route to a fresh @codex
+      // review, skipping the Case A repair).
+      throw new UnresolvedFindingsFetchError(
         `[unresolved-findings] Could not fetch review threads for ` +
           `${params.owner}/${params.repo}#${params.prNumber}: ${
             error instanceof Error ? error.message : String(error)
-          }. Treating as zero unresolved findings.`,
+          }. Aborting /restart-review so unresolved Codex findings are not skipped; re-run once the API recovers.`,
       );
-      return [];
     }
     const pageResult = parsePage(
       stdout,
@@ -234,19 +272,21 @@ export async function fetchUnresolvedCodexFindings(
     );
 
     if (pageResult.malformed) {
-      deps.warning(
+      // ES-413 (Codex P2): same fail-closed rationale as the fetch error above.
+      throw new UnresolvedFindingsFetchError(
         `[unresolved-findings] GraphQL response for ` +
           `${params.owner}/${params.repo}#${params.prNumber} (page ${page}) ` +
           `is missing the reviewThreads container or is not valid JSON; ` +
-          `the token may lack access or the API shape changed. Treating as zero findings.`,
+          `the token may lack access or the API shape changed. Aborting ` +
+          `/restart-review so unresolved Codex findings are not skipped.`,
       );
-      return [];
     }
 
     all.push(...pageResult.findings);
     totalSkippedUnparseable += pageResult.skippedUnparseable;
     totalSkippedBelowThreshold += pageResult.skippedBelowThreshold;
     totalSkippedMalformedId += pageResult.skippedMalformedId;
+    totalSkippedMalformedNode += pageResult.skippedMalformedNode;
 
     if (!pageResult.hasNextPage || pageResult.endCursor === null) break;
     cursor = pageResult.endCursor;
@@ -276,6 +316,12 @@ export async function fetchUnresolvedCodexFindings(
     deps.warning(
       `[unresolved-findings] Dropped ${totalSkippedMalformedId} unresolved Codex thread(s) ` +
         `with non-numeric databaseId; the GraphQL comment schema may have changed.`,
+    );
+  }
+  if (totalSkippedMalformedNode > 0) {
+    deps.warning(
+      `[unresolved-findings] Dropped ${totalSkippedMalformedNode} null/malformed ` +
+        `reviewThreads node(s); GitHub returned entries the token cannot resolve.`,
     );
   }
 

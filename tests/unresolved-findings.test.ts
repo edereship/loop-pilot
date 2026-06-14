@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchUnresolvedCodexFindings } from "../src/unresolved-findings.js";
+import {
+  fetchUnresolvedCodexFindings,
+  UnresolvedFindingsFetchError,
+} from "../src/unresolved-findings.js";
 
 vi.mock("../src/gh.js", () => ({
   ghApi: vi.fn(),
@@ -34,6 +37,7 @@ function makeThread(opts: {
   authorLogin?: string;
   body?: string;
   databaseId?: number;
+  createdAt?: string;
 }) {
   return {
     id: `thread-${opts.databaseId ?? 1}`,
@@ -46,6 +50,7 @@ function makeThread(opts: {
           databaseId: opts.databaseId ?? 1,
           author: { login: opts.authorLogin ?? "codex-bot" },
           body: opts.body ?? "P1 Memory leak in parser",
+          createdAt: opts.createdAt ?? "2026-05-10T08:00:00Z",
         },
       ],
     },
@@ -186,20 +191,59 @@ describe("fetchUnresolvedCodexFindings", () => {
     expect(findings).toHaveLength(0);
   });
 
-  it("warns and returns empty on malformed response (no reviewThreads container)", async () => {
-    const warn = vi.fn();
+  it("throws (fail closed) on malformed response (no reviewThreads container)", async () => {
     mockGhApi.mockResolvedValueOnce(
       JSON.stringify({ data: { repository: null } }),
+    );
+
+    await expect(fetchUnresolvedCodexFindings(defaultParams)).rejects.toThrow(
+      UnresolvedFindingsFetchError,
+    );
+  });
+
+  it("throws (fail closed) when the GraphQL query itself fails", async () => {
+    mockGhApi.mockRejectedValueOnce(new Error("502 Bad Gateway"));
+
+    await expect(fetchUnresolvedCodexFindings(defaultParams)).rejects.toThrow(
+      UnresolvedFindingsFetchError,
+    );
+  });
+
+  it("skips null/malformed thread nodes without throwing", async () => {
+    const warn = vi.fn();
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        null,
+        makeThread({ databaseId: 801, body: "P1 Real finding" }),
+      ]),
     );
 
     const findings = await fetchUnresolvedCodexFindings(defaultParams, {
       warning: warn,
     });
 
-    expect(findings).toHaveLength(0);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].commentId).toBe(801);
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("missing the reviewThreads container"),
+      expect.stringContaining("null/malformed"),
     );
+  });
+
+  it("carries the comment created_at on each finding", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({
+          databaseId: 901,
+          body: "P1 With timestamp",
+          createdAt: "2026-05-12T03:04:05Z",
+        }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].createdAt).toBe("2026-05-12T03:04:05Z");
   });
 
   it("handles null line (file-level comment)", async () => {

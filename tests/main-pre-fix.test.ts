@@ -2337,6 +2337,43 @@ describe("runPreFix", () => {
       expect(deps.handleRestartWithRepair).toHaveBeenCalledTimes(1);
     });
 
+    it("fails closed when fetchUnresolvedCodexFindings throws (ES-413 Codex P2)", async () => {
+      const waitingState = makeState({ status: "waiting_codex" });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: waitingState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft" as const,
+          preflight: {
+            nextState: {
+              ...waitingState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+            },
+            previousStopReason: null,
+          },
+        },
+      });
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockRejectedValue(
+        new Error("502 Bad Gateway"),
+      );
+
+      // The error propagates (fail closed) instead of falling through to a
+      // fresh @codex review that would skip the unresolved findings.
+      await expect(runPreFix(restartConfig, deps)).rejects.toThrow(
+        "502 Bad Gateway",
+      );
+      expect(deps.executeRestartWithCodexReview).not.toHaveBeenCalled();
+      expect(deps.handleRestartWithRepair).not.toHaveBeenCalled();
+    });
+
     it("validation failure returns early without checking unresolved findings", async () => {
       const deps = makeDeps({
         found: true,

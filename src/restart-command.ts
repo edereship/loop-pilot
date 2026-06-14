@@ -630,6 +630,49 @@ export interface RestartRepairContext {
   fixingState: ReviewState;
 }
 
+/** Strip milliseconds so an ISO timestamp is second-precision (UTC). */
+function secondTruncateIso(iso: string): string {
+  return iso.replace(/\.\d{3}Z$/, "Z");
+}
+
+/**
+ * Compute the `lastCodexReviewReceivedAt` baseline for a Case A repair (ES-413,
+ * Codex P2).
+ *
+ * The next pre-fix pass filters REST review comments with `created_at > baseline`,
+ * so the baseline must:
+ *  - be >= the newest finding actually claimed for repair (so those resolved
+ *    comments are not re-parsed as fresh findings), and
+ *  - NOT be advanced past comments that were never fetched (so a Codex comment
+ *    posted in the fetch→state-write gap, whose `created_at` is later than the
+ *    fetched set, is still reconsidered next pass) — i.e. do not use `now()`.
+ *
+ * We therefore take the max of the fetched findings' `created_at` and the
+ * existing baseline (`base.lastCodexReviewReceivedAt`, kept so a previously
+ * processed-but-newer review is not re-opened). Everything is second-truncated
+ * because GitHub `created_at` is second-precision and sorts lexicographically
+ * after a millisecond stamp. Falls back to the (truncated) repair time only
+ * when neither source yields a usable timestamp.
+ */
+export function computeRepairReviewBaseline(
+  existingBaseline: string | null,
+  findings: Finding[],
+  fixingStartedAt: string,
+): string {
+  const candidates: string[] = [];
+  if (existingBaseline) candidates.push(secondTruncateIso(existingBaseline));
+  for (const finding of findings) {
+    if (typeof finding.createdAt === "string" && finding.createdAt.length > 0) {
+      candidates.push(secondTruncateIso(finding.createdAt));
+    }
+  }
+  if (candidates.length === 0) {
+    return secondTruncateIso(fixingStartedAt);
+  }
+  // Lexicographic max == chronological max for same-format second-precision ISO.
+  return candidates.reduce((a, b) => (a >= b ? a : b));
+}
+
 export async function handleRestartWithRepair(
   context: RestartCommandContext,
   validation: RestartValidation,
@@ -645,31 +688,25 @@ export async function handleRestartWithRepair(
   const currentHash = computeFindingsHash(unresolvedFindings);
   const newIteration = base.iterationCount + 1;
   const fixingStartedAt = now().toISOString();
-  // ES-413 (Codex P2): second-truncate the review baseline. GitHub
-  // `created_at` is second-precision (`...00Z`), which sorts lexicographically
-  // *after* a millisecond stamp (`...00.123Z`) because "Z" > ".". Storing the
-  // raw millisecond `toISOString()` would make a Codex comment created in the
-  // same second as this restart compare as "newer" than the baseline, so the
-  // next pre-fix pass would re-parse the already-repaired comment as a fresh
-  // finding. The normal pre-fix path truncates the same field for this reason
-  // (see `main-pre-fix.ts`). `fixingStartedAt` keeps millisecond precision —
-  // it is only used for duration-based stale detection, never lexicographic
-  // comparison against `created_at`.
-  const repairReviewBaseline = fixingStartedAt.replace(/\.\d{3}Z$/, "Z");
+  const repairReviewBaseline = computeRepairReviewBaseline(
+    base.lastCodexReviewReceivedAt,
+    unresolvedFindings,
+    fixingStartedAt,
+  );
 
   const fixingState: ReviewState = {
     ...base,
     status: "fixing",
     fixingStartedAt,
-    // ES-413 (Codex P2): advance the Codex review baseline to the restart
-    // repair time. The unresolved findings claimed here are old Codex inline
-    // comments; without bumping `lastCodexReviewReceivedAt`, the next pre-fix
-    // pass — which fetches REST review comments by timestamp only — would
-    // re-parse these already-repaired comments as fresh findings (the soft
-    // restart preserves whatever stale/null baseline `base` carried). Every
-    // comment in this set predates the restart, so this baseline is safely
-    // after all of them and only genuinely new post-repair reviews are
-    // reconsidered.
+    // ES-413 (Codex P2): advance the Codex review baseline so the next pre-fix
+    // pass — which fetches REST review comments by timestamp only — does not
+    // re-parse these already-repaired Codex comments as fresh findings (the
+    // soft restart preserves whatever stale/null baseline `base` carried).
+    // The baseline is derived from the fetched comments' own `created_at`
+    // (see `computeRepairReviewBaseline`), NOT wall-clock `now()`: using `now()`
+    // would also swallow any Codex comment posted in the fetch→state-write gap
+    // (its `created_at` would be <= now but it was never in the repair prompt),
+    // silently skipping a genuinely unfixed finding.
     lastCodexReviewReceivedAt: repairReviewBaseline,
     iterationCount: newIteration,
     lastFindingsHash: currentHash,

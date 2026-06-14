@@ -21718,6 +21718,23 @@ async function executeRestartWithCodexReview(context, validation, deps = default
     }
   }
 }
+function secondTruncateIso(iso) {
+  return iso.replace(/\.\d{3}Z$/, "Z");
+}
+function computeRepairReviewBaseline(existingBaseline, findings, fixingStartedAt) {
+  const candidates = [];
+  if (existingBaseline)
+    candidates.push(secondTruncateIso(existingBaseline));
+  for (const finding of findings) {
+    if (typeof finding.createdAt === "string" && finding.createdAt.length > 0) {
+      candidates.push(secondTruncateIso(finding.createdAt));
+    }
+  }
+  if (candidates.length === 0) {
+    return secondTruncateIso(fixingStartedAt);
+  }
+  return candidates.reduce((a, b) => a >= b ? a : b);
+}
 async function handleRestartWithRepair(context, validation, unresolvedFindings, modelTier, now = () => /* @__PURE__ */ new Date(), deps = defaultRestartCommandDeps) {
   if (!context.stateResult.found) {
     throw new Error("[restart] handleRestartWithRepair called with unfound state");
@@ -21726,20 +21743,20 @@ async function handleRestartWithRepair(context, validation, unresolvedFindings, 
   const currentHash = computeFindingsHash(unresolvedFindings);
   const newIteration = base.iterationCount + 1;
   const fixingStartedAt = now().toISOString();
-  const repairReviewBaseline = fixingStartedAt.replace(/\.\d{3}Z$/, "Z");
+  const repairReviewBaseline = computeRepairReviewBaseline(base.lastCodexReviewReceivedAt, unresolvedFindings, fixingStartedAt);
   const fixingState = {
     ...base,
     status: "fixing",
     fixingStartedAt,
-    // ES-413 (Codex P2): advance the Codex review baseline to the restart
-    // repair time. The unresolved findings claimed here are old Codex inline
-    // comments; without bumping `lastCodexReviewReceivedAt`, the next pre-fix
-    // pass — which fetches REST review comments by timestamp only — would
-    // re-parse these already-repaired comments as fresh findings (the soft
-    // restart preserves whatever stale/null baseline `base` carried). Every
-    // comment in this set predates the restart, so this baseline is safely
-    // after all of them and only genuinely new post-repair reviews are
-    // reconsidered.
+    // ES-413 (Codex P2): advance the Codex review baseline so the next pre-fix
+    // pass — which fetches REST review comments by timestamp only — does not
+    // re-parse these already-repaired Codex comments as fresh findings (the
+    // soft restart preserves whatever stale/null baseline `base` carried).
+    // The baseline is derived from the fetched comments' own `created_at`
+    // (see `computeRepairReviewBaseline`), NOT wall-clock `now()`: using `now()`
+    // would also swallow any Codex comment posted in the fetch→state-write gap
+    // (its `created_at` would be <= now but it was never in the repair prompt),
+    // silently skipping a genuinely unfixed finding.
     lastCodexReviewReceivedAt: repairReviewBaseline,
     iterationCount: newIteration,
     lastFindingsHash: currentHash,
@@ -21919,7 +21936,7 @@ var UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,
           path
           line
           comments(first:1){
-            nodes{databaseId author{login} body}
+            nodes{databaseId author{login} body createdAt}
           }
         }
       }
@@ -21927,6 +21944,12 @@ var UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,
   }
 }`;
 var MAX_PAGES = 50;
+var UnresolvedFindingsFetchError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UnresolvedFindingsFetchError";
+  }
+};
 function parsePage(stdout, codexBotLogin, severityThreshold) {
   let parsed;
   try {
@@ -21941,7 +21964,8 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       skippedResolved: 0,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
-      skippedMalformedId: 0
+      skippedMalformedId: 0,
+      skippedMalformedNode: 0
     };
   }
   const typed = parsed;
@@ -21956,7 +21980,8 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       skippedResolved: 0,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
-      skippedMalformedId: 0
+      skippedMalformedId: 0,
+      skippedMalformedNode: 0
     };
   }
   const rawNodes = Array.isArray(threads.nodes) ? threads.nodes : [];
@@ -21966,7 +21991,12 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
   let skippedUnparseable = 0;
   let skippedBelowThreshold = 0;
   let skippedMalformedId = 0;
+  let skippedMalformedNode = 0;
   for (const raw of rawNodes) {
+    if (raw === null || typeof raw !== "object") {
+      skippedMalformedNode += 1;
+      continue;
+    }
     const node = raw;
     if (node.isResolved === true) {
       skippedResolved += 1;
@@ -22000,7 +22030,8 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       path: typeof node.path === "string" ? node.path : "",
       line: typeof node.line === "number" ? node.line : null,
       title: result.title,
-      body: result.body
+      body: result.body,
+      createdAt: typeof firstComment.createdAt === "string" ? firstComment.createdAt : void 0
     });
   }
   return {
@@ -22012,7 +22043,8 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
     skippedResolved,
     skippedUnparseable,
     skippedBelowThreshold,
-    skippedMalformedId
+    skippedMalformedId,
+    skippedMalformedNode
   };
 }
 async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
@@ -22022,6 +22054,7 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
   let totalSkippedUnparseable = 0;
   let totalSkippedBelowThreshold = 0;
   let totalSkippedMalformedId = 0;
+  let totalSkippedMalformedNode = 0;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const args = [
       "api",
@@ -22042,18 +22075,17 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
     try {
       stdout = await ghApi(args, params.token);
     } catch (error2) {
-      deps.warning(`[unresolved-findings] Could not fetch review threads for ${params.owner}/${params.repo}#${params.prNumber}: ${error2 instanceof Error ? error2.message : String(error2)}. Treating as zero unresolved findings.`);
-      return [];
+      throw new UnresolvedFindingsFetchError(`[unresolved-findings] Could not fetch review threads for ${params.owner}/${params.repo}#${params.prNumber}: ${error2 instanceof Error ? error2.message : String(error2)}. Aborting /restart-review so unresolved Codex findings are not skipped; re-run once the API recovers.`);
     }
     const pageResult = parsePage(stdout, params.codexBotLogin, params.severityThreshold);
     if (pageResult.malformed) {
-      deps.warning(`[unresolved-findings] GraphQL response for ${params.owner}/${params.repo}#${params.prNumber} (page ${page}) is missing the reviewThreads container or is not valid JSON; the token may lack access or the API shape changed. Treating as zero findings.`);
-      return [];
+      throw new UnresolvedFindingsFetchError(`[unresolved-findings] GraphQL response for ${params.owner}/${params.repo}#${params.prNumber} (page ${page}) is missing the reviewThreads container or is not valid JSON; the token may lack access or the API shape changed. Aborting /restart-review so unresolved Codex findings are not skipped.`);
     }
     all.push(...pageResult.findings);
     totalSkippedUnparseable += pageResult.skippedUnparseable;
     totalSkippedBelowThreshold += pageResult.skippedBelowThreshold;
     totalSkippedMalformedId += pageResult.skippedMalformedId;
+    totalSkippedMalformedNode += pageResult.skippedMalformedNode;
     if (!pageResult.hasNextPage || pageResult.endCursor === null)
       break;
     cursor = pageResult.endCursor;
@@ -22069,6 +22101,9 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
   }
   if (totalSkippedMalformedId > 0) {
     deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedId} unresolved Codex thread(s) with non-numeric databaseId; the GraphQL comment schema may have changed.`);
+  }
+  if (totalSkippedMalformedNode > 0) {
+    deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedNode} null/malformed reviewThreads node(s); GitHub returned entries the token cannot resolve.`);
   }
   return all;
 }

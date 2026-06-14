@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyRestartToState,
+  computeRepairReviewBaseline,
   handleRestartCommand,
   handleRestartWithRepair,
   validateRestartCommand,
@@ -11,6 +12,7 @@ import {
   type RestartCommandDeps,
   type RestartValidation,
 } from "../src/restart-command.js";
+import type { Finding } from "../src/types.js";
 import {
   StateUpdateConflictError,
   createInitialState,
@@ -1612,6 +1614,7 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
       line: 42,
       title: "Memory leak",
       body: "Parser allocates without freeing",
+      createdAt: "2026-05-10T08:00:00Z",
     },
     {
       severity: "P2" as const,
@@ -1620,6 +1623,7 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
       line: 15,
       title: "Unbounded growth",
       body: "Cache never evicts",
+      createdAt: "2026-05-11T09:30:00Z",
     },
   ];
 
@@ -1831,7 +1835,7 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
     expect(deps.ensureCodexAck).not.toHaveBeenCalled();
   });
 
-  it("advances lastCodexReviewReceivedAt to the repair time (ES-413 Codex P2)", async () => {
+  it("derives lastCodexReviewReceivedAt from the fetched comments, not now() (ES-413 Codex P2)", async () => {
     const deps = makeDeps();
 
     const result = await handleRestartWithRepair(
@@ -1874,17 +1878,65 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
 
     expect(result).not.toBeNull();
     if (result === null) throw new Error("expected non-null");
-    // Second-truncated (no milliseconds) so it compares correctly against
-    // GitHub's second-precision `created_at` (Codex P2 follow-up).
+    // Baseline is the newest fetched finding's created_at — NOT now() (which
+    // would swallow comments posted in the fetch→state-write gap) and not the
+    // stale preserved baseline. GitHub created_at is already second-precision.
     expect(result.fixingState.lastCodexReviewReceivedAt).toBe(
-      "2026-05-14T12:00:00Z",
+      "2026-05-11T09:30:00Z",
     );
     // fixingStartedAt keeps millisecond precision (duration-based stale check).
     expect(result.fixingState.fixingStartedAt).toBe("2026-05-14T12:00:00.000Z");
     expect(deps.updateStateComment.mock.calls[0][3]).toMatchObject({
       status: "fixing",
-      lastCodexReviewReceivedAt: "2026-05-14T12:00:00Z",
+      lastCodexReviewReceivedAt: "2026-05-11T09:30:00Z",
     });
+  });
+
+  it("does not regress the baseline below an existing newer one", async () => {
+    const deps = makeDeps();
+    // Existing baseline is newer than every fetched finding's created_at, so it
+    // must win (avoid re-opening already-processed newer reviews).
+    const newerBaseline = "2026-05-20T00:00:00Z";
+
+    const result = await handleRestartWithRepair(
+      {
+        owner: "team-yubune",
+        repo: "loop-pilot",
+        prNumber: 18,
+        triggerCommentId: 777,
+        triggerCommentBody: "/restart-review",
+        triggerUserLogin: "operator",
+        restartRoles: "author,write,maintain,admin",
+        githubToken: "token",
+        codexReviewRequestToken: "codex-token",
+        codexBotLogin: "chatgpt-codex-connector[bot]",
+        codexAckTimeoutSeconds: 90,
+        codexAckPollIntervalSeconds: 15,
+        codexAckMaxReposts: 2,
+        stateResult: foundState(
+          makeState({ lastCodexReviewReceivedAt: newerBaseline }),
+        ),
+      },
+      makeValidation({
+        preflight: {
+          nextState: {
+            ...makeState({ lastCodexReviewReceivedAt: newerBaseline }),
+            status: "waiting_codex",
+            lastProcessedReviewId: null,
+            fixingStartedAt: null,
+          },
+          previousStopReason: null,
+        },
+      }),
+      sampleFindings,
+      "base",
+      () => new Date("2026-05-14T12:00:00Z"),
+      deps,
+    );
+
+    expect(result).not.toBeNull();
+    if (result === null) throw new Error("expected non-null");
+    expect(result.fixingState.lastCodexReviewReceivedAt).toBe(newerBaseline);
   });
 
   it("does not abort when the audit comment fails (ES-413 Codex P2, best-effort)", async () => {
@@ -1926,5 +1978,59 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
     );
     // Reaction still attempted after the swallowed audit failure.
     expect(deps.addRestartReaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
+  function finding(createdAt?: string): Finding {
+    return {
+      severity: "P1",
+      commentId: 1,
+      path: "src/x.ts",
+      line: 1,
+      title: "t",
+      body: "b",
+      createdAt,
+    };
+  }
+
+  it("returns the newest fetched finding's created_at", () => {
+    expect(
+      computeRepairReviewBaseline(
+        null,
+        [finding("2026-05-10T08:00:00Z"), finding("2026-05-11T09:30:00Z")],
+        "2026-05-14T12:00:00.000Z",
+      ),
+    ).toBe("2026-05-11T09:30:00Z");
+  });
+
+  it("keeps an existing baseline that is newer than every finding", () => {
+    expect(
+      computeRepairReviewBaseline(
+        "2026-05-20T00:00:00Z",
+        [finding("2026-05-10T08:00:00Z")],
+        "2026-05-14T12:00:00.000Z",
+      ),
+    ).toBe("2026-05-20T00:00:00Z");
+  });
+
+  it("second-truncates a millisecond existing baseline", () => {
+    expect(
+      computeRepairReviewBaseline(
+        "2026-05-20T00:00:00.123Z",
+        [finding("2026-05-10T08:00:00Z")],
+        "2026-05-14T12:00:00.000Z",
+      ),
+    ).toBe("2026-05-20T00:00:00Z");
+  });
+
+  it("falls back to the truncated repair time when no timestamps are available", () => {
+    expect(
+      computeRepairReviewBaseline(
+        null,
+        [finding(undefined)],
+        "2026-05-14T12:00:00.000Z",
+      ),
+    ).toBe("2026-05-14T12:00:00Z");
   });
 });
