@@ -355,17 +355,43 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       );
 
       if (unresolvedFindings.length > 0) {
-        if (
-          validationResult.validation.preflight.nextState.iterationCount >=
-          config.maxReviewIterations
-        ) {
+        const capState = validationResult.validation.preflight.nextState;
+        if (capState.iterationCount >= config.maxReviewIterations) {
+          // ES-413 (Codex P2): falling back to Case B here is pointless — a soft
+          // restart preserves iterationCount, so the next Codex-triggered pre-fix
+          // run would hit the normal `iterationCount >= maxReviewIterations` stop
+          // before Phase 3 and never repair these findings. Stop with
+          // max_iterations instead: a soft /restart-review from that stop reason
+          // is rejected, forcing --hard, which resets the counter so Case A can
+          // actually run.
           deps.info(
-            `[pre-fix] /restart-review Case A: iteration cap reached (${validationResult.validation.preflight.nextState.iterationCount} >= ${config.maxReviewIterations}) — falling back to Case B.`,
+            `[pre-fix] /restart-review Case A: iteration cap reached (${capState.iterationCount} >= ${config.maxReviewIterations}) with ${unresolvedFindings.length} unresolved finding(s) — stopping; requires --hard.`,
           );
-          await deps.executeRestartWithCodexReview(
-            restartContext,
-            validationResult.validation,
-          );
+          if (!stateResult.found) return;
+          const cappedState: ReviewState = {
+            ...capState,
+            status: "stopped",
+            stopReason: "max_iterations",
+            fixingStartedAt: null,
+          };
+          if (
+            await makeLockedUpdater(stateResult.commentId)(
+              cappedState,
+              "Could not record max_iterations stop for /restart-review at the iteration cap.",
+            )
+          ) {
+            await deps.postStopComment(
+              config.repoOwner,
+              config.repoName,
+              config.prNumber,
+              "max_iterations",
+              triggerCommentId,
+              unresolvedFindings.length,
+              `/restart-review reached the iteration cap (${capState.iterationCount}/${config.maxReviewIterations}) with ${unresolvedFindings.length} unresolved finding(s). Use /restart-review --hard to reset the iteration count and repair them.`,
+              config.githubToken,
+              deriveIterationProgress(cappedState, config.maxReviewIterations),
+            );
+          }
           return;
         }
         // ─── Case A: repair unresolved findings, then @codex review ──────

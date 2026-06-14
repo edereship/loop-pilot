@@ -2337,6 +2337,66 @@ describe("runPreFix", () => {
       expect(deps.handleRestartWithRepair).toHaveBeenCalledTimes(1);
     });
 
+    it("stops (requires --hard) at the iteration cap instead of falling back to Case B (ES-413 Codex P2)", async () => {
+      const cappedState = makeState({
+        status: "waiting_codex",
+        iterationCount: 20,
+      });
+      const cappedConfig = { ...restartConfig, maxReviewIterations: 20 };
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: cappedState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      vi.mocked(deps.validateRestartCommand).mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft" as const,
+          preflight: {
+            nextState: {
+              ...cappedState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+            },
+            previousStopReason: null,
+          },
+        },
+      });
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+
+      await runPreFix(cappedConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("false");
+      expect(deps.executeRestartWithCodexReview).not.toHaveBeenCalled();
+      expect(deps.handleRestartWithRepair).not.toHaveBeenCalled();
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "loop-pilot",
+        100,
+        expect.objectContaining({
+          status: "stopped",
+          stopReason: "max_iterations",
+          fixingStartedAt: null,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+      expect(deps.postStopComment).toHaveBeenCalledWith(
+        "team-yubune",
+        "loop-pilot",
+        expect.anything(),
+        "max_iterations",
+        expect.anything(),
+        1,
+        expect.stringContaining("--hard"),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
     it("fails closed when fetchUnresolvedCodexFindings throws (ES-413 Codex P2)", async () => {
       const waitingState = makeState({ status: "waiting_codex" });
       const deps = makeDeps({

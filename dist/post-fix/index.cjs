@@ -21119,6 +21119,17 @@ function parseGitNumstat(output) {
   return files;
 }
 
+// dist/graphql-comment-id.js
+function parseGraphqlCommentId(value) {
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 // dist/review-thread-resolver.js
 var REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){
   repository(owner:$owner,name:$name){
@@ -21128,7 +21139,7 @@ var REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cur
         nodes{
           id
           isResolved
-          comments(first:50){pageInfo{hasNextPage} nodes{databaseId}}
+          comments(first:50){pageInfo{hasNextPage} nodes{databaseId fullDatabaseId}}
         }
       }
     }
@@ -21161,9 +21172,10 @@ function parseReviewThreadsResponse(stdout) {
     const commentNodes = Array.isArray(n.comments?.nodes) ? n.comments.nodes : [];
     const commentDatabaseIds = [];
     for (const c of commentNodes) {
-      const dbId = c?.databaseId;
-      if (typeof dbId === "number")
-        commentDatabaseIds.push(dbId);
+      const comment = c;
+      const id = parseGraphqlCommentId(comment?.fullDatabaseId) ?? parseGraphqlCommentId(comment?.databaseId);
+      if (id !== null)
+        commentDatabaseIds.push(id);
     }
     if (n.comments?.pageInfo?.hasNextPage === true)
       truncatedThreadCount += 1;

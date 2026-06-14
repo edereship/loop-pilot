@@ -1939,12 +1939,12 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
     expect(result.fixingState.lastCodexReviewReceivedAt).toBe(newerBaseline);
   });
 
-  it("does not advance the baseline past unembedded overflow findings (ES-413 Codex P2)", async () => {
+  it("records only the embedded subset and a baseline covering it (ES-413 Codex P2)", async () => {
     const deps = makeDeps();
-    // 30 high-severity findings (embedded) created NEWER than one low-severity
-    // overflow finding created OLDER. selectEmbeddedFindings ranks by severity,
-    // so the P3 is dropped despite being oldest — the baseline must stay below
-    // it so the next pass still repairs it.
+    // 30 high-severity findings (embedded) plus one low-severity overflow.
+    // selectEmbeddedFindings ranks by severity, so the P3 is dropped. The
+    // baseline covers the embedded (resolved) set; the overflow is NOT recorded
+    // as processed and stays an unresolved thread for the next /restart-review.
     const embedded: Finding[] = Array.from({ length: 30 }, (_, i) => ({
       severity: "P0" as const,
       commentId: 100 + i,
@@ -2001,14 +2001,10 @@ describe("handleRestartWithRepair (ES-413 Case A)", () => {
 
     expect(result).not.toBeNull();
     if (result === null) throw new Error("expected non-null");
-    // Baseline clamped to one second before the overflow finding's created_at.
+    // Baseline covers the embedded/resolved set (no clamp below the overflow).
     expect(result.fixingState.lastCodexReviewReceivedAt).toBe(
-      "2026-05-11T09:59:59Z",
+      "2026-05-12T10:00:00Z",
     );
-    // Overflow finding stays visible (created_at > baseline) for a later pass.
-    expect(
-      "2026-05-11T10:00:00Z" > result.fixingState.lastCodexReviewReceivedAt!,
-    ).toBe(true);
     // Only the embedded subset is recorded as processed (not the overflow id).
     expect(result.fixingState.currentIterationFindingCommentIds).toHaveLength(30);
     expect(result.fixingState.currentIterationFindingCommentIds).not.toContain(
@@ -2076,7 +2072,6 @@ describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
       computeRepairReviewBaseline(
         null,
         [finding("2026-05-10T08:00:00Z"), finding("2026-05-11T09:30:00Z")],
-        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-11T09:30:00Z");
@@ -2087,7 +2082,6 @@ describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
       computeRepairReviewBaseline(
         "2026-05-20T00:00:00Z",
         [finding("2026-05-10T08:00:00Z")],
-        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-20T00:00:00Z");
@@ -2098,7 +2092,6 @@ describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
       computeRepairReviewBaseline(
         "2026-05-20T00:00:00.123Z",
         [finding("2026-05-10T08:00:00Z")],
-        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-20T00:00:00Z");
@@ -2109,35 +2102,22 @@ describe("computeRepairReviewBaseline (ES-413 Case A)", () => {
       computeRepairReviewBaseline(
         null,
         [finding(undefined)],
-        [],
         "2026-05-14T12:00:00.000Z",
       ),
     ).toBe("2026-05-14T12:00:00Z");
   });
 
-  it("clamps below the oldest overflow finding so it is not skipped (Codex P2)", () => {
-    // Embedded (high severity) is NEWER than an overflow (low severity, older)
-    // finding. Without the clamp the baseline would pass the overflow's
-    // created_at and the next pass would silently drop it.
-    const baseline = computeRepairReviewBaseline(
-      null,
-      [finding("2026-05-12T10:00:00Z", 1)],
-      [finding("2026-05-11T10:00:00Z", 2)],
-      "2026-05-14T12:00:00.000Z",
-    );
-    expect(baseline).toBe("2026-05-11T09:59:59Z");
-    // The overflow finding (2026-05-11T10:00:00Z) is now strictly > baseline.
-    expect("2026-05-11T10:00:00Z" > baseline).toBe(true);
-  });
-
-  it("does not clamp when overflow is newer than the baseline", () => {
+  it("covers the embedded set without being pushed back by overflow (Codex P2)", () => {
+    // The overflow set is NOT passed here — only the embedded subset is used —
+    // so the baseline is the newest embedded created_at. It is deliberately NOT
+    // clamped below an older overflow finding (that would re-parse the resolved
+    // embedded comments on the next, non-resolved-aware pass).
     expect(
       computeRepairReviewBaseline(
         null,
-        [finding("2026-05-11T10:00:00Z", 1)],
-        [finding("2026-05-12T10:00:00Z", 2)],
+        [finding("2026-05-12T10:00:00Z", 1)],
         "2026-05-14T12:00:00.000Z",
       ),
-    ).toBe("2026-05-11T10:00:00Z");
+    ).toBe("2026-05-12T10:00:00Z");
   });
 });

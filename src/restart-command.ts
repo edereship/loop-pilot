@@ -635,13 +635,6 @@ function secondTruncateIso(iso: string): string {
   return iso.replace(/\.\d{3}Z$/, "Z");
 }
 
-/** One second before `iso` (second-precision UTC), or `null` if unparseable. */
-function isoMinusOneSecond(iso: string): string | null {
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return null;
-  return secondTruncateIso(new Date(ms - 1000).toISOString());
-}
-
 /** Chronological max of same-format second-precision ISO strings. */
 function maxIso(values: string[]): string {
   return values.reduce((a, b) => (a >= b ? a : b));
@@ -651,28 +644,30 @@ function maxIso(values: string[]): string {
  * Compute the `lastCodexReviewReceivedAt` baseline for a Case A repair (ES-413,
  * Codex P2).
  *
- * The next pre-fix pass filters REST review comments with `created_at > baseline`,
- * so the baseline must:
- *  - advance to cover the `embeddedFindings` actually sent to Claude + resolved
- *    (so those repaired comments are not re-parsed as fresh findings), and
- *  - NOT reach or pass any `overflowFindings` `created_at` — the threads beyond
- *    `MAX_FINDINGS_PER_REQUEST` that were never embedded/resolved this iteration
- *    must remain visible (`created_at > baseline`) so a later pass still repairs
- *    them; otherwise lower-priority unresolved findings are silently dropped and
- *    the loop can be marked done while they remain. `selectEmbeddedFindings`
- *    ranks by severity (not time), so an overflow finding can be *older* than an
- *    embedded one — hence the explicit ceiling clamp rather than a plain max.
- *  - NOT be advanced past comments that were never fetched (no `now()`), so a
- *    Codex comment posted in the fetch→state-write gap is still reconsidered.
+ * The next *normal* pre-fix pass filters REST review comments with
+ * `created_at > baseline` and is NOT resolved-aware, so the baseline must cover
+ * (be >= the newest of) the `embeddedFindings` actually sent to Claude and
+ * resolved by post-fix — otherwise those repaired comments are re-parsed as
+ * fresh findings on the next pass.
  *
- * Everything is second-truncated because GitHub `created_at` is second-precision
- * and sorts lexicographically after a millisecond stamp. Falls back to the
- * (truncated) repair time only when no source yields a usable timestamp.
+ * Only the embedded subset is used (NOT the full unresolved set): when there are
+ * more than `MAX_FINDINGS_PER_REQUEST` findings, the overflow is neither sent to
+ * Claude nor resolved, so the baseline must not be advanced to cover it. We also
+ * deliberately do NOT clamp the baseline *below* the overflow to keep an
+ * older-than-embedded overflow visible: that would push the baseline back before
+ * the just-repaired embedded comments, which (lacking resolved-awareness) the
+ * next pass would re-parse and re-embed ahead of the overflow forever / trip
+ * loop detection. An overflow finding stays an unresolved review thread, so it
+ * is re-detected by the resolved-aware GraphQL query on the next /restart-review.
+ *
+ * `now()` is never used (only the fallback) so a comment posted in the
+ * fetch→state-write gap is not swallowed. Everything is second-truncated because
+ * GitHub `created_at` is second-precision and sorts lexicographically after a
+ * millisecond stamp.
  */
 export function computeRepairReviewBaseline(
   existingBaseline: string | null,
   embeddedFindings: Finding[],
-  overflowFindings: Finding[],
   fixingStartedAt: string,
 ): string {
   const candidates: string[] = [];
@@ -682,25 +677,9 @@ export function computeRepairReviewBaseline(
       candidates.push(secondTruncateIso(finding.createdAt));
     }
   }
-  let baseline =
-    candidates.length > 0 ? maxIso(candidates) : secondTruncateIso(fixingStartedAt);
-
-  // Clamp below the oldest overflow finding so every unembedded thread stays
-  // visible to the next pass (`created_at > baseline`). Keeping overflow findings
-  // is the hard requirement — losing one silently drops a real issue — so this
-  // wins even when it means re-parsing an already-repaired embedded comment.
-  const overflowCreated = overflowFindings
-    .map((f) => f.createdAt)
-    .filter((c): c is string => typeof c === "string" && c.length > 0)
-    .map(secondTruncateIso);
-  if (overflowCreated.length > 0) {
-    const oldestOverflow = overflowCreated.reduce((a, b) => (a <= b ? a : b));
-    if (baseline >= oldestOverflow) {
-      const clamped = isoMinusOneSecond(oldestOverflow);
-      if (clamped !== null) baseline = clamped;
-    }
-  }
-  return baseline;
+  return candidates.length > 0
+    ? maxIso(candidates)
+    : secondTruncateIso(fixingStartedAt);
 }
 
 export async function handleRestartWithRepair(
@@ -721,18 +700,12 @@ export async function handleRestartWithRepair(
 
   // Only the embedded subset (≤ MAX_FINDINGS_PER_REQUEST, priority-ranked) is
   // sent to Claude + resolved by post-fix; the overflow stays unresolved for a
-  // later iteration. The baseline must cover the embedded set without passing
-  // the overflow (Codex P2), so split them here and reuse `embeddedFindings`
-  // for `currentIterationFindingCommentIds`.
+  // later /restart-review. The baseline is computed from this embedded subset
+  // only (Codex P2) and reused for `currentIterationFindingCommentIds`.
   const embeddedFindings = selectEmbeddedFindings(unresolvedFindings);
-  const embeddedIds = new Set(embeddedFindings.map((f) => f.commentId));
-  const overflowFindings = unresolvedFindings.filter(
-    (f) => !embeddedIds.has(f.commentId),
-  );
   const repairReviewBaseline = computeRepairReviewBaseline(
     base.lastCodexReviewReceivedAt,
     embeddedFindings,
-    overflowFindings,
     fixingStartedAt,
   );
 

@@ -1,4 +1,5 @@
 import { ghApi } from "./gh.js";
+import { parseGraphqlCommentId } from "./graphql-comment-id.js";
 import { parseSeverity, isAtLeastSeverity } from "./severity-parser.js";
 import type { Finding, Severity } from "./types.js";
 
@@ -86,23 +87,6 @@ interface ParsedPage {
   skippedBelowThreshold: number;
   skippedMalformedId: number;
   skippedMalformedNode: number;
-}
-
-/**
- * Extract a numeric review-comment id from a GraphQL value. GitHub's
- * `PullRequestReviewComment.databaseId` (Int) is deprecated because it cannot
- * represent 64-bit ids and is null for newer comments; `fullDatabaseId` (BigInt,
- * serialized as a numeric string) is the replacement. We accept either a JSON
- * number or a numeric string and require a safe integer so the id stays
- * compatible with the REST `CommentId` space used for thread resolution.
- */
-function parseCommentId(value: unknown): number | null {
-  if (typeof value === "number" && Number.isInteger(value)) return value;
-  if (typeof value === "string" && /^\d+$/.test(value)) {
-    const parsed = Number(value);
-    return Number.isSafeInteger(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 function parsePage(
@@ -202,8 +186,8 @@ function parsePage(
     // Prefer the 64-bit-safe `fullDatabaseId`; fall back to the deprecated
     // `databaseId` for older comments / API responses that still populate it.
     const commentId =
-      parseCommentId(firstComment.fullDatabaseId) ??
-      parseCommentId(firstComment.databaseId);
+      parseGraphqlCommentId(firstComment.fullDatabaseId) ??
+      parseGraphqlCommentId(firstComment.databaseId);
     if (commentId === null) {
       skippedMalformedId += 1;
       continue;
