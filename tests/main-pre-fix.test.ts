@@ -72,7 +72,10 @@ function makeDeps(
     postAutoMergeSkipNotification: vi.fn().mockResolvedValue(undefined),
     mergeIfChecksPass: vi.fn().mockResolvedValue(undefined),
     fetchPrLabels: vi.fn().mockResolvedValue(["loop-pilot"]),
-    handleRestartCommand: vi.fn().mockResolvedValue({ handled: false }),
+    validateRestartCommand: vi.fn().mockResolvedValue({ valid: false, handled: false }),
+    executeRestartWithCodexReview: vi.fn().mockResolvedValue(undefined),
+    handleRestartWithRepair: vi.fn().mockResolvedValue(null),
+    fetchUnresolvedCodexFindings: vi.fn().mockResolvedValue([]),
     setSecret: vi.fn(),
     setOutput: (name: PreFixOutputName, value: string) => {
       outputs[name] = value;
@@ -115,7 +118,7 @@ describe("runPreFix", () => {
 
       expect(deps.outputs.should_run).toBe("false");
       expect(deps.updateStateComment).not.toHaveBeenCalled();
-      expect(deps.handleRestartCommand).not.toHaveBeenCalled();
+      expect(deps.validateRestartCommand).not.toHaveBeenCalled();
       expect(deps.fetchPrLabels).not.toHaveBeenCalled();
       expect(deps.error).toHaveBeenCalled();
     },
@@ -2008,6 +2011,220 @@ describe("runPreFix", () => {
         "github-token",
         expect.any(Object),
       );
+    });
+  });
+
+  describe("ES-413: /restart-review Case A/B", () => {
+    const restartConfig: Config = {
+      ...baseConfig,
+      triggerCommentBody: "/restart-review",
+      triggerUserLogin: "operator",
+    };
+
+    const sampleFindings = [
+      {
+        severity: "P1" as const,
+        commentId: 2001,
+        path: "src/auth.ts",
+        line: 42,
+        title: "Memory leak",
+        body: "Parser allocates without freeing",
+      },
+    ];
+
+    it("Case A: repairs unresolved findings before requesting new review (should_run=true)", async () => {
+      const waitingState = makeState({
+        status: "waiting_codex",
+        iterationCount: 3,
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: waitingState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      deps.validateRestartCommand.mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft" as const,
+          preflight: {
+            nextState: {
+              ...waitingState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+            },
+            previousStopReason: null,
+          },
+        },
+      });
+      deps.fetchUnresolvedCodexFindings.mockResolvedValue(sampleFindings);
+      deps.handleRestartWithRepair.mockResolvedValue({
+        fixingState: {
+          ...waitingState,
+          status: "fixing",
+          iterationCount: 4,
+          fixingStartedAt: "2026-05-14T12:00:00Z",
+          currentIterationFindingCommentIds: [2001],
+          lastFindingsHash: "abc123",
+          findingsHashHistory: [
+            { iteration: 4, hash: "abc123", modelTier: "base" as const },
+          ],
+        },
+      });
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("true");
+      expect(deps.outputs.iteration).toBe("4");
+      expect(deps.outputs.findings_count).toBe("1");
+      expect(deps.outputs.prompt).toBeDefined();
+      expect(deps.outputs.model).toBeDefined();
+      expect(deps.handleRestartWithRepair).toHaveBeenCalledTimes(1);
+      expect(deps.executeRestartWithCodexReview).not.toHaveBeenCalled();
+    });
+
+    it("Case B: no unresolved findings — calls executeRestartWithCodexReview", async () => {
+      const waitingState = makeState({
+        status: "waiting_codex",
+        iterationCount: 3,
+      });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: waitingState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      deps.validateRestartCommand.mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft" as const,
+          preflight: {
+            nextState: {
+              ...waitingState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+            },
+            previousStopReason: null,
+          },
+        },
+      });
+      deps.fetchUnresolvedCodexFindings.mockResolvedValue([]);
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.executeRestartWithCodexReview).toHaveBeenCalledTimes(1);
+      expect(deps.handleRestartWithRepair).not.toHaveBeenCalled();
+      expect(deps.outputs.should_run).toBe("false");
+    });
+
+    it("Case A with --hard: resets counters in validation, still repairs", async () => {
+      const stoppedState = makeState({
+        status: "stopped",
+        stopReason: "max_iterations",
+        iterationCount: 20,
+      });
+      const hardConfig = { ...restartConfig, triggerCommentBody: "/restart-review --hard" };
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: stoppedState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      deps.validateRestartCommand.mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "hard" as const,
+          preflight: {
+            nextState: {
+              ...stoppedState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+              iterationCount: 0,
+              findingsHashHistory: [],
+              lastFindingsHash: null,
+              previousCheckFailure: null,
+            },
+            previousStopReason: "max_iterations",
+          },
+        },
+      });
+      deps.fetchUnresolvedCodexFindings.mockResolvedValue(sampleFindings);
+      deps.handleRestartWithRepair.mockResolvedValue({
+        fixingState: {
+          ...stoppedState,
+          status: "fixing",
+          iterationCount: 1,
+          fixingStartedAt: "2026-05-14T12:00:00Z",
+          currentIterationFindingCommentIds: [2001],
+          lastFindingsHash: "def456",
+          findingsHashHistory: [
+            { iteration: 1, hash: "def456", modelTier: "base" as const },
+          ],
+        },
+      });
+
+      await runPreFix(hardConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("true");
+      expect(deps.outputs.iteration).toBe("1");
+      expect(deps.handleRestartWithRepair).toHaveBeenCalledTimes(1);
+    });
+
+    it("Case A returns early when handleRestartWithRepair returns null (conflict)", async () => {
+      const waitingState = makeState({ status: "waiting_codex" });
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: waitingState,
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      deps.validateRestartCommand.mockResolvedValue({
+        valid: true,
+        validation: {
+          mode: "soft" as const,
+          preflight: {
+            nextState: {
+              ...waitingState,
+              status: "waiting_codex",
+              lastProcessedReviewId: null,
+              fixingStartedAt: null,
+            },
+            previousStopReason: null,
+          },
+        },
+      });
+      deps.fetchUnresolvedCodexFindings.mockResolvedValue(sampleFindings);
+      deps.handleRestartWithRepair.mockResolvedValue(null);
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.outputs.should_run).toBe("false");
+    });
+
+    it("validation failure returns early without checking unresolved findings", async () => {
+      const deps = makeDeps({
+        found: true,
+        corrupted: false,
+        state: makeState({ status: "waiting_codex" }),
+        commentId: 100,
+        commentUpdatedAt: "2026-05-14T11:00:00Z",
+      });
+      deps.validateRestartCommand.mockResolvedValue({
+        valid: false,
+        handled: true,
+      });
+
+      await runPreFix(restartConfig, deps);
+
+      expect(deps.fetchUnresolvedCodexFindings).not.toHaveBeenCalled();
+      expect(deps.outputs.should_run).toBe("false");
     });
   });
 });

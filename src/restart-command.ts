@@ -10,7 +10,10 @@ import type { ReadStateResult } from "./state-manager.js";
 import { createLockedStateUpdater } from "./state-comment-locker.js";
 import { ensureCodexAck as defaultEnsureCodexAck } from "./codex-ack.js";
 import type { CodexAckParams, CodexAckResult } from "./codex-ack.js";
-import type { ReviewState, StopReason } from "./types.js";
+import { computeFindingsHash } from "./findings-hash.js";
+import { selectEmbeddedFindings } from "./claude-code-repair-request.js";
+import type { ModelTier } from "./model-selector.js";
+import type { Finding, ReviewState, StopReason } from "./types.js";
 
 export type RestartMode = "soft" | "hard";
 type Permission = "admin" | "maintain" | "write" | "triage" | "read" | "none";
@@ -278,21 +281,38 @@ export function isValidGitHubLogin(login: string): boolean {
   return /^[a-zA-Z0-9_](?:[a-zA-Z0-9_]|-(?=[a-zA-Z0-9_]))*$/.test(login);
 }
 
-export async function handleRestartCommand(
+/**
+ * Validated restart command result. `mode` + `preflight` are the inputs for
+ * either Case A (`handleRestartWithRepair`) or Case B
+ * (`executeRestartWithCodexReview`).
+ */
+export interface RestartValidation {
+  mode: RestartMode;
+  preflight: { nextState: ReviewState; previousStopReason: StopReason | null };
+}
+
+export type ValidateRestartCommandResult =
+  | { valid: true; validation: RestartValidation }
+  | { valid: false; handled: boolean };
+
+/**
+ * Extracted validation logic from `handleRestartCommand` (ES-413 refactoring).
+ * Parses the command, checks permission, validates state, and runs preflight.
+ * All rejection comments are posted before returning `valid: false`.
+ *
+ * - `{ valid: false, handled: false }` → not a restart command at all
+ * - `{ valid: false, handled: true }` → restart command rejected, comment posted
+ * - `{ valid: true, ... }` → proceed with Case A or B
+ */
+export async function validateRestartCommand(
   context: RestartCommandContext,
   deps: RestartCommandDeps = defaultRestartCommandDeps,
-): Promise<{ handled: boolean }> {
+): Promise<ValidateRestartCommandResult> {
   const command = parseRestartCommand(context.triggerCommentBody);
   if (!command.isRestart) {
-    return { handled: false };
+    return { valid: false, handled: false };
   }
 
-  // TY-272 #E: gate every side effect — including the "unsupported option" /
-  // "state corrupted" rejection comments and the state read implied by them —
-  // on the permission check first. The previous order let an unauthenticated
-  // commenter trigger a state read + a PR comment per `/restart-review`,
-  // which combined with the workflow `if` ungated for /restart-review (also
-  // closed in this ticket, #C) formed a small amplification surface.
   const hasPermission = await canRestart(context, deps);
   if (!hasPermission) {
     await deps.postComment(
@@ -302,7 +322,7 @@ export async function handleRestartCommand(
       `⚠️ Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`,
       context.githubToken,
     );
-    return { handled: true };
+    return { valid: false, handled: true };
   }
 
   if (command.invalidReason) {
@@ -313,19 +333,10 @@ export async function handleRestartCommand(
       "⚠️ Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.",
       context.githubToken,
     );
-    return { handled: true };
+    return { valid: false, handled: true };
   }
 
   if (!context.stateResult.found && context.stateResult.corrupted) {
-    // TY-293 #1 (UX-06): unparseable hidden-state JSON cannot be recovered by
-    // `/restart-review --hard` because the early return above intercepts
-    // before `applyRestartToState` can run. The previous one-line rejection
-    // pointed operators at the docs without explaining that `--hard` is also
-    // a dead end on this path, leading them to retry with `--hard`, get the
-    // same rejection, and stall. Spell out the manual `gh api DELETE`
-    // surgery so the comment is self-sufficient (TY-282 #1C's `--hard`
-    // recovery only applies to the *parseable* `state_corrupted` stop reason,
-    // not to this unparseable-JSON path).
     const rejection = [
       "⚠️ Restart cannot apply: hidden `looppilot-state` comment is unparseable JSON.",
       "",
@@ -346,7 +357,7 @@ export async function handleRestartCommand(
       rejection,
       context.githubToken,
     );
-    return { handled: true };
+    return { valid: false, handled: true };
   }
   if (!context.stateResult.found) {
     await deps.postComment(
@@ -356,20 +367,11 @@ export async function handleRestartCommand(
       "⚠️ Restart cannot apply: LoopPilot state was not found.",
       context.githubToken,
     );
-    return { handled: true };
+    return { valid: false, handled: true };
   }
 
   const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
   if (!preflight.ok) {
-    // A soft `/restart-review` on a `fixing` state is rejected as
-    // `unsupported_status`. Because `handleRestartCommand` runs *before*
-    // pre-fix's stale-`fixing` recovery (and returns early), a command trigger
-    // never reaches that recovery, so the generic "not restartable" message
-    // sends operators down a dead end. A job killed mid-`fixing` (job timeout /
-    // hard cancel, where `demoteFixingOnCrash` cannot run) never posts
-    // `@codex review`, so no Codex trigger arrives to drive the 30-min stale
-    // demotion either — the only working recovery is `/restart-review --hard`.
-    // Surface that explicitly instead of the generic rejection.
     const rejection =
       preflight.reason === "unsupported_status" &&
       context.stateResult.state.status === "fixing" &&
@@ -390,21 +392,40 @@ export async function handleRestartCommand(
       rejection,
       context.githubToken,
     );
-    return { handled: true };
+    return { valid: false, handled: true };
   }
 
-  // TY-265 #5: route every state write through the optimistic-lock helper so a
-  // concurrent workflow run cannot silently clobber our restart, and a failure
-  // between the two state writes leaves an explicit `state_conflict` stop
-  // comment instead of `status=waiting_codex` with `lastCodexRequestCommentId=null`.
+  return {
+    valid: true,
+    validation: {
+      mode: command.mode,
+      preflight: {
+        nextState: preflight.nextState,
+        previousStopReason: preflight.previousStopReason,
+      },
+    },
+  };
+}
+
+/**
+ * Case B: no unresolved findings — post `@codex review`, ACK-poll, and
+ * write the `waiting_codex` state. This is the existing restart flow,
+ * extracted from `handleRestartCommand` for ES-413.
+ */
+export async function executeRestartWithCodexReview(
+  context: RestartCommandContext,
+  validation: RestartValidation,
+  deps: RestartCommandDeps = defaultRestartCommandDeps,
+): Promise<void> {
+  if (!context.stateResult.found) {
+    throw new Error("[restart] executeRestartWithCodexReview called with unfound state");
+  }
   const updateStateCommentLocked = createLockedStateUpdater({
     owner: context.owner,
     repo: context.repo,
     commentId: context.stateResult.commentId,
     token: context.githubToken,
     initialExpectedUpdatedAt: context.stateResult.commentUpdatedAt,
-    // TY-276 #3: `[restart]` matches the module name in operator logs,
-    // avoiding the "why does /restart-review log as [pre-fix]?" confusion.
     label: "restart",
     updateStateComment: deps.updateStateComment,
     warning: deps.warning,
@@ -423,35 +444,14 @@ export async function handleRestartCommand(
   });
 
   const firstWriteOk = await updateStateCommentLocked(
-    preflight.nextState,
+    validation.preflight.nextState,
     "[restart] failed to publish pre-codex state",
   );
   if (!firstWriteOk) {
-    return { handled: true };
+    return;
   }
 
-  // TY-300: catch a throwing `postCodexReviewRequest` so the restart cannot
-  // silently deadlock. The first write above has already flipped the hidden
-  // state to `waiting_codex`; if Codex post then fails (5xx / 429 / token
-  // expired / app revoked), the second write never runs and the workflow
-  // exits via `runIfNotVitest`'s `onError` → `demoteFixingOnCrash`. The
-  // demoter is a no-op for non-`fixing` statuses, so the state stays at
-  // `waiting_codex` with `lastCodexRequestCommentId: null` and the workflow
-  // YAML #2B fail-safe posts only a generic "⚠️ LoopPilot crashed" without
-  // a `codex_request_failed` stop reason. Re-issuing `/restart-review` walks
-  // the same path. Mirror post-fix Phase 4 (`src/main-post-fix.ts:1486-1509`)
-  // by downgrading the state to `stopped / codex_request_failed` here and
-  // surfacing a stop comment carrying that reason. The spread from
-  // `preflight.nextState` preserves the hard-mode invariants
-  // (`iterationCount: 0`, `findingsHashHistory: []`) and the `fixingStartedAt:
-  // null` baseline that `applyRestartToState` always enforces (TY-273 #B4 /
-  // TY-286 #C). The audit comment + reaction below are intentionally skipped
-  // — they advertise a successful restart, which this branch is not.
   let reviewRequestCommentId: number;
-  // TY-334: capture baseline before posting so any Codex activity that arrives
-  // between the post and the poll window is treated as an ACK (Finding 1: the
-  // original code re-stamped codexRequestedAt AFTER the post, which caused a
-  // fast Codex response to be treated as pre-request activity and missed).
   const codexRequestedAt = new Date().toISOString();
   try {
     reviewRequestCommentId = await deps.postCodexReviewRequest(
@@ -467,7 +467,7 @@ export async function handleRestartCommand(
         "Downgrading to stopped/codex_request_failed so operators see the actionable stop reason.",
     );
     const stoppedState: ReviewState = {
-      ...preflight.nextState,
+      ...validation.preflight.nextState,
       status: "stopped",
       stopReason: "codex_request_failed",
     };
@@ -477,7 +477,7 @@ export async function handleRestartCommand(
         "[restart] Could not record codex_request_failed stop after @codex review post failure.",
       ))
     ) {
-      return { handled: true };
+      return;
     }
     await deps.postStopComment(
       context.owner,
@@ -489,33 +489,15 @@ export async function handleRestartCommand(
       `Failed to post @codex review after /restart-review: ${message}`,
       context.githubToken,
     );
-    return { handled: true };
+    return;
   }
-  const restartResult = applyRestartToState(
-    context.stateResult.state,
-    command.mode,
-    reviewRequestCommentId,
-  );
-  if (!restartResult.ok) {
-    await deps.postComment(
-      context.owner,
-      context.repo,
-      context.prNumber,
-      restartRejectionMessage(restartResult.reason),
-      context.githubToken,
-    );
-    return { handled: true };
-  }
+  const restartState: ReviewState = {
+    ...validation.preflight.nextState,
+    lastCodexRequestCommentId: reviewRequestCommentId,
+  };
 
-  // TY-286 #B: the 2nd write only records `lastCodexRequestCommentId` for
-  // idempotency. The state machine was already transitioned to
-  // `waiting_codex` and `@codex review` has already been posted, so a 412
-  // here is informational — the next Codex review trigger reconciles the
-  // missing comment id. Surfacing `state_conflict` would (mis)tell operators
-  // that the restart aborted and tempt them to re-issue `/restart-review`,
-  // duplicating `@codex review` comments on the PR.
   const secondWriteOk = await updateStateCommentLocked(
-    restartResult.nextState,
+    restartState,
     "[restart] failed to record review-request comment id after posting @codex review",
     {
       onConflict: async (detail) => {
@@ -527,14 +509,9 @@ export async function handleRestartCommand(
     },
   );
   if (!secondWriteOk) {
-    return { handled: true };
+    return;
   }
 
-  // TY-334: poll for a Codex ACK on the re-posted @codex review, exactly as
-  // init / post-fix do. /restart-review is the documented recovery for a wedged
-  // loop, so without this the recovery itself re-wedges at waiting_codex when
-  // Codex drops the request again. On exhaustion, demote to
-  // stopped/codex_request_failed and skip the success audit comment.
   const ack = await deps.ensureCodexAck({
     owner: context.owner,
     repo: context.repo,
@@ -550,7 +527,7 @@ export async function handleRestartCommand(
   });
   if (!ack.acked) {
     const stoppedState: ReviewState = {
-      ...restartResult.nextState,
+      ...restartState,
       lastCodexRequestCommentId: ack.lastCommentId,
       status: "stopped",
       stopReason: "codex_request_failed",
@@ -568,7 +545,7 @@ export async function handleRestartCommand(
         },
       ))
     ) {
-      return { handled: true };
+      return;
     }
     try {
       await deps.postStopComment(
@@ -587,15 +564,12 @@ export async function handleRestartCommand(
         `[restart] Demoted to stopped/codex_request_failed after no Codex ACK but failed to post the stop notification: ${msg}.`,
       );
     }
-    return { handled: true };
+    return;
   }
   if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestCommentId) {
-    // Best-effort: record the latest @codex review comment id after reposts.
-    // Swallow failures — the state is already waiting_codex and the reposted
-    // request has been posted.
     try {
       await updateStateCommentLocked(
-        { ...restartResult.nextState, lastCodexRequestCommentId: ack.lastCommentId },
+        { ...restartState, lastCodexRequestCommentId: ack.lastCommentId },
         "[restart] Could not persist the reposted Codex review request comment id.",
         {
           onConflict: async (detail) => {
@@ -625,8 +599,8 @@ export async function handleRestartCommand(
     [
       `🟢 LoopPilot restarted by @${context.triggerUserLogin}.`,
       "",
-      `mode: ${command.mode}`,
-      `from: ${restartResult.previousStopReason ?? "none"}`,
+      `mode: ${validation.mode}`,
+      `from: ${validation.preflight.previousStopReason ?? "none"}`,
       `reviewRequestCommentId: ${ack.lastCommentId}`,
     ].join("\n"),
     context.githubToken,
@@ -644,6 +618,121 @@ export async function handleRestartCommand(
       // can happen on duplicate reactions and should not roll back restart.
     }
   }
+}
+
+/**
+ * Case A (ES-413): unresolved Codex findings exist — transition to `fixing`
+ * so the composite action repairs them before requesting a new review.
+ * Returns the repair context for main-pre-fix to build the prompt, or `null`
+ * when the state write conflicts (conflict comment already posted).
+ */
+export interface RestartRepairContext {
+  fixingState: ReviewState;
+}
+
+export async function handleRestartWithRepair(
+  context: RestartCommandContext,
+  validation: RestartValidation,
+  unresolvedFindings: Finding[],
+  modelTier: ModelTier,
+  now: () => Date = () => new Date(),
+  deps: RestartCommandDeps = defaultRestartCommandDeps,
+): Promise<RestartRepairContext | null> {
+  if (!context.stateResult.found) {
+    throw new Error("[restart] handleRestartWithRepair called with unfound state");
+  }
+  const base = validation.preflight.nextState;
+  const currentHash = computeFindingsHash(unresolvedFindings);
+  const newIteration = base.iterationCount + 1;
+
+  const fixingState: ReviewState = {
+    ...base,
+    status: "fixing",
+    fixingStartedAt: now().toISOString(),
+    iterationCount: newIteration,
+    lastFindingsHash: currentHash,
+    findingsHashHistory: [
+      ...base.findingsHashHistory,
+      { iteration: newIteration, hash: currentHash, modelTier },
+    ],
+    currentIterationFindingCommentIds: selectEmbeddedFindings(
+      unresolvedFindings,
+    ).map((f) => f.commentId),
+  };
+
+  const updateStateCommentLocked = createLockedStateUpdater({
+    owner: context.owner,
+    repo: context.repo,
+    commentId: context.stateResult.commentId,
+    token: context.githubToken,
+    initialExpectedUpdatedAt: context.stateResult.commentUpdatedAt,
+    label: "restart",
+    updateStateComment: deps.updateStateComment,
+    warning: deps.warning,
+    onConflict: async (detail) => {
+      await deps.postStopComment(
+        context.owner,
+        context.repo,
+        context.prNumber,
+        "state_conflict",
+        0,
+        0,
+        `${detail} Restart aborted because the hidden state comment was modified by another workflow run. Re-issue /restart-review once the active run finishes.`,
+        context.githubToken,
+      );
+    },
+  });
+
+  const writeOk = await updateStateCommentLocked(
+    fixingState,
+    "[restart] failed to publish fixing state for repair",
+  );
+  if (!writeOk) {
+    return null;
+  }
+
+  await deps.postComment(
+    context.owner,
+    context.repo,
+    context.prNumber,
+    [
+      `🔧 Found ${unresolvedFindings.length} unresolved finding(s) — fixing before requesting new review.`,
+      "",
+      `mode: ${validation.mode}`,
+      `iteration: ${newIteration}`,
+    ].join("\n"),
+    context.githubToken,
+  );
+  if (context.triggerCommentId !== 0) {
+    try {
+      await deps.addRestartReaction(
+        context.owner,
+        context.repo,
+        context.triggerCommentId,
+        context.githubToken,
+      );
+    } catch {
+      // Best-effort — the audit comment is the durable acknowledgement.
+    }
+  }
+
+  return { fixingState };
+}
+
+/**
+ * Backward-compatible wrapper: validates and then executes the existing
+ * Case B (codex review) flow. `main-pre-fix.ts` now calls
+ * `validateRestartCommand` + `executeRestartWithCodexReview` /
+ * `handleRestartWithRepair` directly, but this wrapper remains for callers
+ * that do not need the Case A/B split.
+ */
+export async function handleRestartCommand(
+  context: RestartCommandContext,
+  deps: RestartCommandDeps = defaultRestartCommandDeps,
+): Promise<{ handled: boolean }> {
+  const result = await validateRestartCommand(context, deps);
+  if (!result.valid) return { handled: result.handled };
+  await executeRestartWithCodexReview(context, result.validation, deps);
   return { handled: true };
 }
 

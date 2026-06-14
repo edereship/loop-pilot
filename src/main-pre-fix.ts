@@ -38,9 +38,16 @@ import {
   isAutoReviewAllowed,
 } from "./pr-labels.js";
 import {
-  handleRestartCommand as defaultHandleRestartCommand,
+  validateRestartCommand as defaultValidateRestartCommand,
+  executeRestartWithCodexReview as defaultExecuteRestartWithCodexReview,
+  handleRestartWithRepair as defaultHandleRestartWithRepair,
   isRestartCommandLike,
+  type RestartCommandContext,
+  type RestartValidation,
 } from "./restart-command.js";
+import {
+  fetchUnresolvedCodexFindings as defaultFetchUnresolvedCodexFindings,
+} from "./unresolved-findings.js";
 import {
   buildClaudeCodeRepairRequest,
   buildClaudeCodeRepairPrompt,
@@ -54,7 +61,7 @@ import {
 } from "./check-command-allowlist.js";
 import { selectModel } from "./model-selector.js";
 import { isCodexUsageLimitMessage } from "./codex-status.js";
-import type { PrContext, ReviewState } from "./types.js";
+import type { Finding, PrContext, ReviewState } from "./types.js";
 
 /** Pause execution for the given number of milliseconds. */
 function sleep(ms: number): Promise<void> {
@@ -95,7 +102,10 @@ export interface PreFixDeps {
   postAutoMergeSkipNotification: typeof defaultPostAutoMergeSkipNotification;
   mergeIfChecksPass: typeof defaultMergeIfChecksPass;
   fetchPrLabels: typeof defaultFetchPrLabels;
-  handleRestartCommand: typeof defaultHandleRestartCommand;
+  validateRestartCommand: typeof defaultValidateRestartCommand;
+  executeRestartWithCodexReview: typeof defaultExecuteRestartWithCodexReview;
+  handleRestartWithRepair: typeof defaultHandleRestartWithRepair;
+  fetchUnresolvedCodexFindings: typeof defaultFetchUnresolvedCodexFindings;
   setSecret: (secret: string) => void;
   setOutput: (name: PreFixOutputName, value: string) => void;
   info: (message: string) => void;
@@ -149,7 +159,10 @@ const defaultDeps: PreFixDeps = {
   postAutoMergeSkipNotification: defaultPostAutoMergeSkipNotification,
   mergeIfChecksPass: defaultMergeIfChecksPass,
   fetchPrLabels: defaultFetchPrLabels,
-  handleRestartCommand: defaultHandleRestartCommand,
+  validateRestartCommand: defaultValidateRestartCommand,
+  executeRestartWithCodexReview: defaultExecuteRestartWithCodexReview,
+  handleRestartWithRepair: defaultHandleRestartWithRepair,
+  fetchUnresolvedCodexFindings: defaultFetchUnresolvedCodexFindings,
   setSecret: (secret) => core.setSecret(secret),
   setOutput: (name, value) => core.setOutput(name, value),
   info: (message) => core.info(message),
@@ -306,7 +319,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   }
 
   if (isCommandTrigger) {
-    const restartResult = await deps.handleRestartCommand({
+    const restartContext: RestartCommandContext = {
       owner: config.repoOwner,
       repo: config.repoName,
       prNumber: config.prNumber,
@@ -321,9 +334,62 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       codexAckPollIntervalSeconds: config.codexAckPollIntervalSeconds,
       codexAckMaxReposts: config.codexAckMaxReposts,
       stateResult,
-    });
-    if (restartResult.handled) {
-      return;
+    };
+
+    const validationResult = await deps.validateRestartCommand(restartContext);
+    if (!validationResult.valid) {
+      if (validationResult.handled) return;
+      // Not a restart command — fall through to normal processing.
+    } else {
+      // ES-413: check for unresolved Codex findings before choosing Case A or B.
+      const unresolvedFindings = await deps.fetchUnresolvedCodexFindings(
+        {
+          owner: config.repoOwner,
+          repo: config.repoName,
+          prNumber: config.prNumber,
+          codexBotLogin: config.codexBotLogin,
+          severityThreshold: config.severityThreshold,
+          token: config.githubToken,
+        },
+        { warning: deps.warning },
+      );
+
+      if (unresolvedFindings.length > 0) {
+        if (
+          validationResult.validation.preflight.nextState.iterationCount >=
+          config.maxReviewIterations
+        ) {
+          deps.info(
+            `[pre-fix] /restart-review Case A: iteration cap reached (${validationResult.validation.preflight.nextState.iterationCount} >= ${config.maxReviewIterations}) — falling back to Case B.`,
+          );
+          await deps.executeRestartWithCodexReview(
+            restartContext,
+            validationResult.validation,
+          );
+          return;
+        }
+        // ─── Case A: repair unresolved findings, then @codex review ──────
+        deps.info(
+          `[pre-fix] /restart-review Case A: ${unresolvedFindings.length} unresolved finding(s) — repairing first.`,
+        );
+        return handleRestartCaseA(
+          config,
+          restartContext,
+          validationResult.validation,
+          unresolvedFindings,
+          deps,
+        );
+      } else {
+        // ─── Case B: no unresolved findings — existing @codex review flow ─
+        deps.info(
+          "[pre-fix] /restart-review Case B: no unresolved findings — requesting fresh Codex review.",
+        );
+        await deps.executeRestartWithCodexReview(
+          restartContext,
+          validationResult.validation,
+        );
+        return;
+      }
     }
   }
 
@@ -966,18 +1032,46 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
     deps.warning(`[pre-fix] Failed to update fixing-start status: ${message}`);
   }
 
-  // ─── Build claude-code-action prompt ─────────────────────────────────────
+  buildAndEmitRepairOutputs(config, deps, {
+    prHeadRef,
+    headSha,
+    findings,
+    iteration: fixingState.iterationCount,
+    previousCheckFailure: state.previousCheckFailure ?? null,
+    model: selection.model,
+    stateCommentId: commentId,
+    triggerCommentId,
+  });
+
+  deps.info(
+    `[pre-fix] Phase 3 prep complete. iteration=${fixingState.iterationCount}, findings=${findings.length}.`,
+  );
+}
+
+/**
+ * Shared prompt-building + output-emission pipeline used by both Phase 3 and
+ * Case A. Extracted to avoid duplication between the two code paths.
+ */
+function buildAndEmitRepairOutputs(
+  config: Config,
+  deps: PreFixDeps,
+  input: {
+    prHeadRef: string;
+    headSha: string;
+    findings: Finding[];
+    iteration: number;
+    previousCheckFailure: string | null;
+    model: string;
+    stateCommentId: number;
+    triggerCommentId: number;
+  },
+): void {
   const prContext: PrContext = {
     number: config.prNumber,
     title: config.prTitle,
-    branch: prHeadRef,
+    branch: input.prHeadRef,
   };
 
-  // TY-278: Derive the effective scope policy and surface it in the prompt so
-  // claude-code-action knows which paths post-fix will revert. `buildScopePolicy`
-  // is defensive and should not throw under normal config, but we wrap it so
-  // any future parse-time failure simply omits the section (== pre-TY-278
-  // behaviour) instead of failing the entire pre-fix run.
   let scopePolicyForPrompt: ClaudeCodeRepairScopePolicy | null = null;
   try {
     const effectivePolicy = buildScopePolicy({
@@ -1005,20 +1099,16 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
 
   const repairRequest = buildClaudeCodeRepairRequest({
     prContext,
-    headSha,
-    findings,
-    iteration: fixingState.iterationCount,
+    headSha: input.headSha,
+    findings: input.findings,
+    iteration: input.iteration,
     maxIterations: config.maxReviewIterations,
     checkCommand: config.checkCommand,
-    previousCheckFailure: state.previousCheckFailure ?? null,
+    previousCheckFailure: input.previousCheckFailure,
     scopePolicy: scopePolicyForPrompt,
   });
   const prompt = buildClaudeCodeRepairPrompt(repairRequest);
 
-  // Promote CHECK_COMMAND into the claude-code-action Bash allowlist so the
-  // final verification step can run when the downstream repository uses a
-  // non-npm package manager (TY-238). Rejections fall back to the baseline
-  // and are surfaced as warnings so operators can fix CHECK_COMMAND.
   const allowedBashTools = deriveAllowedBashTools(config.checkCommand);
   if (allowedBashTools.rejection !== null) {
     deps.warning(
@@ -1028,21 +1118,120 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
 
   deps.setOutput("should_run", "true");
   deps.setOutput("prompt", prompt);
-  deps.setOutput("iteration", String(fixingState.iterationCount));
+  deps.setOutput("iteration", String(input.iteration));
   deps.setOutput("check_command", config.checkCommand);
-  deps.setOutput("pr_head_ref", prHeadRef);
-  deps.setOutput("head_sha", headSha);
-  deps.setOutput("comment_id", String(commentId));
-  deps.setOutput("trigger_comment_id", String(triggerCommentId));
-  deps.setOutput("findings_count", String(findings.length));
+  deps.setOutput("pr_head_ref", input.prHeadRef);
+  deps.setOutput("head_sha", input.headSha);
+  deps.setOutput("comment_id", String(input.stateCommentId));
+  deps.setOutput("trigger_comment_id", String(input.triggerCommentId));
+  deps.setOutput("findings_count", String(input.findings.length));
   deps.setOutput(
     "allowed_bash_tools",
     serializeAllowedBashTools(allowedBashTools.tools),
   );
-  deps.setOutput("model", selection.model);
+  deps.setOutput("model", input.model);
+}
+
+/**
+ * ES-413 Case A: unresolved Codex findings exist — repair before requesting a
+ * new review.
+ */
+async function handleRestartCaseA(
+  config: Config,
+  restartContext: RestartCommandContext,
+  validation: RestartValidation,
+  unresolvedFindings: Finding[],
+  deps: PreFixDeps,
+): Promise<void> {
+  const prHeadRef = config.prHeadRef;
+  if (!prHeadRef) {
+    throw new Error("[pre-fix] pr-head-ref is required but not set.");
+  }
+
+  const base = validation.preflight.nextState;
+  const previousMaxTurnsExceeded = base.stopReason === "max_turns_exceeded";
+
+  const currentHash = computeFindingsHash(unresolvedFindings);
+  const previousEntry =
+    base.findingsHashHistory.length > 0
+      ? base.findingsHashHistory[base.findingsHashHistory.length - 1]
+      : null;
+  const repeatedFinding =
+    previousEntry !== null &&
+    previousEntry.hash === currentHash &&
+    (previousEntry.modelTier ?? "escalated") === "base";
+
+  const selection = selectModel({
+    baseModel: config.claudeCodeModelBase,
+    escalatedModel: config.claudeCodeModelEscalated,
+    findings: unresolvedFindings,
+    previousCheckFailure: base.previousCheckFailure ?? null,
+    repeatedFinding,
+    previousMaxTurnsExceeded,
+  });
+  deps.info(
+    `[pre-fix] Case A model tier=${selection.tier} model=${selection.model}` +
+      (selection.escalationReasons.length > 0
+        ? ` reasons=${selection.escalationReasons.join(",")}`
+        : ""),
+  );
+
+  if (
+    prHeadRef.length === 0 ||
+    prHeadRef.startsWith("-") ||
+    prHeadRef.includes("..")
+  ) {
+    throw new Error(`[pre-fix] Invalid branch name: ${prHeadRef}`);
+  }
+  deps.checkoutBranch(prHeadRef);
+  const headSha = deps.readHeadSha();
+
+  if (!restartContext.stateResult.found) {
+    throw new Error("[pre-fix] stateResult must be found after validation");
+  }
+
+  const repairContext = await deps.handleRestartWithRepair(
+    restartContext,
+    validation,
+    unresolvedFindings,
+    selection.tier,
+    deps.now,
+  );
+  if (repairContext === null) {
+    return;
+  }
+
+  try {
+    await deps.postFixingStartComment(
+      config.repoOwner,
+      config.repoName,
+      config.prNumber,
+      repairContext.fixingState.iterationCount,
+      selection.tier,
+      config.maxReviewIterations,
+      unresolvedFindings.length,
+      config.githubToken,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    deps.warning(
+      `[pre-fix] Failed to update fixing-start status: ${message}`,
+    );
+  }
+
+  buildAndEmitRepairOutputs(config, deps, {
+    prHeadRef,
+    headSha,
+    findings: unresolvedFindings,
+    iteration: repairContext.fixingState.iterationCount,
+    previousCheckFailure: base.previousCheckFailure ?? null,
+    model: selection.model,
+    stateCommentId: restartContext.stateResult.commentId,
+    triggerCommentId: config.triggerCommentId,
+  });
 
   deps.info(
-    `[pre-fix] Phase 3 prep complete. iteration=${fixingState.iterationCount}, findings=${findings.length}.`,
+    `[pre-fix] Case A prep complete. iteration=${repairContext.fixingState.iterationCount}, findings=${unresolvedFindings.length}.`,
   );
 }
 
