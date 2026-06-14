@@ -10,6 +10,25 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-06-14
+
+### Added
+- `/restart-review` now checks for unresolved Codex review threads before
+  requesting a new review (ES-413 / #36). If unresolved findings exist
+  (Case A), they are repaired first via the composite action, then `@codex
+  review` is posted. If none exist (Case B), the existing flow runs unchanged.
+  Soft and hard restart modes both trigger the unresolved check.
+- New module `src/unresolved-findings.ts` fetches unresolved Codex threads via
+  paginated GraphQL with severity filtering, error handling, and 64-bit
+  `fullDatabaseId` support.
+
+### Changed
+- Refactored `handleRestartCommand` into `validateRestartCommand`,
+  `executeRestartWithCodexReview`, and `handleRestartWithRepair` for the
+  Case A/B split. The monolithic wrapper is preserved for backward compatibility.
+- Extracted `buildAndEmitRepairOutputs` helper in `main-pre-fix.ts` to
+  deduplicate the prompt-building pipeline between Phase 3 and Case A.
+
 ## [1.6.0] - 2026-06-11
 
 ### Added
