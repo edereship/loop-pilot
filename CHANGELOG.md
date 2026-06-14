@@ -10,6 +10,13 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-06-14
+
+### Fixed
+- GraphQL `author.login` omits the `[bot]` suffix that the REST API includes,
+  causing `fetchUnresolvedCodexFindings` to skip all Codex threads and Case A
+  to never fire (ES-413 / #38). Now matches both forms.
+
 ## [1.7.0] - 2026-06-14
 
 ### Added
