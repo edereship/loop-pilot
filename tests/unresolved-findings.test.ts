@@ -129,6 +129,26 @@ describe("fetchUnresolvedCodexFindings", () => {
     expect(findings[0].commentId).toBe(302);
   });
 
+  it("matches Codex bot login with or without [bot] suffix (GraphQL omits it)", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({
+          databaseId: 350,
+          body: "P1 GraphQL login without [bot]",
+          authorLogin: "chatgpt-codex-connector",
+        }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings({
+      ...defaultParams,
+      codexBotLogin: "chatgpt-codex-connector[bot]",
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].commentId).toBe(350);
+  });
+
   it("applies severity threshold filter", async () => {
     mockGhApi.mockResolvedValueOnce(
       makeGraphQLResponse([

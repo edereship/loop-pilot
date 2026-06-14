@@ -140,6 +140,7 @@ function parsePage(
   }
 
   const rawNodes = Array.isArray(threads.nodes) ? threads.nodes : [];
+  const codexLoginBase = codexBotLogin.replace(/\[bot\]$/i, "");
   const findings: Finding[] = [];
   let skippedNonCodex = 0;
   let skippedResolved = 0;
@@ -167,7 +168,14 @@ function parsePage(
       ? node.comments!.nodes[0]
       : undefined;
     if (!firstComment) continue;
-    if (firstComment.author?.login !== codexBotLogin) {
+    // GraphQL `author.login` omits the `[bot]` suffix that the REST API
+    // includes (e.g. "chatgpt-codex-connector" vs "chatgpt-codex-connector[bot]").
+    // Match either form so the filter works regardless of which API shape
+    // the configured `codexBotLogin` uses.
+    const authorLogin = typeof firstComment.author?.login === "string"
+      ? firstComment.author.login
+      : "";
+    if (authorLogin !== codexBotLogin && authorLogin !== codexLoginBase) {
       skippedNonCodex += 1;
       continue;
     }
