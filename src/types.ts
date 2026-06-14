@@ -35,6 +35,18 @@ export interface Finding {
   line: number | null;
   title: string;
   body: string;
+  /**
+   * GitHub `created_at` of the source review comment (second-precision RFC-3339,
+   * e.g. `2026-06-14T05:34:23Z`), when known. Populated by
+   * `fetchUnresolvedCodexFindings` (ES-413) so the `/restart-review` Case A
+   * repair can derive its `lastCodexReviewReceivedAt` baseline from the actual
+   * fetched comments rather than wall-clock `now()` — using `now()` would also
+   * skip any comment posted in the fetch→state-write gap. Intentionally NOT
+   * part of `computeFindingsHash` (which keys on severity/path/body only), so
+   * carrying it does not perturb loop detection. Undefined for findings parsed
+   * from sources that do not expose the timestamp (e.g. `review-collector`).
+   */
+  createdAt?: string;
 }
 
 /** Severity パーサーの結果。`null` は severity を認識できなかったコメントを表す。 */

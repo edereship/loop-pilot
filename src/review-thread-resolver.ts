@@ -1,5 +1,6 @@
 import * as core from "@actions/core";
 import { ghApi } from "./gh.js";
+import { parseGraphqlCommentId } from "./graphql-comment-id.js";
 import type { CommentId } from "./types.js";
 
 /**
@@ -46,7 +47,7 @@ const REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$c
         nodes{
           id
           isResolved
-          comments(first:50){pageInfo{hasNextPage} nodes{databaseId}}
+          comments(first:50){pageInfo{hasNextPage} nodes{databaseId fullDatabaseId}}
         }
       }
     }
@@ -133,8 +134,15 @@ function parseReviewThreadsResponse(stdout: string): ReviewThreadsPage {
     const commentNodes = Array.isArray(n.comments?.nodes) ? n.comments!.nodes : [];
     const commentDatabaseIds: number[] = [];
     for (const c of commentNodes) {
-      const dbId = (c as { databaseId?: unknown })?.databaseId;
-      if (typeof dbId === "number") commentDatabaseIds.push(dbId);
+      // Prefer the 64-bit-safe `fullDatabaseId`; fall back to the deprecated
+      // `databaseId`. Must mirror `unresolved-findings.ts` so the ids saved in
+      // `currentIterationFindingCommentIds` (parsed there) match here and the
+      // repaired thread actually resolves (ES-413 Codex P2).
+      const comment = c as { databaseId?: unknown; fullDatabaseId?: unknown };
+      const id =
+        parseGraphqlCommentId(comment?.fullDatabaseId) ??
+        parseGraphqlCommentId(comment?.databaseId);
+      if (id !== null) commentDatabaseIds.push(id);
     }
     if (n.comments?.pageInfo?.hasNextPage === true) truncatedThreadCount += 1;
     nodes.push({

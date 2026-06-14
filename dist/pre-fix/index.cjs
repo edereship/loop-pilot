@@ -21547,19 +21547,19 @@ function isValidGitHubLogin(login) {
     return false;
   return /^[a-zA-Z0-9_](?:[a-zA-Z0-9_]|-(?=[a-zA-Z0-9_]))*$/.test(login);
 }
-async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
+async function validateRestartCommand(context, deps = defaultRestartCommandDeps) {
   const command = parseRestartCommand(context.triggerCommentBody);
   if (!command.isRestart) {
-    return { handled: false };
+    return { valid: false, handled: false };
   }
   const hasPermission = await canRestart(context, deps);
   if (!hasPermission) {
     await deps.postComment(context.owner, context.repo, context.prNumber, `\u26A0\uFE0F Restart rejected: insufficient permission. @${context.triggerUserLogin} is not allowed to restart LoopPilot.`, context.githubToken);
-    return { handled: true };
+    return { valid: false, handled: true };
   }
   if (command.invalidReason) {
     await deps.postComment(context.owner, context.repo, context.prNumber, "\u26A0\uFE0F Restart rejected: unsupported option. Use `/restart-review` or `/restart-review --hard`.", context.githubToken);
-    return { handled: true };
+    return { valid: false, handled: true };
   }
   if (!context.stateResult.found && context.stateResult.corrupted) {
     const rejection = [
@@ -21576,11 +21576,11 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
       "See [`docs/operations/stop-and-recovery.md`](docs/operations/stop-and-recovery.md) \u2192 `state_corrupted` \u306E\u5FA9\u65E7 \u2192 1 \u756A\u76EE\u306E\u7D4C\u8DEF (JSON unparseable)."
     ].join("\n");
     await deps.postComment(context.owner, context.repo, context.prNumber, rejection, context.githubToken);
-    return { handled: true };
+    return { valid: false, handled: true };
   }
   if (!context.stateResult.found) {
     await deps.postComment(context.owner, context.repo, context.prNumber, "\u26A0\uFE0F Restart cannot apply: LoopPilot state was not found.", context.githubToken);
-    return { handled: true };
+    return { valid: false, handled: true };
   }
   const preflight = applyRestartToState(context.stateResult.state, command.mode, null);
   if (!preflight.ok) {
@@ -21593,7 +21593,22 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
       "See docs/operations/stop-and-recovery.md (`fixing` \u306E\u307E\u307E\u505C\u6B62\u3057\u3066\u3044\u308B\u5834\u5408)."
     ].join("\n") : restartRejectionMessage(preflight.reason);
     await deps.postComment(context.owner, context.repo, context.prNumber, rejection, context.githubToken);
-    return { handled: true };
+    return { valid: false, handled: true };
+  }
+  return {
+    valid: true,
+    validation: {
+      mode: command.mode,
+      preflight: {
+        nextState: preflight.nextState,
+        previousStopReason: preflight.previousStopReason
+      }
+    }
+  };
+}
+async function executeRestartWithCodexReview(context, validation, deps = defaultRestartCommandDeps) {
+  if (!context.stateResult.found) {
+    throw new Error("[restart] executeRestartWithCodexReview called with unfound state");
   }
   const updateStateCommentLocked = createLockedStateUpdater({
     owner: context.owner,
@@ -21601,8 +21616,6 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
     commentId: context.stateResult.commentId,
     token: context.githubToken,
     initialExpectedUpdatedAt: context.stateResult.commentUpdatedAt,
-    // TY-276 #3: `[restart]` matches the module name in operator logs,
-    // avoiding the "why does /restart-review log as [pre-fix]?" confusion.
     label: "restart",
     updateStateComment: deps.updateStateComment,
     warning: deps.warning,
@@ -21610,9 +21623,9 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
       await deps.postStopComment(context.owner, context.repo, context.prNumber, "state_conflict", 0, 0, `${detail} Restart aborted because the hidden state comment was modified by another workflow run. Re-issue /restart-review once the active run finishes.`, context.githubToken);
     }
   });
-  const firstWriteOk = await updateStateCommentLocked(preflight.nextState, "[restart] failed to publish pre-codex state");
+  const firstWriteOk = await updateStateCommentLocked(validation.preflight.nextState, "[restart] failed to publish pre-codex state");
   if (!firstWriteOk) {
-    return { handled: true };
+    return;
   }
   let reviewRequestCommentId;
   const codexRequestedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -21622,28 +21635,27 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
     const message = error2 instanceof Error ? error2.message : String(error2);
     deps.warning(`[restart] Failed to post @codex review after first state write: ${message}. Downgrading to stopped/codex_request_failed so operators see the actionable stop reason.`);
     const stoppedState = {
-      ...preflight.nextState,
+      ...validation.preflight.nextState,
       status: "stopped",
       stopReason: "codex_request_failed"
     };
     if (!await updateStateCommentLocked(stoppedState, "[restart] Could not record codex_request_failed stop after @codex review post failure.")) {
-      return { handled: true };
+      return;
     }
     await deps.postStopComment(context.owner, context.repo, context.prNumber, "codex_request_failed", context.triggerCommentId, 0, `Failed to post @codex review after /restart-review: ${message}`, context.githubToken);
-    return { handled: true };
+    return;
   }
-  const restartResult = applyRestartToState(context.stateResult.state, command.mode, reviewRequestCommentId);
-  if (!restartResult.ok) {
-    await deps.postComment(context.owner, context.repo, context.prNumber, restartRejectionMessage(restartResult.reason), context.githubToken);
-    return { handled: true };
-  }
-  const secondWriteOk = await updateStateCommentLocked(restartResult.nextState, "[restart] failed to record review-request comment id after posting @codex review", {
+  const restartState = {
+    ...validation.preflight.nextState,
+    lastCodexRequestCommentId: reviewRequestCommentId
+  };
+  const secondWriteOk = await updateStateCommentLocked(restartState, "[restart] failed to record review-request comment id after posting @codex review", {
     onConflict: async (detail) => {
       deps.warning(`[restart] ${detail} LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
     }
   });
   if (!secondWriteOk) {
-    return { handled: true };
+    return;
   }
   const ack = await deps.ensureCodexAck({
     owner: context.owner,
@@ -21660,7 +21672,7 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   });
   if (!ack.acked) {
     const stoppedState = {
-      ...restartResult.nextState,
+      ...restartState,
       lastCodexRequestCommentId: ack.lastCommentId,
       status: "stopped",
       stopReason: "codex_request_failed"
@@ -21670,7 +21682,7 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
         deps.warning(`[restart] ${detail} State was advanced by a concurrent run; ACK-demotion write skipped.`);
       }
     })) {
-      return { handled: true };
+      return;
     }
     try {
       await deps.postStopComment(context.owner, context.repo, context.prNumber, "codex_request_failed", context.triggerCommentId, 0, `Codex did not acknowledge the @codex review request after ${context.codexAckMaxReposts} repost(s) (\u2248${context.codexAckTimeoutSeconds}s per attempt). Re-run /restart-review once Codex is reachable to resume.`, context.githubToken);
@@ -21678,11 +21690,11 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
       const msg = notifyError instanceof Error ? notifyError.message : String(notifyError);
       deps.warning(`[restart] Demoted to stopped/codex_request_failed after no Codex ACK but failed to post the stop notification: ${msg}.`);
     }
-    return { handled: true };
+    return;
   }
   if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestCommentId) {
     try {
-      await updateStateCommentLocked({ ...restartResult.nextState, lastCodexRequestCommentId: ack.lastCommentId }, "[restart] Could not persist the reposted Codex review request comment id.", {
+      await updateStateCommentLocked({ ...restartState, lastCodexRequestCommentId: ack.lastCommentId }, "[restart] Could not persist the reposted Codex review request comment id.", {
         onConflict: async (detail) => {
           deps.warning(`[restart] ${detail} Auto-review state remains waiting_codex; the next Codex review trigger will reconcile.`);
         }
@@ -21695,8 +21707,8 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
   await deps.postComment(context.owner, context.repo, context.prNumber, [
     `\u{1F7E2} LoopPilot restarted by @${context.triggerUserLogin}.`,
     "",
-    `mode: ${command.mode}`,
-    `from: ${restartResult.previousStopReason ?? "none"}`,
+    `mode: ${validation.mode}`,
+    `from: ${validation.preflight.previousStopReason ?? "none"}`,
     `reviewRequestCommentId: ${ack.lastCommentId}`
   ].join("\n"), context.githubToken);
   if (context.triggerCommentId !== 0) {
@@ -21705,7 +21717,90 @@ async function handleRestartCommand(context, deps = defaultRestartCommandDeps) {
     } catch {
     }
   }
-  return { handled: true };
+}
+function secondTruncateIso(iso) {
+  return iso.replace(/\.\d{3}Z$/, "Z");
+}
+function maxIso(values) {
+  return values.reduce((a, b) => a >= b ? a : b);
+}
+function computeRepairReviewBaseline(existingBaseline, embeddedFindings, fixingStartedAt) {
+  const candidates = [];
+  if (existingBaseline)
+    candidates.push(secondTruncateIso(existingBaseline));
+  for (const finding of embeddedFindings) {
+    if (typeof finding.createdAt === "string" && finding.createdAt.length > 0) {
+      candidates.push(secondTruncateIso(finding.createdAt));
+    }
+  }
+  return candidates.length > 0 ? maxIso(candidates) : secondTruncateIso(fixingStartedAt);
+}
+async function handleRestartWithRepair(context, validation, unresolvedFindings, modelTier, now = () => /* @__PURE__ */ new Date(), deps = defaultRestartCommandDeps) {
+  if (!context.stateResult.found) {
+    throw new Error("[restart] handleRestartWithRepair called with unfound state");
+  }
+  const base = validation.preflight.nextState;
+  const currentHash = computeFindingsHash(unresolvedFindings);
+  const newIteration = base.iterationCount + 1;
+  const fixingStartedAt = now().toISOString();
+  const embeddedFindings = selectEmbeddedFindings(unresolvedFindings);
+  const repairReviewBaseline = computeRepairReviewBaseline(base.lastCodexReviewReceivedAt, embeddedFindings, fixingStartedAt);
+  const fixingState = {
+    ...base,
+    status: "fixing",
+    fixingStartedAt,
+    // ES-413 (Codex P2): advance the Codex review baseline so the next pre-fix
+    // pass — which fetches REST review comments by timestamp only — does not
+    // re-parse these already-repaired Codex comments as fresh findings (the
+    // soft restart preserves whatever stale/null baseline `base` carried).
+    // The baseline is derived from the fetched comments' own `created_at`
+    // (see `computeRepairReviewBaseline`), NOT wall-clock `now()`: using `now()`
+    // would also swallow any Codex comment posted in the fetch→state-write gap
+    // (its `created_at` would be <= now but it was never in the repair prompt),
+    // silently skipping a genuinely unfixed finding.
+    lastCodexReviewReceivedAt: repairReviewBaseline,
+    iterationCount: newIteration,
+    lastFindingsHash: currentHash,
+    findingsHashHistory: [
+      ...base.findingsHashHistory,
+      { iteration: newIteration, hash: currentHash, modelTier }
+    ],
+    currentIterationFindingCommentIds: embeddedFindings.map((f) => f.commentId)
+  };
+  const updateStateCommentLocked = createLockedStateUpdater({
+    owner: context.owner,
+    repo: context.repo,
+    commentId: context.stateResult.commentId,
+    token: context.githubToken,
+    initialExpectedUpdatedAt: context.stateResult.commentUpdatedAt,
+    label: "restart",
+    updateStateComment: deps.updateStateComment,
+    warning: deps.warning,
+    onConflict: async (detail) => {
+      await deps.postStopComment(context.owner, context.repo, context.prNumber, "state_conflict", 0, 0, `${detail} Restart aborted because the hidden state comment was modified by another workflow run. Re-issue /restart-review once the active run finishes.`, context.githubToken);
+    }
+  });
+  const writeOk = await updateStateCommentLocked(fixingState, "[restart] failed to publish fixing state for repair");
+  if (!writeOk) {
+    return null;
+  }
+  try {
+    await deps.postComment(context.owner, context.repo, context.prNumber, [
+      `\u{1F527} Found ${unresolvedFindings.length} unresolved finding(s) \u2014 fixing before requesting new review.`,
+      "",
+      `mode: ${validation.mode}`,
+      `iteration: ${newIteration}`
+    ].join("\n"), context.githubToken);
+  } catch (error2) {
+    deps.warning(`[restart] Failed to post Case A repair audit comment (continuing): ${error2 instanceof Error ? error2.message : String(error2)}`);
+  }
+  if (context.triggerCommentId !== 0) {
+    try {
+      await deps.addRestartReaction(context.owner, context.repo, context.triggerCommentId, context.githubToken);
+    } catch {
+    }
+  }
+  return { fixingState };
 }
 async function canRestart(context, deps) {
   if (!context.triggerUserLogin) {
@@ -21829,6 +21924,201 @@ var defaultRestartCommandDeps = {
   ensureCodexAck: (params) => ensureCodexAck(params),
   warning: (message) => warning(message)
 };
+
+// dist/graphql-comment-id.js
+function parseGraphqlCommentId(value) {
+  if (typeof value === "number" && Number.isInteger(value))
+    return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+// dist/unresolved-findings.js
+var UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      reviewThreads(first:100,after:$cursor){
+        pageInfo{hasNextPage endCursor}
+        nodes{
+          id
+          isResolved
+          path
+          line
+          comments(first:1){
+            nodes{databaseId fullDatabaseId author{login} body createdAt}
+          }
+        }
+      }
+    }
+  }
+}`;
+var MAX_PAGES = 50;
+var UnresolvedFindingsFetchError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UnresolvedFindingsFetchError";
+  }
+};
+function parsePage(stdout, codexBotLogin, severityThreshold) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return {
+      findings: [],
+      hasNextPage: false,
+      endCursor: null,
+      malformed: true,
+      skippedNonCodex: 0,
+      skippedResolved: 0,
+      skippedUnparseable: 0,
+      skippedBelowThreshold: 0,
+      skippedMalformedId: 0,
+      skippedMalformedNode: 0
+    };
+  }
+  const typed = parsed;
+  const threads = typed.data?.repository?.pullRequest?.reviewThreads;
+  if (threads === void 0 || threads === null) {
+    return {
+      findings: [],
+      hasNextPage: false,
+      endCursor: null,
+      malformed: true,
+      skippedNonCodex: 0,
+      skippedResolved: 0,
+      skippedUnparseable: 0,
+      skippedBelowThreshold: 0,
+      skippedMalformedId: 0,
+      skippedMalformedNode: 0
+    };
+  }
+  const rawNodes = Array.isArray(threads.nodes) ? threads.nodes : [];
+  const findings = [];
+  let skippedNonCodex = 0;
+  let skippedResolved = 0;
+  let skippedUnparseable = 0;
+  let skippedBelowThreshold = 0;
+  let skippedMalformedId = 0;
+  let skippedMalformedNode = 0;
+  for (const raw of rawNodes) {
+    if (raw === null || typeof raw !== "object") {
+      skippedMalformedNode += 1;
+      continue;
+    }
+    const node = raw;
+    if (node.isResolved === true) {
+      skippedResolved += 1;
+      continue;
+    }
+    const firstComment = Array.isArray(node.comments?.nodes) ? node.comments.nodes[0] : void 0;
+    if (!firstComment)
+      continue;
+    if (firstComment.author?.login !== codexBotLogin) {
+      skippedNonCodex += 1;
+      continue;
+    }
+    const body = typeof firstComment.body === "string" ? firstComment.body : "";
+    const result = parseSeverity(body);
+    if (result.severity === null) {
+      skippedUnparseable += 1;
+      continue;
+    }
+    if (!isAtLeastSeverity(result.severity, severityThreshold)) {
+      skippedBelowThreshold += 1;
+      continue;
+    }
+    const commentId = parseGraphqlCommentId(firstComment.fullDatabaseId) ?? parseGraphqlCommentId(firstComment.databaseId);
+    if (commentId === null) {
+      skippedMalformedId += 1;
+      continue;
+    }
+    findings.push({
+      severity: result.severity,
+      commentId,
+      path: typeof node.path === "string" ? node.path : "",
+      line: typeof node.line === "number" ? node.line : null,
+      title: result.title,
+      body: result.body,
+      createdAt: typeof firstComment.createdAt === "string" ? firstComment.createdAt : void 0
+    });
+  }
+  return {
+    findings,
+    hasNextPage: threads.pageInfo?.hasNextPage === true,
+    endCursor: typeof threads.pageInfo?.endCursor === "string" ? threads.pageInfo.endCursor : null,
+    malformed: false,
+    skippedNonCodex,
+    skippedResolved,
+    skippedUnparseable,
+    skippedBelowThreshold,
+    skippedMalformedId,
+    skippedMalformedNode
+  };
+}
+async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
+} }) {
+  const all = [];
+  let cursor = null;
+  let totalSkippedUnparseable = 0;
+  let totalSkippedBelowThreshold = 0;
+  let totalSkippedMalformedId = 0;
+  let totalSkippedMalformedNode = 0;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${UNRESOLVED_THREADS_QUERY}`,
+      "-f",
+      `owner=${params.owner}`,
+      "-f",
+      `name=${params.repo}`,
+      "-F",
+      `number=${params.prNumber}`
+    ];
+    if (cursor !== null) {
+      args.push("-f", `cursor=${cursor}`);
+    }
+    let stdout;
+    try {
+      stdout = await ghApi(args, params.token);
+    } catch (error2) {
+      throw new UnresolvedFindingsFetchError(`[unresolved-findings] Could not fetch review threads for ${params.owner}/${params.repo}#${params.prNumber}: ${error2 instanceof Error ? error2.message : String(error2)}. Aborting /restart-review so unresolved Codex findings are not skipped; re-run once the API recovers.`);
+    }
+    const pageResult = parsePage(stdout, params.codexBotLogin, params.severityThreshold);
+    if (pageResult.malformed) {
+      throw new UnresolvedFindingsFetchError(`[unresolved-findings] GraphQL response for ${params.owner}/${params.repo}#${params.prNumber} (page ${page}) is missing the reviewThreads container or is not valid JSON; the token may lack access or the API shape changed. Aborting /restart-review so unresolved Codex findings are not skipped.`);
+    }
+    all.push(...pageResult.findings);
+    totalSkippedUnparseable += pageResult.skippedUnparseable;
+    totalSkippedBelowThreshold += pageResult.skippedBelowThreshold;
+    totalSkippedMalformedId += pageResult.skippedMalformedId;
+    totalSkippedMalformedNode += pageResult.skippedMalformedNode;
+    if (!pageResult.hasNextPage || pageResult.endCursor === null)
+      break;
+    cursor = pageResult.endCursor;
+    if (page === MAX_PAGES - 1) {
+      deps.warning(`[unresolved-findings] Hit MAX_PAGES (${MAX_PAGES}) for ${params.owner}/${params.repo}#${params.prNumber} with more pages remaining; the unresolved findings set may be incomplete.`);
+    }
+  }
+  if (totalSkippedUnparseable > 0) {
+    deps.warning(`[unresolved-findings] Skipped ${totalSkippedUnparseable} unresolved Codex thread(s) with unparseable severity.`);
+  }
+  if (totalSkippedBelowThreshold > 0) {
+    deps.warning(`[unresolved-findings] Skipped ${totalSkippedBelowThreshold} unresolved Codex thread(s) below severity threshold (${params.severityThreshold}).`);
+  }
+  if (totalSkippedMalformedId > 0) {
+    deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedId} unresolved Codex thread(s) with no usable databaseId/fullDatabaseId; the GraphQL comment schema may have changed.`);
+  }
+  if (totalSkippedMalformedNode > 0) {
+    deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedNode} null/malformed reviewThreads node(s); GitHub returned entries the token cannot resolve.`);
+  }
+  return all;
+}
 
 // dist/scope-checker.js
 var DEFAULT_BLOCK_PATTERNS = [
@@ -21957,7 +22247,10 @@ var defaultDeps3 = {
   postAutoMergeSkipNotification,
   mergeIfChecksPass,
   fetchPrLabels,
-  handleRestartCommand,
+  validateRestartCommand,
+  executeRestartWithCodexReview,
+  handleRestartWithRepair,
+  fetchUnresolvedCodexFindings,
   setSecret: (secret) => setSecret(secret),
   setOutput: (name, value) => setOutput(name, value),
   info: (message) => info(message),
@@ -22022,7 +22315,7 @@ async function runPreFix(config, deps = defaultDeps3) {
     });
   }
   if (isCommandTrigger) {
-    const restartResult = await deps.handleRestartCommand({
+    const restartContext = {
       owner: config.repoOwner,
       repo: config.repoName,
       prNumber: config.prNumber,
@@ -22037,9 +22330,44 @@ async function runPreFix(config, deps = defaultDeps3) {
       codexAckPollIntervalSeconds: config.codexAckPollIntervalSeconds,
       codexAckMaxReposts: config.codexAckMaxReposts,
       stateResult
-    });
-    if (restartResult.handled) {
-      return;
+    };
+    const validationResult = await deps.validateRestartCommand(restartContext);
+    if (!validationResult.valid) {
+      if (validationResult.handled)
+        return;
+    } else {
+      const unresolvedFindings = await deps.fetchUnresolvedCodexFindings({
+        owner: config.repoOwner,
+        repo: config.repoName,
+        prNumber: config.prNumber,
+        codexBotLogin: config.codexBotLogin,
+        severityThreshold: config.severityThreshold,
+        token: config.githubToken
+      }, { warning: deps.warning });
+      if (unresolvedFindings.length > 0) {
+        const capState = validationResult.validation.preflight.nextState;
+        if (capState.iterationCount >= config.maxReviewIterations) {
+          deps.info(`[pre-fix] /restart-review Case A: iteration cap reached (${capState.iterationCount} >= ${config.maxReviewIterations}) with ${unresolvedFindings.length} unresolved finding(s) \u2014 stopping; requires --hard.`);
+          if (!stateResult.found)
+            return;
+          const cappedState = {
+            ...capState,
+            status: "stopped",
+            stopReason: "max_iterations",
+            fixingStartedAt: null
+          };
+          if (await makeLockedUpdater(stateResult.commentId)(cappedState, "Could not record max_iterations stop for /restart-review at the iteration cap.")) {
+            await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "max_iterations", triggerCommentId, unresolvedFindings.length, `/restart-review reached the iteration cap (${capState.iterationCount}/${config.maxReviewIterations}) with ${unresolvedFindings.length} unresolved finding(s). Use /restart-review --hard to reset the iteration count and repair them.`, config.githubToken, deriveIterationProgress(cappedState, config.maxReviewIterations));
+          }
+          return;
+        }
+        deps.info(`[pre-fix] /restart-review Case A: ${unresolvedFindings.length} unresolved finding(s) \u2014 repairing first.`);
+        return handleRestartCaseA(config, restartContext, validationResult.validation, unresolvedFindings, deps);
+      } else {
+        deps.info("[pre-fix] /restart-review Case B: no unresolved findings \u2014 requesting fresh Codex review.");
+        await deps.executeRestartWithCodexReview(restartContext, validationResult.validation);
+        return;
+      }
     }
   }
   if (!stateResult.found && !stateResult.corrupted) {
@@ -22337,10 +22665,23 @@ async function runPreFix(config, deps = defaultDeps3) {
     const message = error2 instanceof Error ? error2.message : String(error2);
     deps.warning(`[pre-fix] Failed to update fixing-start status: ${message}`);
   }
+  buildAndEmitRepairOutputs(config, deps, {
+    prHeadRef,
+    headSha,
+    findings,
+    iteration: fixingState.iterationCount,
+    previousCheckFailure: state.previousCheckFailure ?? null,
+    model: selection.model,
+    stateCommentId: commentId,
+    triggerCommentId
+  });
+  deps.info(`[pre-fix] Phase 3 prep complete. iteration=${fixingState.iterationCount}, findings=${findings.length}.`);
+}
+function buildAndEmitRepairOutputs(config, deps, input2) {
   const prContext = {
     number: config.prNumber,
     title: config.prTitle,
-    branch: prHeadRef
+    branch: input2.prHeadRef
   };
   let scopePolicyForPrompt = null;
   try {
@@ -22364,12 +22705,12 @@ async function runPreFix(config, deps = defaultDeps3) {
   }
   const repairRequest = buildClaudeCodeRepairRequest({
     prContext,
-    headSha,
-    findings,
-    iteration: fixingState.iterationCount,
+    headSha: input2.headSha,
+    findings: input2.findings,
+    iteration: input2.iteration,
     maxIterations: config.maxReviewIterations,
     checkCommand: config.checkCommand,
-    previousCheckFailure: state.previousCheckFailure ?? null,
+    previousCheckFailure: input2.previousCheckFailure,
     scopePolicy: scopePolicyForPrompt
   });
   const prompt = buildClaudeCodeRepairPrompt(repairRequest);
@@ -22379,16 +22720,96 @@ async function runPreFix(config, deps = defaultDeps3) {
   }
   deps.setOutput("should_run", "true");
   deps.setOutput("prompt", prompt);
-  deps.setOutput("iteration", String(fixingState.iterationCount));
+  deps.setOutput("iteration", String(input2.iteration));
   deps.setOutput("check_command", config.checkCommand);
-  deps.setOutput("pr_head_ref", prHeadRef);
-  deps.setOutput("head_sha", headSha);
-  deps.setOutput("comment_id", String(commentId));
-  deps.setOutput("trigger_comment_id", String(triggerCommentId));
-  deps.setOutput("findings_count", String(findings.length));
+  deps.setOutput("pr_head_ref", input2.prHeadRef);
+  deps.setOutput("head_sha", input2.headSha);
+  deps.setOutput("comment_id", String(input2.stateCommentId));
+  deps.setOutput("trigger_comment_id", String(input2.triggerCommentId));
+  deps.setOutput("findings_count", String(input2.findings.length));
   deps.setOutput("allowed_bash_tools", serializeAllowedBashTools(allowedBashTools.tools));
-  deps.setOutput("model", selection.model);
-  deps.info(`[pre-fix] Phase 3 prep complete. iteration=${fixingState.iterationCount}, findings=${findings.length}.`);
+  deps.setOutput("model", input2.model);
+}
+async function handleRestartCaseA(config, restartContext, validation, unresolvedFindings, deps) {
+  const prHeadRef = config.prHeadRef;
+  if (!prHeadRef) {
+    throw new Error("[pre-fix] pr-head-ref is required but not set.");
+  }
+  const base = validation.preflight.nextState;
+  const previousMaxTurnsExceeded = base.stopReason === "max_turns_exceeded";
+  const currentHash = computeFindingsHash(unresolvedFindings);
+  if (isLoop(unresolvedFindings, base.findingsHashHistory)) {
+    deps.info("[pre-fix] Case A: unresolved findings match a prior iteration \u2014 loop detected. Stopping.");
+    if (!restartContext.stateResult.found) {
+      throw new Error("[pre-fix] stateResult must be found after validation");
+    }
+    const stoppedState = {
+      ...base,
+      status: "stopped",
+      stopReason: "loop_detected",
+      // Mirror the normal-flow loop stop: defense-in-depth clear so the
+      // invariant "fixingStartedAt === null whenever status !== 'fixing'" holds.
+      fixingStartedAt: null
+    };
+    const updateStoppedStateLocked = createLockedStateUpdater({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      commentId: restartContext.stateResult.commentId,
+      token: config.githubToken,
+      initialExpectedUpdatedAt: restartContext.stateResult.commentUpdatedAt,
+      label: "pre-fix",
+      updateStateComment: deps.updateStateComment,
+      warning: deps.warning,
+      onConflict: async (detail) => {
+        await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "state_conflict", config.triggerCommentId, 0, `${detail} Hidden comment was updated by another workflow run before this run could record the loop stop. Re-run after the active workflow finishes if needed.`, config.githubToken);
+      }
+    });
+    if (!await updateStoppedStateLocked(stoppedState, "Could not stop after detecting a Case A findings loop.")) {
+      return;
+    }
+    await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "loop_detected", config.triggerCommentId, unresolvedFindings.length, "Same findings hash detected in a previous iteration. Use /restart-review --hard to clear iteration history and retry.", config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
+    return;
+  }
+  const previousEntry = base.findingsHashHistory.length > 0 ? base.findingsHashHistory[base.findingsHashHistory.length - 1] : null;
+  const repeatedFinding = previousEntry !== null && previousEntry.hash === currentHash && (previousEntry.modelTier ?? "escalated") === "base";
+  const selection = selectModel({
+    baseModel: config.claudeCodeModelBase,
+    escalatedModel: config.claudeCodeModelEscalated,
+    findings: unresolvedFindings,
+    previousCheckFailure: base.previousCheckFailure ?? null,
+    repeatedFinding,
+    previousMaxTurnsExceeded
+  });
+  deps.info(`[pre-fix] Case A model tier=${selection.tier} model=${selection.model}` + (selection.escalationReasons.length > 0 ? ` reasons=${selection.escalationReasons.join(",")}` : ""));
+  if (prHeadRef.length === 0 || prHeadRef.startsWith("-") || prHeadRef.includes("..")) {
+    throw new Error(`[pre-fix] Invalid branch name: ${prHeadRef}`);
+  }
+  deps.checkoutBranch(prHeadRef);
+  const headSha = deps.readHeadSha();
+  if (!restartContext.stateResult.found) {
+    throw new Error("[pre-fix] stateResult must be found after validation");
+  }
+  const repairContext = await deps.handleRestartWithRepair(restartContext, validation, unresolvedFindings, selection.tier, deps.now);
+  if (repairContext === null) {
+    return;
+  }
+  try {
+    await deps.postFixingStartComment(config.repoOwner, config.repoName, config.prNumber, repairContext.fixingState.iterationCount, selection.tier, config.maxReviewIterations, unresolvedFindings.length, config.githubToken);
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    deps.warning(`[pre-fix] Failed to update fixing-start status: ${message}`);
+  }
+  buildAndEmitRepairOutputs(config, deps, {
+    prHeadRef,
+    headSha,
+    findings: unresolvedFindings,
+    iteration: repairContext.fixingState.iterationCount,
+    previousCheckFailure: base.previousCheckFailure ?? null,
+    model: selection.model,
+    stateCommentId: restartContext.stateResult.commentId,
+    triggerCommentId: config.triggerCommentId
+  });
+  deps.info(`[pre-fix] Case A prep complete. iteration=${repairContext.fixingState.iterationCount}, findings=${unresolvedFindings.length}.`);
 }
 async function run() {
   await runPreFix(loadConfig());

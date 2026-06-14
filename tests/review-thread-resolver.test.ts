@@ -277,6 +277,51 @@ describe("fetchReviewThreads (GraphQL wiring)", () => {
     expect(firstArgs).toContain("number=9");
   });
 
+  it("prefers fullDatabaseId and falls back to databaseId (ES-413 Codex P2)", async () => {
+    mockedGhApi.mockResolvedValueOnce(
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  {
+                    id: "PRRT_1",
+                    isResolved: false,
+                    // databaseId null (64-bit comment) — must use fullDatabaseId.
+                    comments: {
+                      nodes: [
+                        { databaseId: null, fullDatabaseId: "9007199254740000" },
+                      ],
+                    },
+                  },
+                  {
+                    id: "PRRT_2",
+                    isResolved: false,
+                    // Only the deprecated databaseId present — falls back to it.
+                    comments: { nodes: [{ databaseId: 202 }] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const threads = await fetchReviewThreads("o", "r", 9, "tok");
+    expect(threads).toEqual([
+      { id: "PRRT_1", isResolved: false, commentDatabaseIds: [9007199254740000] },
+      { id: "PRRT_2", isResolved: false, commentDatabaseIds: [202] },
+    ]);
+    // The query must request fullDatabaseId.
+    const query = mockedGhApi.mock.calls[0][0].find((a) =>
+      a.startsWith("query="),
+    );
+    expect(query).toContain("fullDatabaseId");
+  });
+
   it("tolerates a malformed/empty response shape", async () => {
     mockedGhApi.mockResolvedValueOnce(JSON.stringify({ data: {} }));
     const threads = await fetchReviewThreads("o", "r", 9, "tok");
