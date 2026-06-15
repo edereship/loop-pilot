@@ -22275,7 +22275,7 @@ var defaultDeps3 = {
 async function runPreFix(config, deps = defaultDeps3) {
   registerAllSecrets(config, deps.setSecret);
   if (config.claudeCodeOauthToken !== "") {
-    deps.warning("[pre-fix] Running with Claude Code OAuth token (subscription). Your personal account's usage limits apply \u2014 LoopPilot iterations may consume your quota quickly, especially with Opus escalation. Consider lowering MAX_REVIEW_ITERATIONS for high-frequency CI use; see docs/operations/security.md (\u8A8D\u8A3C).");
+    deps.warning("[pre-fix] Running with Claude Code OAuth token (subscription). From 2026-06-15 this draws from the separate Agent SDK credit pool (API-rate, no roll-over), not your interactive subscription allowance \u2014 LoopPilot iterations can exhaust those credits quickly, especially with Opus escalation, after which runs stop unless overflow usage is enabled. For CI/automation prefer ANTHROPIC_API_KEY; see docs/operations/security.md (\u8A8D\u8A3C).");
   }
   deps.setOutput("should_run", "false");
   const triggerCommentId = config.triggerCommentId;

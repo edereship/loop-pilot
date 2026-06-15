@@ -205,17 +205,24 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
   // working without a special case here.
   registerAllSecrets(config, deps.setSecret);
 
-  // TY-260: surface a one-line caution when running on a personal Claude
-  // Code subscription. The LoopPilot loop can fire up to
+  // TY-260 / ES-418: surface a one-line caution when running on a Claude
+  // Code subscription OAuth token. From 2026-06-15 Anthropic moved Claude
+  // Code GitHub Actions / Agent SDK / `claude -p` off the regular
+  // subscription pool, so an OAuth token now draws from the separate Agent
+  // SDK credit pool (billed at API rates, no roll-over) rather than the
+  // interactive subscription allowance. The LoopPilot loop can fire up to
   // MAX_REVIEW_ITERATIONS (default 20) repairs per PR — with Opus
-  // escalation in the mix — which can burn through a Pro / Max quota fast
-  // and starve the same account's interactive Claude Code usage.
+  // escalation in the mix — which burns through a fixed credit pool fast;
+  // once it is exhausted, runs stop unless overflow (API-rate) usage is
+  // manually enabled.
   if (config.claudeCodeOauthToken !== "") {
     deps.warning(
       "[pre-fix] Running with Claude Code OAuth token (subscription). " +
-        "Your personal account's usage limits apply — LoopPilot iterations " +
-        "may consume your quota quickly, especially with Opus escalation. " +
-        "Consider lowering MAX_REVIEW_ITERATIONS for high-frequency CI use; " +
+        "From 2026-06-15 this draws from the separate Agent SDK credit pool " +
+        "(API-rate, no roll-over), not your interactive subscription " +
+        "allowance — LoopPilot iterations can exhaust those credits quickly, " +
+        "especially with Opus escalation, after which runs stop unless " +
+        "overflow usage is enabled. For CI/automation prefer ANTHROPIC_API_KEY; " +
         "see docs/operations/security.md (認証).",
     );
   }
