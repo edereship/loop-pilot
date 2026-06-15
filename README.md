@@ -87,6 +87,20 @@ For production, add the two GitHub PATs shown below.
 | `LOOPPILOT_PUSH_TOKEN` | Required | Pushes repair commits as a non-`GITHUB_TOKEN` actor so required checks re-run. |
 | `GITHUB_TOKEN` | Automatic | GitHub Actions injects it. You do not create or store it. |
 
+> [!IMPORTANT]
+> **OAuth token billing change (from 2026-06-15).** Anthropic moved Claude
+> Code GitHub Actions, the Agent SDK, and `claude -p` off the regular
+> subscription pool. When you authenticate with `CLAUDE_CODE_OAUTH_TOKEN`
+> (a Pro/Max subscription token from `claude setup-token`), LoopPilot now
+> draws from the separate **Agent SDK credit pool** (billed at standard API
+> rates, no roll-over) rather than your normal subscription allowance. Once
+> those credits run out, runs stop unless you have manually enabled
+> overflow (API-rate) usage. Because LoopPilot loops review↔fix per PR, it
+> can burn through a fixed credit pool quickly. **For CI/automation we
+> recommend `ANTHROPIC_API_KEY`** (pay-as-you-go API billing), which is
+> unaffected by this change. Interactive use (claude.ai, the terminal
+> Claude Code, Cowork) is unchanged.
+
 #### Creating the two fine-grained PATs
 
 `CODEX_REVIEW_REQUEST_TOKEN` and `LOOPPILOT_PUSH_TOKEN` are GitHub **fine-grained personal access tokens (PATs)**. If you have never made one, follow GitHub's official guide first: [Creating a fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token).

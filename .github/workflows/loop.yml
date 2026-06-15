@@ -294,8 +294,8 @@ jobs:
           looppilot-restart-roles: ${{ vars.LOOPPILOT_RESTART_ROLES || 'author,write,maintain,admin' }}
           # Model tiering (TY-241, simplified in TY-242).
           # Set BASE === ESCALATED to operate without tiering.
-          claude-code-model-base: ${{ vars.CLAUDE_CODE_MODEL_BASE || 'claude-sonnet-4-6' }}
-          claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-7' }}
+          claude-code-model-base: ${{ vars.CLAUDE_CODE_MODEL_BASE || 'claude-sonnet-4-6[1m]' }}
+          claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-6[1m]' }}
           claude-code-max-turns: ${{ vars.CLAUDE_CODE_MAX_TURNS || '40' }}
           auto-merge-on-clean: ${{ vars.LOOPPILOT_AUTO_MERGE || 'false' }}
           auto-merge-poll-seconds: ${{ vars.LOOPPILOT_AUTO_MERGE_POLL_SECONDS || '15' }}

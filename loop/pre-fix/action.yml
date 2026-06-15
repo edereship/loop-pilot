@@ -102,11 +102,11 @@ inputs:
   claude-code-model-base:
     description: "Base tier model used when no escalation signal fires. Set this equal to claude-code-model-escalated to operate without tiering."
     required: false
-    default: "claude-sonnet-4-6"
+    default: "claude-sonnet-4-6[1m]"
   claude-code-model-escalated:
     description: "Escalated tier model used on P0 finding, repeated finding, or after a CHECK_COMMAND failure."
     required: false
-    default: "claude-opus-4-7"
+    default: "claude-opus-4-6[1m]"
   auto-merge-on-clean:
     description: "Set to 'true' to auto-merge (squash) the PR when the loop terminates with done/no_findings. Default 'false' preserves manual merge. Auto-merge waits for every other workflow run on HEAD to settle, refuses to merge if any concluded as failure/cancelled/timed_out/action_required/startup_failure/stale, and bails if HEAD changes during the wait (TY-277)."
     required: false

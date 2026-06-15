@@ -19157,8 +19157,8 @@ function validateCheckCommand(rawCommand) {
 
 // dist/config.js
 var DEFAULT_SEVERITY_THRESHOLD = "P3";
-var DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
-var DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-7";
+var DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6[1m]";
+var DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-6[1m]";
 function loadInitConfig() {
   return loadBaseConfig();
 }
@@ -19186,11 +19186,11 @@ function loadBaseConfig() {
   }
   const claudeCodeModelBase = input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE);
   if (!isValidModelName(claudeCodeModelBase)) {
-    throw new Error(`CLAUDE_CODE_MODEL_BASE ${JSON.stringify(claudeCodeModelBase)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`);
+    throw new Error(`CLAUDE_CODE_MODEL_BASE ${JSON.stringify(claudeCodeModelBase)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-6[1m]\`) are supported.`);
   }
   const claudeCodeModelEscalated = input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED);
   if (!isValidModelName(claudeCodeModelEscalated)) {
-    throw new Error(`CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`);
+    throw new Error(`CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-6[1m]\`) are supported.`);
   }
   const autoReviewPushToken = input("looppilot-push-token", "LOOPPILOT_PUSH_TOKEN", "");
   const buildCommand = input("build-command", "BUILD_COMMAND", "");

@@ -87,6 +87,18 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 | `LOOPPILOT_PUSH_TOKEN` | 必須 | `GITHUB_TOKEN` 以外の actor として repair commit を push し、required checks を再実行させるため。 |
 | `GITHUB_TOKEN` | 自動 | GitHub Actions が注入します。作成・保存は不要です。 |
 
+> [!IMPORTANT]
+> **OAuth トークンの課金変更（2026-06-15 以降）。** Anthropic は Claude Code
+> GitHub Actions / Agent SDK / `claude -p` を従来のサブスク利用枠から切り離しました。
+> `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token` で生成する Pro/Max サブスク
+> トークン）で認証する場合、LoopPilot はサブスクの通常枠ではなく別建ての
+> **Agent SDK クレジットプール**（API 定価で消費・繰り越しなし）を消費します。
+> クレジットを使い切ると、オーバーフロー課金（API 実費）を手動で有効化していない
+> 限り実行は停止します。LoopPilot は PR ごとにレビュー↔修正をループするため、
+> 固定クレジットを早く消費しがちです。**CI/自動化用途では、この変更の影響を
+> 受けない `ANTHROPIC_API_KEY`（API 従量課金）の利用を推奨します。** 対話的な
+> 利用（claude.ai・ターミナルの Claude Code・Cowork）は従来どおりで変更ありません。
+
 #### 2 つの Fine-grained PAT を作成する
 
 `CODEX_REVIEW_REQUEST_TOKEN` と `LOOPPILOT_PUSH_TOKEN` は GitHub の **Fine-grained personal access token（PAT）** です。初めて作成する場合は、まず GitHub 公式ガイドを参照してください: [Creating a fine-grained personal access token](https://docs.github.com/ja/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token)。

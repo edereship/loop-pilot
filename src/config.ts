@@ -134,8 +134,8 @@ export type Config = BaseConfig & ClaudeAuthConfig;
 
 export const DEFAULT_SEVERITY_THRESHOLD: Severity = "P3";
 
-const DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
-const DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-7";
+const DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6[1m]";
+const DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-6[1m]";
 
 /**
  * Fallback label name used when the user has not configured LOOPPILOT_LABEL.
@@ -247,7 +247,7 @@ function loadBaseConfig(): BaseConfig {
   );
   if (!isValidModelName(claudeCodeModelBase)) {
     throw new Error(
-      `CLAUDE_CODE_MODEL_BASE ${JSON.stringify(claudeCodeModelBase)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`,
+      `CLAUDE_CODE_MODEL_BASE ${JSON.stringify(claudeCodeModelBase)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-6[1m]\`) are supported.`,
     );
   }
   const claudeCodeModelEscalated = input(
@@ -257,7 +257,7 @@ function loadBaseConfig(): BaseConfig {
   );
   if (!isValidModelName(claudeCodeModelEscalated)) {
     throw new Error(
-      `CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`,
+      `CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-6[1m]\`) are supported.`,
     );
   }
   const autoReviewPushToken = input("looppilot-push-token", "LOOPPILOT_PUSH_TOKEN", "");

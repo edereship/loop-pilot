@@ -19274,8 +19274,8 @@ function serializeAllowedBashTools(tools) {
 
 // dist/config.js
 var DEFAULT_SEVERITY_THRESHOLD = "P3";
-var DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
-var DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-7";
+var DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6[1m]";
+var DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-6[1m]";
 var DEFAULT_LOOPPILOT_LABEL = "loop-pilot";
 function loadConfig() {
   const anthropicApiKey = input("anthropic-api-key", "ANTHROPIC_API_KEY", "");
@@ -19319,11 +19319,11 @@ function loadBaseConfig() {
   }
   const claudeCodeModelBase = input("claude-code-model-base", "CLAUDE_CODE_MODEL_BASE", DEFAULT_CLAUDE_CODE_MODEL_BASE);
   if (!isValidModelName(claudeCodeModelBase)) {
-    throw new Error(`CLAUDE_CODE_MODEL_BASE ${JSON.stringify(claudeCodeModelBase)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`);
+    throw new Error(`CLAUDE_CODE_MODEL_BASE ${JSON.stringify(claudeCodeModelBase)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-6[1m]\`) are supported.`);
   }
   const claudeCodeModelEscalated = input("claude-code-model-escalated", "CLAUDE_CODE_MODEL_ESCALATED", DEFAULT_CLAUDE_CODE_MODEL_ESCALATED);
   if (!isValidModelName(claudeCodeModelEscalated)) {
-    throw new Error(`CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-7:1m\`) are supported.`);
+    throw new Error(`CLAUDE_CODE_MODEL_ESCALATED ${JSON.stringify(claudeCodeModelEscalated)} is rejected: model identifiers must not start with \`-\` (argv-flag injection guard) and must not contain whitespace, quotes, or shell metacharacters. Provider-form identifiers (Bedrock ARN, Vertex AI, context variants like \`claude-opus-4-6[1m]\`) are supported.`);
   }
   const autoReviewPushToken = input("looppilot-push-token", "LOOPPILOT_PUSH_TOKEN", "");
   const buildCommand = input("build-command", "BUILD_COMMAND", "");
@@ -22275,7 +22275,7 @@ var defaultDeps3 = {
 async function runPreFix(config, deps = defaultDeps3) {
   registerAllSecrets(config, deps.setSecret);
   if (config.claudeCodeOauthToken !== "") {
-    deps.warning("[pre-fix] Running with Claude Code OAuth token (subscription). Your personal account's usage limits apply \u2014 LoopPilot iterations may consume your quota quickly, especially with Opus escalation. Consider lowering MAX_REVIEW_ITERATIONS for high-frequency CI use; see docs/operations/security.md (\u8A8D\u8A3C).");
+    deps.warning("[pre-fix] Running with Claude Code OAuth token (subscription). From 2026-06-15 this draws from the separate Agent SDK credit pool (API-rate, no roll-over), not your interactive subscription allowance \u2014 LoopPilot iterations can exhaust those credits quickly, especially with Opus escalation, after which runs stop unless overflow usage is enabled. For CI/automation prefer ANTHROPIC_API_KEY; see docs/operations/security.md (\u8A8D\u8A3C).");
   }
   deps.setOutput("should_run", "false");
   const triggerCommentId = config.triggerCommentId;
