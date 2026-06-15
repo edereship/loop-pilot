@@ -10,6 +10,27 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-15
+
+### Changed
+- Default Claude Code models now use the 1M-context (`[1m]`) tier (ES-419 / #40):
+  - base: `claude-sonnet-4-6` → `claude-sonnet-4-6[1m]`
+  - escalated: `claude-opus-4-7` → `claude-opus-4-6[1m]`
+  The `[1m]` suffix is stripped by Claude Code before the provider call and
+  enables 1M context with no long-context surcharge. Updates `src/config.ts`
+  defaults, `loop/action.yml` / `loop/pre-fix/action.yml` input defaults, and
+  the `.github/workflows/loop.yml` fallbacks. The config validator's example
+  identifiers were aligned to the bracket `[1m]` form.
+
+### Documentation
+- Document the 2026-06-15 Anthropic billing change for subscription OAuth
+  tokens (ES-418 / #40). `CLAUDE_CODE_OAUTH_TOKEN` now draws from the separate
+  Agent SDK credit pool (billed at API rates, no roll-over) instead of the
+  interactive subscription allowance; once exhausted, runs stop unless overflow
+  usage is manually enabled. `README.md`, `README.ja.md`, and
+  `docs/operations/security.md` now recommend `ANTHROPIC_API_KEY` for
+  CI/automation, and the pre-fix OAuth runtime warning was reworded to match.
+
 ## [1.7.1] - 2026-06-14
 
 ### Fixed
