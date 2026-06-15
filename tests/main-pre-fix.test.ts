@@ -33,8 +33,8 @@ const baseConfig: Config = {
   autoReviewLabel: "loop-pilot",
   autoReviewFullAuto: false,
   autoReviewRestartRoles: "author,write,maintain,admin",
-  claudeCodeModelBase: "claude-sonnet-4-6",
-  claudeCodeModelEscalated: "claude-opus-4-7",
+  claudeCodeModelBase: "claude-sonnet-4-6[1m]",
+  claudeCodeModelEscalated: "claude-opus-4-6[1m]",
   autoMergeOnClean: false,
   autoMergePollSeconds: 15,
   autoMergeTimeoutMinutes: 10,
@@ -826,7 +826,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.allowed_bash_tools).toContain("Bash(npm run check)");
     expect(deps.outputs.allowed_bash_tools).toContain("Bash(git diff)");
     // P0 finding + previousCheckFailure both fire → escalated to Opus.
-    expect(deps.outputs.model).toBe("claude-opus-4-7");
+    expect(deps.outputs.model).toBe("claude-opus-4-6[1m]");
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
@@ -1026,7 +1026,7 @@ describe("runPreFix", () => {
     await runPreFix(baseConfig, deps);
 
     expect(deps.outputs.should_run).toBe("true");
-    expect(deps.outputs.model).toBe("claude-sonnet-4-6");
+    expect(deps.outputs.model).toBe("claude-sonnet-4-6[1m]");
   });
 
   it("escalates to the escalated tier when the previous base-tier iteration produced the same findings hash (TY-243)", async () => {
@@ -1069,7 +1069,7 @@ describe("runPreFix", () => {
     await runPreFix(baseConfig, deps);
 
     expect(deps.outputs.should_run).toBe("true");
-    expect(deps.outputs.model).toBe("claude-opus-4-7");
+    expect(deps.outputs.model).toBe("claude-opus-4-6[1m]");
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
       "team-yubune",
@@ -1259,7 +1259,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.should_run).toBe("true");
     // Only P2 finding → no P0 / previousCheckFailure / repeatedFinding,
     // so the escalation must come solely from the carried-over stopReason.
-    expect(deps.outputs.model).toBe("claude-opus-4-7");
+    expect(deps.outputs.model).toBe("claude-opus-4-6[1m]");
   });
 
   it("does not escalate when previous stopReason is a non-max_turns reason (TY-258 boundary)", async () => {
@@ -1292,7 +1292,7 @@ describe("runPreFix", () => {
     await runPreFix(baseConfig, deps);
 
     expect(deps.outputs.should_run).toBe("true");
-    expect(deps.outputs.model).toBe("claude-sonnet-4-6");
+    expect(deps.outputs.model).toBe("claude-sonnet-4-6[1m]");
   });
 
   it("stops with codex_usage_limit when the Codex bot trigger body is a usage-limit notice (TY-229)", async () => {

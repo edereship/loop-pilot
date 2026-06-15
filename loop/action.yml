@@ -112,11 +112,11 @@ inputs:
   claude-code-model-base:
     description: "Base tier model used when no escalation signal fires. See docs/operations/security.md (model selection). Set this equal to claude-code-model-escalated to operate without tiering."
     required: false
-    default: "claude-sonnet-4-6"
+    default: "claude-sonnet-4-6[1m]"
   claude-code-model-escalated:
     description: "Escalated tier model used when a P0 finding is present, the previous iteration's CHECK_COMMAND failed, or the same findings hash repeats at the base tier."
     required: false
-    default: "claude-opus-4-7"
+    default: "claude-opus-4-6[1m]"
   claude-code-max-turns:
     description: "Value forwarded to claude-code-action's --max-turns argument."
     required: false
