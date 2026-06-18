@@ -20817,7 +20817,7 @@ async function fetchReviewComments(repoOwner, repoName, prNumber, githubToken) {
     "--jq",
     // @json ensures each result is a single-line JSON-encoded string,
     // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-    ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at} | @json"
+    ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at, inReplyToId: .in_reply_to_id} | @json"
   ], githubToken);
   if (!stdout.trim())
     return [];
@@ -20836,7 +20836,12 @@ function parseReviewCommentRecord(line) {
       return false;
     const record = value;
     const user = record.user;
-    return typeof record.id === "number" && typeof user === "object" && user !== null && typeof user.login === "string" && typeof record.body === "string" && typeof record.path === "string" && (typeof record.line === "number" || record.line === null) && typeof record.createdAt === "string";
+    if (!(typeof record.id === "number" && typeof user === "object" && user !== null && typeof user.login === "string" && typeof record.body === "string" && typeof record.path === "string" && (typeof record.line === "number" || record.line === null) && typeof record.createdAt === "string"))
+      return false;
+    if (record.inReplyToId === void 0) {
+      record.inReplyToId = null;
+    }
+    return typeof record.inReplyToId === "number" || record.inReplyToId === null;
   }
   try {
     const parsed = JSON.parse(line);
@@ -20858,11 +20863,16 @@ function filterAndParseComments(comments, botLogin, lastReceivedAt, threshold) {
   const findings = [];
   let unparseable = 0;
   let belowThreshold = 0;
+  let threadReplies = 0;
   for (const comment of comments) {
     if (comment.user.login !== botLogin)
       continue;
     if (lastReceivedAt !== null && !(comment.createdAt > lastReceivedAt))
       continue;
+    if (comment.inReplyToId != null) {
+      threadReplies += 1;
+      continue;
+    }
     const parsed = parseSeverity(comment.body);
     if (parsed.severity === null) {
       unparseable += 1;
@@ -20888,7 +20898,7 @@ function filterAndParseComments(comments, botLogin, lastReceivedAt, threshold) {
   }
   return {
     findings,
-    skipped: { unparseable, belowThreshold }
+    skipped: { unparseable, belowThreshold, threadReplies }
   };
 }
 function shouldStabilizeReviewComments(comments, botLogin, lastReceivedAt, triggerSummaryBody, threshold) {
@@ -22531,6 +22541,9 @@ async function runPreFix(config, deps = defaultDeps3) {
   }
   if (skipped.belowThreshold > 0) {
     deps.info(`[review-collector] Skipped ${skipped.belowThreshold} findings below threshold (threshold=${config.severityThreshold}).`);
+  }
+  if (skipped.threadReplies > 0) {
+    deps.info(`[review-collector] Skipped ${skipped.threadReplies} thread reply comment(s) (not root findings).`);
   }
   deps.info(`[pre-fix] Found ${findings.length} findings at or above threshold ${config.severityThreshold}.`);
   const latestCommentTime = rawComments.filter((c) => c.user.login === config.codexBotLogin).reduce((max, c) => c.createdAt > max ? c.createdAt : max, state.lastCodexReviewReceivedAt ?? "");
