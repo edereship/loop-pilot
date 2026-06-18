@@ -216,17 +216,57 @@ runs:
         scope-max-files: ${{ inputs.scope-max-files }}
         scope-max-lines: ${{ inputs.scope-max-lines }}
 
+    # ES-427: export credentials to GITHUB_ENV only when non-empty.
+    #
+    # claude-code-action@v1 unconditionally sets
+    #   ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key || env.ANTHROPIC_API_KEY }}
+    # in its step env block. When both the input and the env var are "",
+    # the expression evaluates to "" and ANTHROPIC_API_KEY="" is exported
+    # to the CLI process. The Claude CLI treats an empty API key as
+    # "credential present" — it wins the precedence slot over
+    # CLAUDE_CODE_OAUTH_TOKEN and authenticates with an empty key, which
+    # fails. OAuth-only deployments are then 100% broken.
+    #
+    # Workaround: remove the with: inputs (so inputs.anthropic_api_key
+    # defaults to "" in the upstream action) and write ONLY non-empty
+    # credentials to GITHUB_ENV. For API-key users env.ANTHROPIC_API_KEY
+    # is now the real key and the upstream || picks it up correctly. For
+    # OAuth users env.ANTHROPIC_API_KEY stays unset; the upstream env
+    # block still evaluates to "", but LoopPilot no longer actively
+    # contributes to the problem — the full fix requires an upstream
+    # change to skip setting ANTHROPIC_API_KEY when both sources are empty.
+    - name: Export Claude credentials to GITHUB_ENV (ES-427)
+      if: steps.pre.outputs.should_run == 'true'
+      shell: bash
+      run: |
+        if [ -n "$LP_ANTHROPIC_API_KEY" ]; then
+          {
+            echo "ANTHROPIC_API_KEY<<LP_CREDENTIAL_DELIM"
+            echo "$LP_ANTHROPIC_API_KEY"
+            echo "LP_CREDENTIAL_DELIM"
+          } >> "$GITHUB_ENV"
+        fi
+        if [ -n "$LP_CLAUDE_CODE_OAUTH_TOKEN" ]; then
+          {
+            echo "CLAUDE_CODE_OAUTH_TOKEN<<LP_CREDENTIAL_DELIM"
+            echo "$LP_CLAUDE_CODE_OAUTH_TOKEN"
+            echo "LP_CREDENTIAL_DELIM"
+          } >> "$GITHUB_ENV"
+        fi
+      env:
+        LP_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        LP_CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
+
     - name: Claude Code Action (repo-level repair)
       id: claude
       if: steps.pre.outputs.should_run == 'true'
       uses: anthropics/claude-code-action@v1
       with:
-        # TY-260: pass both credentials through; pre-fix has already enforced
-        # that exactly one is non-empty. The upstream SDK ignores the empty
-        # one, so this stays a simple straight pass-through with no priority
-        # logic on our side.
-        anthropic_api_key: ${{ inputs.anthropic-api-key }}
-        claude_code_oauth_token: ${{ inputs.claude-code-oauth-token }}
+        # ES-427: credentials are exported to GITHUB_ENV by the preceding
+        # step — only when non-empty — so claude-code-action picks them up
+        # via its env.ANTHROPIC_API_KEY / env.CLAUDE_CODE_OAUTH_TOKEN
+        # fallback. Do NOT re-add anthropic_api_key or claude_code_oauth_token
+        # here; passing "" re-introduces the empty-key precedence bug.
         github_token: ${{ inputs.github-token }}
         prompt: ${{ steps.pre.outputs.prompt }}
         # Tools / model / turn budget are governed by docs/operations/security.md

@@ -299,3 +299,33 @@ describe("reusable loop: 2B crash-notice healthy-state gate (TY-358 / PoC #147)"
     expect(loopReusable).not.toContain("AUTO_REVIEW_STATE_COMMENT_AUTHORS");
   });
 });
+
+describe("ES-427: credential export step prevents empty ANTHROPIC_API_KEY from winning precedence", () => {
+  it("has a credential export step positioned before claude-code-action", () => {
+    const exportIdx = loopComposite.indexOf("Export Claude credentials");
+    // Use "uses: " prefix to match the actual step, not the file-header comment.
+    const claudeIdx = loopComposite.indexOf("uses: anthropics/claude-code-action@v1");
+    expect(exportIdx).toBeGreaterThan(0);
+    expect(claudeIdx).toBeGreaterThan(0);
+    expect(exportIdx).toBeLessThan(claudeIdx);
+  });
+
+  it("conditionally writes only non-empty credentials to GITHUB_ENV", () => {
+    expect(loopComposite).toContain('if [ -n "$LP_ANTHROPIC_API_KEY" ]');
+    expect(loopComposite).toContain('if [ -n "$LP_CLAUDE_CODE_OAUTH_TOKEN" ]');
+    expect(loopComposite).toContain("GITHUB_ENV");
+  });
+
+  it("does NOT pass anthropic_api_key or claude_code_oauth_token through the claude-code-action with: block", () => {
+    // Use "uses: " prefix to match the actual step, not the file-header comment.
+    const claudeStepStart = loopComposite.indexOf("uses: anthropics/claude-code-action@v1");
+    expect(claudeStepStart).toBeGreaterThan(0);
+    // Slice until the next step (Post-fix) to avoid a fragile fixed-length window.
+    const postFixStart = loopComposite.indexOf("Post-fix", claudeStepStart);
+    expect(postFixStart).toBeGreaterThan(claudeStepStart);
+    const claudeStepBlock = loopComposite.slice(claudeStepStart, postFixStart);
+
+    expect(claudeStepBlock).not.toContain("anthropic_api_key:");
+    expect(claudeStepBlock).not.toContain("claude_code_oauth_token:");
+  });
+});
