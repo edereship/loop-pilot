@@ -21217,7 +21217,7 @@ async function mergeIfChecksPass(owner, name, pr, token, log, overrides = {}) {
     }
     const selfWorkflowId = deps.selfRunId !== "" ? allRuns.find((r) => String(r.id) === deps.selfRunId)?.workflow_id : void 0;
     const others = selfWorkflowId !== void 0 ? allRuns.filter((r) => r.workflow_id !== selfWorkflowId) : deps.selfRunId !== "" && deps.selfWorkflowName !== "" ? (() => {
-      const inferredId = allRuns.find((r) => r.name === deps.selfWorkflowName && (deps.selfWorkflowPath === "" || r.path === void 0 || r.path.replace(/@.*$/, "") === deps.selfWorkflowPath))?.workflow_id;
+      const inferredId = allRuns.find((r) => r.name === deps.selfWorkflowName && (deps.selfWorkflowPath === "" || r.path !== void 0 && r.path.replace(/@.*$/, "") === deps.selfWorkflowPath))?.workflow_id;
       return inferredId !== void 0 ? allRuns.filter((r) => r.workflow_id !== inferredId) : allRuns;
     })() : deps.selfRunId !== "" ? allRuns.filter((r) => String(r.id) !== deps.selfRunId) : allRuns;
     const latestByWorkflowAndEvent = /* @__PURE__ */ new Map();
