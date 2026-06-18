@@ -20,8 +20,11 @@
 const USAGE_LIMIT_PATTERNS: readonly RegExp[] = [
   /reached your codex usage limits?(?: for code reviews?)?/i,
   /codex usage limits? (?:reached|exceeded)/i,
-  /you have (?:exceeded|reached) (?:the )?codex usage limits?/i,
-  /codex quota (?:limits? (?:reached|exceeded)|exceeded)/i,
+  /you have (?:exceeded|reached|hit) (?:the )?codex (?:usage )?(?:limits?|cap)/i,
+  /codex quota (?:limits? (?:reached|exceeded)|exceeded|has been exceeded)/i,
+  /codex (?:(?:is )?(?:currently )?rate limit(?:ed)?|limit exceeded)/i,
+  /codex usage cap (?:has been )?(?:reached|exceeded)/i,
+  /your codex (?:quota|usage cap) has been (?:reached|exceeded)/i,
 ];
 
 export function isCodexUsageLimitMessage(body: string): boolean {

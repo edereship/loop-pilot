@@ -63,4 +63,44 @@ describe("isCodexUsageLimitMessage", () => {
   it("does not match an empty string", () => {
     expect(isCodexUsageLimitMessage("")).toBe(false);
   });
+
+  it("ES-425: matches 'rate limit' phrasing", () => {
+    expect(
+      isCodexUsageLimitMessage(
+        "You have hit the Codex rate limit. Please wait before requesting another review.",
+      ),
+    ).toBe(true);
+  });
+
+  it("ES-425: matches 'usage cap' phrasing", () => {
+    expect(
+      isCodexUsageLimitMessage(
+        "Your Codex usage cap has been reached for this billing period.",
+      ),
+    ).toBe(true);
+  });
+
+  it("ES-425: matches 'limit exceeded' standalone phrasing", () => {
+    expect(
+      isCodexUsageLimitMessage(
+        "Codex limit exceeded — no more reviews available today.",
+      ),
+    ).toBe(true);
+  });
+
+  it("ES-425: matches 'quota exceeded' phrasing", () => {
+    expect(
+      isCodexUsageLimitMessage(
+        "Your Codex quota has been exceeded.",
+      ),
+    ).toBe(true);
+  });
+
+  it("ES-425: matches 'rate limited' phrasing", () => {
+    expect(
+      isCodexUsageLimitMessage(
+        "Codex is currently rate limited. Try again later.",
+      ),
+    ).toBe(true);
+  });
 });
