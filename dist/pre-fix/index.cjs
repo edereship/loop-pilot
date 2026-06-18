@@ -21945,6 +21945,7 @@ var UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,
         nodes{
           id
           isResolved
+          isOutdated
           path
           line
           comments(first:1){
@@ -21974,6 +21975,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       malformed: true,
       skippedNonCodex: 0,
       skippedResolved: 0,
+      skippedOutdated: 0,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -21990,6 +21992,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       malformed: true,
       skippedNonCodex: 0,
       skippedResolved: 0,
+      skippedOutdated: 0,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -22001,6 +22004,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
   const findings = [];
   let skippedNonCodex = 0;
   let skippedResolved = 0;
+  let skippedOutdated = 0;
   let skippedUnparseable = 0;
   let skippedBelowThreshold = 0;
   let skippedMalformedId = 0;
@@ -22013,6 +22017,10 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
     const node = raw;
     if (node.isResolved === true) {
       skippedResolved += 1;
+      continue;
+    }
+    if (node.isOutdated === true) {
+      skippedOutdated += 1;
       continue;
     }
     const firstComment = Array.isArray(node.comments?.nodes) ? node.comments.nodes[0] : void 0;
@@ -22055,6 +22063,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
     malformed: false,
     skippedNonCodex,
     skippedResolved,
+    skippedOutdated,
     skippedUnparseable,
     skippedBelowThreshold,
     skippedMalformedId,
@@ -22065,6 +22074,7 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
 } }) {
   const all = [];
   let cursor = null;
+  let totalSkippedOutdated = 0;
   let totalSkippedUnparseable = 0;
   let totalSkippedBelowThreshold = 0;
   let totalSkippedMalformedId = 0;
@@ -22096,6 +22106,7 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
       throw new UnresolvedFindingsFetchError(`[unresolved-findings] GraphQL response for ${params.owner}/${params.repo}#${params.prNumber} (page ${page}) is missing the reviewThreads container or is not valid JSON; the token may lack access or the API shape changed. Aborting /restart-review so unresolved Codex findings are not skipped.`);
     }
     all.push(...pageResult.findings);
+    totalSkippedOutdated += pageResult.skippedOutdated;
     totalSkippedUnparseable += pageResult.skippedUnparseable;
     totalSkippedBelowThreshold += pageResult.skippedBelowThreshold;
     totalSkippedMalformedId += pageResult.skippedMalformedId;
@@ -22106,6 +22117,9 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
     if (page === MAX_PAGES - 1) {
       deps.warning(`[unresolved-findings] Hit MAX_PAGES (${MAX_PAGES}) for ${params.owner}/${params.repo}#${params.prNumber} with more pages remaining; the unresolved findings set may be incomplete.`);
     }
+  }
+  if (totalSkippedOutdated > 0) {
+    deps.warning(`[unresolved-findings] Skipped ${totalSkippedOutdated} outdated Codex thread(s) (code already changed since finding was posted).`);
   }
   if (totalSkippedUnparseable > 0) {
     deps.warning(`[unresolved-findings] Skipped ${totalSkippedUnparseable} unresolved Codex thread(s) with unparseable severity.`);
