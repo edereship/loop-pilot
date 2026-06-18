@@ -20740,7 +20740,8 @@ async function demoteFixingOnCrash(label, deps = defaultDeps2) {
       // TY-273 #B4 / TY-282: the fixing attempt did not complete so the
       // timestamp is no longer meaningful and must not survive into the next
       // pre-fix stale check.
-      fixingStartedAt: null
+      fixingStartedAt: null,
+      currentIterationFindingCommentIds: []
     };
     let stateWriteSucceeded = false;
     try {

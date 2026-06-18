@@ -133,6 +133,7 @@ export async function demoteFixingOnCrash(
       // timestamp is no longer meaningful and must not survive into the next
       // pre-fix stale check.
       fixingStartedAt: null,
+      currentIterationFindingCommentIds: [],
     };
     let stateWriteSucceeded = false;
     try {
