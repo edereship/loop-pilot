@@ -316,6 +316,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 9,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -378,6 +379,7 @@ describe("runPreFix", () => {
         path: `src/file-${n}.ts`,
         line: 9,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       };
     });
     const deps = makeDeps(
@@ -530,6 +532,7 @@ describe("runPreFix", () => {
           path: "src/x.ts",
           line: 5,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ],
     );
@@ -605,6 +608,7 @@ describe("runPreFix", () => {
         path: "src/cache.ts",
         line: 12,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -646,6 +650,7 @@ describe("runPreFix", () => {
         path: "src/middleware.ts",
         line: 10,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -681,6 +686,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 10,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -716,6 +722,7 @@ describe("runPreFix", () => {
           path: "src/foo.ts",
           line: 10,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
@@ -754,6 +761,7 @@ describe("runPreFix", () => {
           path: "src/foo.ts",
           line: 10,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
@@ -792,6 +800,7 @@ describe("runPreFix", () => {
         path: "src/auth.ts",
         line: 42,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -848,6 +857,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 7,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -879,6 +889,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 7,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -909,6 +920,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 7,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -978,6 +990,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 7,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -1010,6 +1023,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 12,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -1038,6 +1052,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 7,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const { findings: parsed } = filterAndParseComments(
@@ -1097,6 +1112,7 @@ describe("runPreFix", () => {
         path: "src/auth.ts",
         line: 14,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const { findings: parsed } = filterAndParseComments(
@@ -1149,6 +1165,7 @@ describe("runPreFix", () => {
         path: "src/baz.ts",
         line: 5,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const { findings: parsed } = filterAndParseComments(
@@ -1235,6 +1252,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 12,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -1271,6 +1289,7 @@ describe("runPreFix", () => {
         path: "src/foo.ts",
         line: 12,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -1385,6 +1404,7 @@ describe("runPreFix", () => {
         path: "src/bar.ts",
         line: 1,
         createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
       },
     ];
     const deps = makeDeps(
@@ -1522,6 +1542,7 @@ describe("runPreFix", () => {
           path: "src/cache.ts",
           line: 12,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
@@ -1568,6 +1589,7 @@ describe("runPreFix", () => {
           path: "src/auth.ts",
           line: 14,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const { findings: parsed } = filterAndParseComments(
@@ -1672,6 +1694,7 @@ describe("runPreFix", () => {
           path: "src/cache.ts",
           line: 12,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
@@ -1778,6 +1801,7 @@ describe("runPreFix", () => {
           path: "src/x.ts",
           line: 5,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
@@ -1827,6 +1851,7 @@ describe("runPreFix", () => {
           path: "src/x.ts",
           line: 5,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
@@ -1880,6 +1905,7 @@ describe("runPreFix", () => {
           path: "src/x.ts",
           line: 5,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
@@ -1970,6 +1996,7 @@ describe("runPreFix", () => {
           path: "src/x.ts",
           line: 5,
           createdAt: "2026-05-14T11:30:00Z",
+        inReplyToId: null,
         },
       ];
       const deps = makeDeps(
