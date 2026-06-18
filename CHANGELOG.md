@@ -10,6 +10,18 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-06-19
+
+### Fixed
+- OAuth-only deployments failed 100% of the time because LoopPilot passed
+  `anthropic_api_key=""` to `claude-code-action@v1`, which set
+  `ANTHROPIC_API_KEY=""` in the CLI process — the empty key won credential
+  precedence over `CLAUDE_CODE_OAUTH_TOKEN` (ES-427 / #42). Credentials are
+  now exported to `$GITHUB_ENV` only when non-empty, and cleared immediately
+  after `claude-code-action` finishes. Note: the upstream action still
+  unconditionally sets `ANTHROPIC_API_KEY` from its env block; the full fix
+  requires an upstream change in `claude-code-action@v1`.
+
 ## [1.8.0] - 2026-06-15
 
 ### Changed
