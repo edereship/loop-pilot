@@ -32,6 +32,7 @@ function makeGraphQLResponse(
 
 function makeThread(opts: {
   isResolved?: boolean;
+  isOutdated?: boolean;
   path?: string;
   line?: number | null;
   authorLogin?: string;
@@ -43,6 +44,7 @@ function makeThread(opts: {
   return {
     id: `thread-${opts.databaseId ?? 1}`,
     isResolved: opts.isResolved ?? false,
+    isOutdated: opts.isOutdated ?? false,
     path: opts.path ?? "src/index.ts",
     line: opts.line === undefined ? 10 : opts.line,
     comments: {
@@ -323,6 +325,57 @@ describe("fetchUnresolvedCodexFindings", () => {
 
     expect(findings).toHaveLength(1);
     expect(findings[0].createdAt).toBe("2026-05-12T03:04:05Z");
+  });
+
+  it("skips outdated threads (code already changed)", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({ databaseId: 901, body: "P1 Outdated finding", isOutdated: true }),
+        makeThread({ databaseId: 902, body: "P1 Current finding", isOutdated: false }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].commentId).toBe(902);
+  });
+
+  it("logs count of skipped outdated threads", async () => {
+    const warn = vi.fn();
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({ databaseId: 1001, body: "P1 Outdated 1", isOutdated: true }),
+        makeThread({ databaseId: 1002, body: "P1 Outdated 2", isOutdated: true }),
+        makeThread({ databaseId: 1003, body: "P1 Current", isOutdated: false }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings(defaultParams, {
+      warning: warn,
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("outdated"),
+    );
+  });
+
+  it("skips outdated threads even when isResolved is false", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({
+          databaseId: 1101,
+          body: "P0 Critical but outdated",
+          isResolved: false,
+          isOutdated: true,
+        }),
+      ]),
+    );
+
+    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+
+    expect(findings).toHaveLength(0);
   });
 
   it("handles null line (file-level comment)", async () => {
