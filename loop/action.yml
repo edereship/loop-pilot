@@ -317,6 +317,21 @@ runs:
         # is allowed through.
         allowed_bots: ${{ inputs.codex-bot-login }}
 
+    # ES-427 (P2): clear credentials from GITHUB_ENV immediately after
+    # claude-code-action — before post-fix runs. $GITHUB_ENV is job-scoped,
+    # so without this step the secret leaks to post-fix child processes
+    # (git commit/push, CHECK_COMMAND, BUILD_COMMAND) and their environment
+    # (e.g. Git hooks on self-hosted runners). Placed here rather than after
+    # post-fix so the credential window is as narrow as possible. The
+    # always() guard ensures cleanup runs even if claude-code-action fails,
+    # since post-fix also runs on failure.
+    - name: Clear Claude credentials from GITHUB_ENV (ES-427)
+      if: always() && steps.pre.outputs.should_run == 'true'
+      shell: bash
+      run: |
+        echo "ANTHROPIC_API_KEY=" >> "$GITHUB_ENV"
+        echo "CLAUDE_CODE_OAUTH_TOKEN=" >> "$GITHUB_ENV"
+
     - name: Post-fix (scope check + CHECK_COMMAND + commit + state)
       if: always() && steps.pre.outputs.should_run == 'true'
       # See the pre-fix step above: pinned path@ref so adopters can consume this
@@ -352,15 +367,3 @@ runs:
         codex-ack-timeout-seconds: ${{ inputs.codex-ack-timeout-seconds }}
         codex-ack-poll-interval-seconds: ${{ inputs.codex-ack-poll-interval-seconds }}
         codex-ack-max-reposts: ${{ inputs.codex-ack-max-reposts }}
-
-    # ES-427 (P2): $GITHUB_ENV is job-scoped, so the credential export step
-    # above leaks ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN to every step
-    # that runs after this composite action in the caller's job. Overwrite
-    # them with empty values so downstream steps cannot read the secret.
-    # Gated on should_run so we only clear variables we actually exported.
-    - name: Clear Claude credentials from GITHUB_ENV (ES-427)
-      if: always() && steps.pre.outputs.should_run == 'true'
-      shell: bash
-      run: |
-        echo "ANTHROPIC_API_KEY=" >> "$GITHUB_ENV"
-        echo "CLAUDE_CODE_OAUTH_TOKEN=" >> "$GITHUB_ENV"
