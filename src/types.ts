@@ -186,6 +186,7 @@ export interface RawReviewComment {
   path: string;
   line: number | null;
   createdAt: string;
+  inReplyToId: number | null;
 }
 
 export type FetchReviewCommentsFn = () => Promise<RawReviewComment[]>;
