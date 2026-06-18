@@ -316,6 +316,20 @@ describe("ES-427: credential export step prevents empty ANTHROPIC_API_KEY from w
     expect(loopComposite).toContain("GITHUB_ENV");
   });
 
+  it("clears credentials from GITHUB_ENV after post-fix with always() guard", () => {
+    const cleanupIdx = loopComposite.indexOf("Clear Claude credentials from GITHUB_ENV");
+    const postFixIdx = loopComposite.indexOf("Post-fix (scope check");
+    expect(cleanupIdx).toBeGreaterThan(0);
+    expect(postFixIdx).toBeGreaterThan(0);
+    expect(cleanupIdx).toBeGreaterThan(postFixIdx);
+
+    // Must run even on failure/cancellation so credentials never leak.
+    const cleanupBlock = loopComposite.slice(cleanupIdx, cleanupIdx + 300);
+    expect(cleanupBlock).toContain("always()");
+    expect(cleanupBlock).toContain('ANTHROPIC_API_KEY=');
+    expect(cleanupBlock).toContain('CLAUDE_CODE_OAUTH_TOKEN=');
+  });
+
   it("does NOT pass anthropic_api_key or claude_code_oauth_token through the claude-code-action with: block", () => {
     // Use "uses: " prefix to match the actual step, not the file-header comment.
     const claudeStepStart = loopComposite.indexOf("uses: anthropics/claude-code-action@v1");

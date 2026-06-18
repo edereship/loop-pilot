@@ -352,3 +352,15 @@ runs:
         codex-ack-timeout-seconds: ${{ inputs.codex-ack-timeout-seconds }}
         codex-ack-poll-interval-seconds: ${{ inputs.codex-ack-poll-interval-seconds }}
         codex-ack-max-reposts: ${{ inputs.codex-ack-max-reposts }}
+
+    # ES-427 (P2): $GITHUB_ENV is job-scoped, so the credential export step
+    # above leaks ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN to every step
+    # that runs after this composite action in the caller's job. Overwrite
+    # them with empty values so downstream steps cannot read the secret.
+    # Gated on should_run so we only clear variables we actually exported.
+    - name: Clear Claude credentials from GITHUB_ENV (ES-427)
+      if: always() && steps.pre.outputs.should_run == 'true'
+      shell: bash
+      run: |
+        echo "ANTHROPIC_API_KEY=" >> "$GITHUB_ENV"
+        echo "CLAUDE_CODE_OAUTH_TOKEN=" >> "$GITHUB_ENV"
