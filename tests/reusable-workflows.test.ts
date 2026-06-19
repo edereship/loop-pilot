@@ -364,8 +364,12 @@ describe("ES-428: show-full-output input wiring (loop.yml → composite → clau
     expect(loopReusable).toContain("show-full-output: ${{ vars.LOOPPILOT_SHOW_FULL_OUTPUT || inputs.show-full-output || 'true' }}");
   });
 
-  it("loop/action.yml declares a show-full-output input", () => {
+  it("loop/action.yml declares a show-full-output input defaulting to 'true'", () => {
     expect(loopComposite).toContain("show-full-output:");
+    const inputIdx = loopComposite.indexOf("show-full-output:");
+    const nextInputOrRuns = loopComposite.indexOf("\nruns:", inputIdx);
+    const inputBlock = loopComposite.slice(inputIdx, nextInputOrRuns);
+    expect(inputBlock).toContain('default: "true"');
   });
 
   it("loop/action.yml passes show_full_output to claude-code-action@v1 (underscore convention)", () => {
