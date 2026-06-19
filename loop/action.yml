@@ -157,6 +157,10 @@ inputs:
     description: "Comma-separated GitHub logins trusted to write the hidden state comment. Defaults to 'github-actions[bot]'. Set to your GitHub App slug or machine-user login when the workflow runs with a non-default token."
     required: false
     default: ""
+  show-full-output:
+    description: "Forward to claude-code-action's show_full_output. When true, the full Claude Code session log is printed to the Actions run log. Defaults to true (ES-428)."
+    required: false
+    default: "true"
 
 runs:
   using: "composite"
@@ -315,6 +319,7 @@ runs:
         # so claude-code-action's bot-actor guard must allow it explicitly.
         # `*` is intentionally avoided; only the configured Codex bot login
         # is allowed through.
+        show_full_output: ${{ inputs.show-full-output }}
         allowed_bots: ${{ inputs.codex-bot-login }}
 
     # ES-427 (P2): clear credentials from GITHUB_ENV immediately after
