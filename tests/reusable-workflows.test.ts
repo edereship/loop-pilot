@@ -10,6 +10,7 @@ const loopCaller = readFileSync(".github/workflows/looppilot-loop.yml", "utf8");
 const readme = readFileSync("README.md", "utf8");
 const loopComposite = readFileSync("loop/action.yml", "utf8");
 const preFixAction = readFileSync("loop/pre-fix/action.yml", "utf8");
+const readmeJa = readFileSync("README.ja.md", "utf8");
 
 describe("reusable workflows: workflow_call surface", () => {
   it("both reusable workflows are workflow_call entrypoints", () => {
@@ -348,8 +349,6 @@ describe("ES-427: credential export step prevents empty ANTHROPIC_API_KEY from w
   });
 });
 
-const readmeJa = readFileSync("README.ja.md", "utf8");
-
 describe("ES-428: show-full-output input wiring (loop.yml → composite → claude-code-action)", () => {
   // ES-428: OAuth token failures produced opaque errors because
   // claude-code-action's show_full_output defaults to false, hiding
@@ -361,8 +360,8 @@ describe("ES-428: show-full-output input wiring (loop.yml → composite → clau
     expect(loopReusable).toContain('default: "true"');
   });
 
-  it("loop.yml forwards show-full-output to the composite action's with: block", () => {
-    expect(loopReusable).toContain("show-full-output: ${{ inputs.show-full-output }}");
+  it("loop.yml forwards show-full-output to the composite action via vars with input fallback", () => {
+    expect(loopReusable).toContain("show-full-output: ${{ vars.LOOPPILOT_SHOW_FULL_OUTPUT || inputs.show-full-output || 'true' }}");
   });
 
   it("loop/action.yml declares a show-full-output input", () => {

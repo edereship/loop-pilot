@@ -337,7 +337,7 @@ jobs:
           looppilot-block-paths: ${{ vars.LOOPPILOT_BLOCK_PATHS }}
           scope-max-files: ${{ vars.LOOPPILOT_SCOPE_MAX_FILES }}
           scope-max-lines: ${{ vars.LOOPPILOT_SCOPE_MAX_LINES }}
-          show-full-output: ${{ inputs.show-full-output }}
+          show-full-output: ${{ vars.LOOPPILOT_SHOW_FULL_OUTPUT || inputs.show-full-output || 'true' }}
 
       # TY-282 #2B: workflow-level fail-safe. If the composite `loop` action
       # ends in `failure` or `cancelled` we cannot rely on `postStopComment`
