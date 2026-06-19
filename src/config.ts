@@ -134,8 +134,8 @@ export type Config = BaseConfig & ClaudeAuthConfig;
 
 export const DEFAULT_SEVERITY_THRESHOLD: Severity = "P3";
 
-const DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6[1m]";
-const DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-6[1m]";
+const DEFAULT_CLAUDE_CODE_MODEL_BASE = "claude-sonnet-4-6";
+const DEFAULT_CLAUDE_CODE_MODEL_ESCALATED = "claude-opus-4-6";
 
 /**
  * Fallback label name used when the user has not configured LOOPPILOT_LABEL.
