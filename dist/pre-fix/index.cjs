@@ -22280,6 +22280,9 @@ function isCodexUsageLimitMessage(body) {
   if (typeof body !== "string" || body.length === 0) {
     return false;
   }
+  if (/\bP[0-3]\b/.test(body)) {
+    return false;
+  }
   return USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(body));
 }
 
@@ -22426,6 +22429,12 @@ async function runPreFix(config, deps = defaultDeps3) {
         deps.info(`[pre-fix] /restart-review Case A: ${unresolvedFindings.length} unresolved finding(s) \u2014 repairing first.`);
         return handleRestartCaseA(config, restartContext, validationResult.validation, unresolvedFindings, deps);
       } else {
+        if (unresolvedResult.latestOutdatedAt !== null) {
+          const currentBaseline = validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt ?? "";
+          if (unresolvedResult.latestOutdatedAt > currentBaseline) {
+            validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt = unresolvedResult.latestOutdatedAt;
+          }
+        }
         deps.info("[pre-fix] /restart-review Case B: no unresolved findings \u2014 requesting fresh Codex review.");
         await deps.executeRestartWithCodexReview(restartContext, validationResult.validation);
         return;

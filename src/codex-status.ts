@@ -33,5 +33,8 @@ export function isCodexUsageLimitMessage(body: string): boolean {
   if (typeof body !== "string" || body.length === 0) {
     return false;
   }
+  if (/\bP[0-3]\b/.test(body)) {
+    return false;
+  }
   return USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(body));
 }

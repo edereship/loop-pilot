@@ -431,6 +431,15 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
         );
       } else {
         // ─── Case B: no unresolved findings — existing @codex review flow ─
+        // ES-420: advance the baseline past skipped outdated threads so the
+        // REST path (which has no isOutdated) does not re-ingest them.
+        if (unresolvedResult.latestOutdatedAt !== null) {
+          const currentBaseline = validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt ?? "";
+          if (unresolvedResult.latestOutdatedAt > currentBaseline) {
+            validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt =
+              unresolvedResult.latestOutdatedAt;
+          }
+        }
         deps.info(
           "[pre-fix] /restart-review Case B: no unresolved findings — requesting fresh Codex review.",
         );

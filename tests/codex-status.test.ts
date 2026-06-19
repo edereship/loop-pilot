@@ -113,6 +113,14 @@ describe("isCodexUsageLimitMessage", () => {
     ).toBe(true);
   });
 
+  it("ES-425: does not match when body contains a severity badge (review, not status notice)", () => {
+    expect(
+      isCodexUsageLimitMessage(
+        "P1 Codex is rate limited but the retry logic is wrong\n\nFix the backoff.",
+      ),
+    ).toBe(false);
+  });
+
   it("ES-425: does not match a review finding that mentions rate limiting in code context", () => {
     expect(
       isCodexUsageLimitMessage(
