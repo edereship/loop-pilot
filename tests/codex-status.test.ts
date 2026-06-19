@@ -119,5 +119,15 @@ describe("isCodexUsageLimitMessage", () => {
         "P1 The Codex rate limit handler does not back off exponentially",
       ),
     ).toBe(false);
+    expect(
+      isCodexUsageLimitMessage(
+        "P1 Codex rate limited requests are retried too aggressively",
+      ),
+    ).toBe(false);
+    expect(
+      isCodexUsageLimitMessage(
+        "P1 This path hit the Codex rate limit",
+      ),
+    ).toBe(false);
   });
 });

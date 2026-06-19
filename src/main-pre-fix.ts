@@ -362,6 +362,22 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       );
       const unresolvedFindings = unresolvedResult.findings;
 
+      // ES-420: if outdated threads were skipped, ensure the repair baseline
+      // covers their timestamps so the REST path (which lacks isOutdated)
+      // does not re-ingest them as fresh findings on the next iteration.
+      if (unresolvedResult.latestOutdatedAt !== null && unresolvedFindings.length > 0) {
+        const latestFindingAt = unresolvedFindings.reduce(
+          (max, f) => (f.createdAt && f.createdAt > max ? f.createdAt : max),
+          "",
+        );
+        if (unresolvedResult.latestOutdatedAt > latestFindingAt) {
+          unresolvedFindings[0] = {
+            ...unresolvedFindings[0],
+            createdAt: unresolvedResult.latestOutdatedAt,
+          };
+        }
+      }
+
       if (unresolvedFindings.length > 0) {
         const capState = validationResult.validation.preflight.nextState;
         if (capState.iterationCount >= config.maxReviewIterations) {

@@ -22270,8 +22270,8 @@ var USAGE_LIMIT_PATTERNS = [
   /codex usage limits? (?:reached|exceeded)/i,
   /you have (?:exceeded|reached|hit) (?:the )?codex (?:usage )?(?:limits?|cap)/i,
   /codex quota (?:limits? (?:reached|exceeded)|exceeded|has been exceeded)/i,
-  /codex (?:is (?:currently )?)?rate limited/i,
-  /(?:hit|reached|exceeded) (?:the )?codex (?:rate )?limit/i,
+  /codex is (?:currently )?rate limited/i,
+  /you(?:'ve| have) (?:hit|reached|exceeded) (?:the )?codex (?:rate )?limit/i,
   /codex (?:rate )?limit (?:reached|exceeded|has been (?:reached|exceeded))/i,
   /codex usage cap (?:has been )?(?:reached|exceeded)/i,
   /your codex (?:quota|usage cap) has been (?:reached|exceeded)/i
@@ -22397,6 +22397,15 @@ async function runPreFix(config, deps = defaultDeps3) {
         token: config.githubToken
       }, { warning: deps.warning });
       const unresolvedFindings = unresolvedResult.findings;
+      if (unresolvedResult.latestOutdatedAt !== null && unresolvedFindings.length > 0) {
+        const latestFindingAt = unresolvedFindings.reduce((max, f) => f.createdAt && f.createdAt > max ? f.createdAt : max, "");
+        if (unresolvedResult.latestOutdatedAt > latestFindingAt) {
+          unresolvedFindings[0] = {
+            ...unresolvedFindings[0],
+            createdAt: unresolvedResult.latestOutdatedAt
+          };
+        }
+      }
       if (unresolvedFindings.length > 0) {
         const capState = validationResult.validation.preflight.nextState;
         if (capState.iterationCount >= config.maxReviewIterations) {
