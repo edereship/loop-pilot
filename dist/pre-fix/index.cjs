@@ -22258,7 +22258,7 @@ var USAGE_LIMIT_PATTERNS = [
   /codex quota (?:limits? (?:reached|exceeded)|exceeded|has been exceeded)/i,
   /codex (?:is (?:currently )?)?rate limited/i,
   /(?:hit|reached|exceeded) (?:the )?codex (?:rate )?limit/i,
-  /codex limit exceeded/i,
+  /codex (?:rate )?limit (?:reached|exceeded|has been (?:reached|exceeded))/i,
   /codex usage cap (?:has been )?(?:reached|exceeded)/i,
   /your codex (?:quota|usage cap) has been (?:reached|exceeded)/i
 ];

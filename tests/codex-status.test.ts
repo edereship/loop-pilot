@@ -104,6 +104,15 @@ describe("isCodexUsageLimitMessage", () => {
     ).toBe(true);
   });
 
+  it("ES-425: matches noun-first 'Codex rate limit reached' phrasing", () => {
+    expect(
+      isCodexUsageLimitMessage("Codex rate limit reached. Try again later."),
+    ).toBe(true);
+    expect(
+      isCodexUsageLimitMessage("Codex rate limit exceeded for this period."),
+    ).toBe(true);
+  });
+
   it("ES-425: does not match a review finding that mentions rate limiting in code context", () => {
     expect(
       isCodexUsageLimitMessage(
