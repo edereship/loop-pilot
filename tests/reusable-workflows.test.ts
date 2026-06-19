@@ -349,27 +349,25 @@ describe("ES-427: credential export step prevents empty ANTHROPIC_API_KEY from w
   });
 });
 
-describe("ES-428: show-full-output input wiring (loop.yml → composite → claude-code-action)", () => {
-  // ES-428: OAuth token failures produced opaque errors because
-  // claude-code-action's show_full_output defaults to false, hiding
-  // the detailed error output. LoopPilot defaults it to true so
-  // operators see the full log unless they explicitly opt out.
+describe("ES-429: show-full-output defaults to false (opt-in for log analysis)", () => {
+  // ES-429: Changed default from true (ES-428) to false so session logs are
+  // only printed when operators explicitly opt in via LOOPPILOT_SHOW_FULL_OUTPUT.
 
-  it("loop.yml declares a show-full-output workflow_call input defaulting to 'true'", () => {
+  it("loop.yml declares a show-full-output workflow_call input defaulting to 'false'", () => {
     expect(loopReusable).toContain("show-full-output:");
-    expect(loopReusable).toContain('default: "true"');
+    expect(loopReusable).toContain('default: "false"');
   });
 
   it("loop.yml forwards show-full-output to the composite action via vars with input fallback", () => {
-    expect(loopReusable).toContain("show-full-output: ${{ vars.LOOPPILOT_SHOW_FULL_OUTPUT || inputs.show-full-output || 'true' }}");
+    expect(loopReusable).toContain("show-full-output: ${{ vars.LOOPPILOT_SHOW_FULL_OUTPUT || inputs.show-full-output || 'false' }}");
   });
 
-  it("loop/action.yml declares a show-full-output input defaulting to 'true'", () => {
+  it("loop/action.yml declares a show-full-output input defaulting to 'false'", () => {
     expect(loopComposite).toContain("show-full-output:");
     const inputIdx = loopComposite.indexOf("show-full-output:");
     const nextInputOrRuns = loopComposite.indexOf("\nruns:", inputIdx);
     const inputBlock = loopComposite.slice(inputIdx, nextInputOrRuns);
-    expect(inputBlock).toContain('default: "true"');
+    expect(inputBlock).toContain('default: "false"');
   });
 
   it("loop/action.yml passes show_full_output to claude-code-action@v1 (underscore convention)", () => {

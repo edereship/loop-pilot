@@ -53,13 +53,13 @@ on:
         default: "node"
       show-full-output:
         description: >-
-          Forward to claude-code-action's show_full_output. When true (default),
-          the full Claude Code session log is printed to the Actions run log.
-          Set to 'false' to suppress it. Defaults to true because hidden output
-          makes debugging authentication and runtime errors difficult (ES-428).
+          Forward to claude-code-action's show_full_output. When 'true', the
+          full Claude Code session log is printed to the Actions run log.
+          Defaults to false; set to 'true' when debugging authentication or
+          runtime errors (ES-429).
         type: string
         required: false
-        default: "true"
+        default: "false"
     secrets:
       # GITHUB_TOKEN is provided automatically to reusable workflows and is NOT
       # declared here. Custom secrets must be declared to be readable, and
@@ -337,7 +337,7 @@ jobs:
           looppilot-block-paths: ${{ vars.LOOPPILOT_BLOCK_PATHS }}
           scope-max-files: ${{ vars.LOOPPILOT_SCOPE_MAX_FILES }}
           scope-max-lines: ${{ vars.LOOPPILOT_SCOPE_MAX_LINES }}
-          show-full-output: ${{ vars.LOOPPILOT_SHOW_FULL_OUTPUT || inputs.show-full-output || 'true' }}
+          show-full-output: ${{ vars.LOOPPILOT_SHOW_FULL_OUTPUT || inputs.show-full-output || 'false' }}
 
       # TY-282 #2B: workflow-level fail-safe. If the composite `loop` action
       # ends in `failure` or `cancelled` we cannot rely on `postStopComment`

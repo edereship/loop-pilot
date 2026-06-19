@@ -10,6 +10,11 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+- `show-full-output` default changed from `"true"` to `"false"`. Session logs
+  are no longer printed to Actions output by default; set
+  `LOOPPILOT_SHOW_FULL_OUTPUT=true` to opt in (ES-429).
+
 ## [1.9.1] - 2026-06-19
 
 ### Fixed
