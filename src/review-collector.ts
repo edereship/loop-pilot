@@ -19,7 +19,6 @@ export interface FilteredComments {
   skipped: {
     unparseable: number;
     belowThreshold: number;
-    threadReplies: number;
   };
 }
 
@@ -61,7 +60,7 @@ export async function fetchReviewComments(
       "--jq",
       // @json ensures each result is a single-line JSON-encoded string,
       // preventing multi-line jq pretty-printing from breaking split("\n") parsing
-      ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at, inReplyToId: .in_reply_to_id} | @json",
+      ".[] | {id: .id, user: {login: .user.login}, body: .body, path: .path, line: .line, createdAt: .created_at} | @json",
     ],
     githubToken,
   );
@@ -86,7 +85,7 @@ export function parseReviewCommentRecord(line: string): RawReviewComment | null 
     if (typeof value !== "object" || value === null) return false;
     const record = value as Record<string, unknown>;
     const user = record.user as Record<string, unknown> | null;
-    if (!(
+    return (
       typeof record.id === "number" &&
       typeof user === "object" &&
       user !== null &&
@@ -95,11 +94,7 @@ export function parseReviewCommentRecord(line: string): RawReviewComment | null 
       typeof record.path === "string" &&
       (typeof record.line === "number" || record.line === null) &&
       typeof record.createdAt === "string"
-    )) return false;
-    if (record.inReplyToId === undefined) {
-      record.inReplyToId = null;
-    }
-    return typeof record.inReplyToId === "number" || record.inReplyToId === null;
+    );
   }
 
   try {
@@ -141,15 +136,10 @@ export function filterAndParseComments(
   const findings: Finding[] = [];
   let unparseable = 0;
   let belowThreshold = 0;
-  let threadReplies = 0;
 
   for (const comment of comments) {
     if (comment.user.login !== botLogin) continue;
     if (lastReceivedAt !== null && !(comment.createdAt > lastReceivedAt)) continue;
-    if (comment.inReplyToId != null) {
-      threadReplies += 1;
-      continue;
-    }
 
     const parsed = parseSeverity(comment.body);
     if (parsed.severity === null) {
@@ -177,7 +167,7 @@ export function filterAndParseComments(
 
   return {
     findings,
-    skipped: { unparseable, belowThreshold, threadReplies },
+    skipped: { unparseable, belowThreshold },
   };
 }
 

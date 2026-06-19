@@ -16,7 +16,6 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
       path: "src/auth/session.ts",
       line: 84,
       createdAt: "2026-03-20T11:05:00Z",
-        inReplyToId: null,
     },
     {
       id: 101,
@@ -25,7 +24,6 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
       path: "src/auth/middleware.ts",
       line: 42,
       createdAt: "2026-03-20T11:05:30Z",
-        inReplyToId: null,
     },
     {
       id: 102,
@@ -34,7 +32,6 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
       path: "src/utils.ts",
       line: 10,
       createdAt: "2026-03-20T11:06:00Z",
-        inReplyToId: null,
     },
     {
       id: 103,
@@ -43,7 +40,6 @@ describe("Workflow B Phase 1: review collection → findings → loop check", ()
       path: "src/app.ts",
       line: 5,
       createdAt: "2026-03-20T11:07:00Z",
-        inReplyToId: null,
     },
   ];
 

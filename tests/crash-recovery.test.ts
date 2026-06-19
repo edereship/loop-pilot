@@ -279,30 +279,6 @@ describe("demoteFixingOnCrash", () => {
     });
   });
 
-  it("ES-421: clears currentIterationFindingCommentIds so a subsequent restart does not resolve un-fixed threads", async () => {
-    const deps = makeDeps({
-      readState: vi.fn().mockResolvedValue({
-        found: true,
-        corrupted: false,
-        state: {
-          ...createInitialState(),
-          status: "fixing",
-          fixingStartedAt: "2026-05-23T00:00:00Z",
-          currentIterationFindingCommentIds: [111, 222, 333],
-        },
-        commentId: 12345,
-        commentUpdatedAt: "2026-05-15T00:00:00.000Z",
-      }),
-    });
-
-    await demoteFixingOnCrash("pre-fix", deps);
-
-    const [, , , writtenState] = (
-      deps.updateStateComment as ReturnType<typeof vi.fn>
-    ).mock.calls[0];
-    expect(writtenState.currentIterationFindingCommentIds).toEqual([]);
-  });
-
   it("TY-302 #1: leaves iteration / history untouched when the last entry's iteration does not match (legacy / hand-edited state)", async () => {
     // Defensive: if the bookkeeping invariant is broken (last entry's iteration
     // !== state.iterationCount), the rollback heuristic does not fire so the

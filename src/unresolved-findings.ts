@@ -18,7 +18,6 @@ const UNRESOLVED_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int
         nodes{
           id
           isResolved
-          isOutdated
           path
           line
           comments(first:1){
@@ -64,7 +63,6 @@ export interface FetchUnresolvedCodexFindingsDeps {
 interface RawThreadNode {
   id?: unknown;
   isResolved?: unknown;
-  isOutdated?: unknown;
   path?: unknown;
   line?: unknown;
   comments?: {
@@ -85,7 +83,6 @@ interface ParsedPage {
   malformed: boolean;
   skippedNonCodex: number;
   skippedResolved: number;
-  skippedOutdated: number;
   skippedUnparseable: number;
   skippedBelowThreshold: number;
   skippedMalformedId: number;
@@ -108,7 +105,6 @@ function parsePage(
       malformed: true,
       skippedNonCodex: 0,
       skippedResolved: 0,
-      skippedOutdated: 0,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -136,7 +132,6 @@ function parsePage(
       malformed: true,
       skippedNonCodex: 0,
       skippedResolved: 0,
-      skippedOutdated: 0,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -149,7 +144,6 @@ function parsePage(
   const findings: Finding[] = [];
   let skippedNonCodex = 0;
   let skippedResolved = 0;
-  let skippedOutdated = 0;
   let skippedUnparseable = 0;
   let skippedBelowThreshold = 0;
   let skippedMalformedId = 0;
@@ -168,10 +162,6 @@ function parsePage(
     const node = raw as RawThreadNode;
     if (node.isResolved === true) {
       skippedResolved += 1;
-      continue;
-    }
-    if (node.isOutdated === true) {
-      skippedOutdated += 1;
       continue;
     }
     const firstComment = Array.isArray(node.comments?.nodes)
@@ -235,7 +225,6 @@ function parsePage(
     malformed: false,
     skippedNonCodex,
     skippedResolved,
-    skippedOutdated,
     skippedUnparseable,
     skippedBelowThreshold,
     skippedMalformedId,
@@ -255,7 +244,6 @@ export async function fetchUnresolvedCodexFindings(
 ): Promise<Finding[]> {
   const all: Finding[] = [];
   let cursor: string | null = null;
-  let totalSkippedOutdated = 0;
   let totalSkippedUnparseable = 0;
   let totalSkippedBelowThreshold = 0;
   let totalSkippedMalformedId = 0;
@@ -309,7 +297,6 @@ export async function fetchUnresolvedCodexFindings(
     }
 
     all.push(...pageResult.findings);
-    totalSkippedOutdated += pageResult.skippedOutdated;
     totalSkippedUnparseable += pageResult.skippedUnparseable;
     totalSkippedBelowThreshold += pageResult.skippedBelowThreshold;
     totalSkippedMalformedId += pageResult.skippedMalformedId;
@@ -327,12 +314,6 @@ export async function fetchUnresolvedCodexFindings(
     }
   }
 
-  if (totalSkippedOutdated > 0) {
-    deps.warning(
-      `[unresolved-findings] Skipped ${totalSkippedOutdated} outdated Codex thread(s) ` +
-        `(code already changed since finding was posted).`,
-    );
-  }
   if (totalSkippedUnparseable > 0) {
     deps.warning(
       `[unresolved-findings] Skipped ${totalSkippedUnparseable} unresolved Codex thread(s) ` +

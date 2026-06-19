@@ -143,10 +143,7 @@ jobs:
               contains(github.event.comment.body, 'Codex Review') ||
               (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.comment.body, vars.CODEX_REVIEW_MARKER)) ||
               contains(github.event.comment.body, 'Codex usage limit') ||
-              contains(github.event.comment.body, 'Codex quota') ||
-              contains(github.event.comment.body, 'Codex rate limit') ||
-              contains(github.event.comment.body, 'Codex limit exceeded') ||
-              contains(github.event.comment.body, 'Codex usage cap')
+              contains(github.event.comment.body, 'Codex quota')
             )
           ) ||
           (
@@ -160,10 +157,7 @@ jobs:
               contains(github.event.review.body, 'Codex Review') ||
               (vars.CODEX_REVIEW_MARKER != '' && contains(github.event.review.body, vars.CODEX_REVIEW_MARKER)) ||
               contains(github.event.review.body, 'Codex usage limit') ||
-              contains(github.event.review.body, 'Codex quota') ||
-              contains(github.event.review.body, 'Codex rate limit') ||
-              contains(github.event.review.body, 'Codex limit exceeded') ||
-              contains(github.event.review.body, 'Codex usage cap')
+              contains(github.event.review.body, 'Codex quota')
             )
           )
         )

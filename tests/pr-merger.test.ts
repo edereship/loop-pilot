@@ -898,42 +898,6 @@ describe("mergeIfChecksPass — workflow-name self-exclusion fallback (Finding 3
     expect(fake.mergeCalls).toBe(1);
     expect(calls.find((c) => c.level === "warning")).toBeUndefined();
   });
-  it("ES-423: does not exclude a workflow run with undefined path as a self-run (fail-closed)", async () => {
-    const unknownRun: WorkflowRunSummary = {
-      id: 100,
-      workflow_id: 10,
-      name: "loop-pilot",
-      path: undefined,
-      status: "completed",
-      conclusion: "failure",
-      head_sha: "abc123",
-      event: "push",
-    };
-    const ciRun: WorkflowRunSummary = {
-      id: 200,
-      workflow_id: 20,
-      name: "CI",
-      path: ".github/workflows/ci.yml",
-      status: "completed",
-      conclusion: "success",
-      head_sha: "abc123",
-      event: "push",
-    };
-    const fake = makeDeps({
-      workflowRunPages: [[unknownRun, ciRun]],
-      selfRunId: "999",
-      selfWorkflowName: "loop-pilot",
-      selfWorkflowPath: ".github/workflows/looppilot-loop.yml",
-    });
-    const { log, calls } = captureLog();
-
-    await mergeIfChecksPass("o", "r", 42, "tok", log, fake.deps);
-
-    // unknownRun has undefined path — must NOT be treated as self-run, so its
-    // failure blocks the merge (fail-closed).
-    expect(fake.mergeCalls).toBe(0);
-    expect(calls.find((c) => c.level === "warning")?.message).toContain("failure");
-  });
 });
 
 // TY-295: every skip path in `mergeIfChecksPass` (eleven in total) must

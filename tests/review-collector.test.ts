@@ -19,7 +19,6 @@ function makeComment(
     path: "src/foo.ts",
     line: 10,
     createdAt: "2024-01-10T00:00:00Z",
-    inReplyToId: null,
     ...overrides,
   };
 }
@@ -172,31 +171,6 @@ describe("filterAndParseComments", () => {
     expect(findings[0].line).toBeNull();
   });
 
-  it("skips thread replies (inReplyToId !== null) to avoid double-counting findings (ES-422)", () => {
-    const comments: RawReviewComment[] = [
-      makeComment({ id: 1, body: "P1 Original finding", inReplyToId: null }),
-      makeComment({ id: 2, body: "P1 Reply with severity badge", inReplyToId: 1 }),
-    ];
-
-    const { findings } = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
-
-    expect(findings).toHaveLength(1);
-    expect(findings[0].commentId).toBe(1);
-  });
-
-  it("reports skipped reply count (ES-422)", () => {
-    const comments: RawReviewComment[] = [
-      makeComment({ id: 1, body: "P0 Root finding", inReplyToId: null }),
-      makeComment({ id: 2, body: "P1 Reply 1", inReplyToId: 1 }),
-      makeComment({ id: 3, body: "P2 Reply 2", inReplyToId: 1 }),
-    ];
-
-    const result = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
-
-    expect(result.findings).toHaveLength(1);
-    expect(result.skipped.threadReplies).toBe(2);
-  });
-
   // --- Threshold + skip count (TY-256) ---
 
   describe("severity threshold (TY-256)", () => {
@@ -211,7 +185,7 @@ describe("filterAndParseComments", () => {
       const result = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
       expect(result.findings.map((f) => f.severity)).toEqual(["P0", "P1", "P2"]);
-      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 1, threadReplies: 0 });
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 1 });
     });
 
     it("threshold P3 includes everything (no belowThreshold)", () => {
@@ -223,7 +197,7 @@ describe("filterAndParseComments", () => {
       const result = filterAndParseComments(comments, BOT_LOGIN, null, "P3");
 
       expect(result.findings.map((f) => f.severity)).toEqual(["P0", "P3"]);
-      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 0, threadReplies: 0 });
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 0 });
     });
 
     it("threshold P1 keeps P0/P1 and counts P2/P3 in belowThreshold", () => {
@@ -237,7 +211,7 @@ describe("filterAndParseComments", () => {
       const result = filterAndParseComments(comments, BOT_LOGIN, null, "P1");
 
       expect(result.findings.map((f) => f.severity)).toEqual(["P0", "P1"]);
-      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 2, threadReplies: 0 });
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 2 });
     });
 
     it("threshold P0 keeps only P0 and counts everything else in belowThreshold", () => {
@@ -250,7 +224,7 @@ describe("filterAndParseComments", () => {
       const result = filterAndParseComments(comments, BOT_LOGIN, null, "P0");
 
       expect(result.findings.map((f) => f.severity)).toEqual(["P0"]);
-      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 2, threadReplies: 0 });
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 2 });
     });
 
     it("reports unparseable comments separately from belowThreshold", () => {
@@ -264,7 +238,7 @@ describe("filterAndParseComments", () => {
       const result = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
       expect(result.findings.map((f) => f.severity)).toEqual(["P0"]);
-      expect(result.skipped).toEqual({ unparseable: 2, belowThreshold: 1, threadReplies: 0 });
+      expect(result.skipped).toEqual({ unparseable: 2, belowThreshold: 1 });
     });
 
     it("excludes non-bot comments from skip counters", () => {
@@ -281,7 +255,7 @@ describe("filterAndParseComments", () => {
       const result = filterAndParseComments(comments, BOT_LOGIN, null, "P2");
 
       expect(result.findings.map((f) => f.severity)).toEqual(["P2"]);
-      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 0, threadReplies: 0 });
+      expect(result.skipped).toEqual({ unparseable: 0, belowThreshold: 0 });
     });
   });
 });

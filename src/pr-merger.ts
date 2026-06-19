@@ -438,7 +438,7 @@ export async function mergeIfChecksPass(
             // incorrectly identified as ours and excluded.
             const inferredId = allRuns.find((r) =>
               r.name === deps.selfWorkflowName &&
-              (deps.selfWorkflowPath === "" || (r.path !== undefined && r.path.replace(/@.*$/, "") === deps.selfWorkflowPath))
+              (deps.selfWorkflowPath === "" || r.path === undefined || r.path.replace(/@.*$/, "") === deps.selfWorkflowPath)
             )?.workflow_id;
             return inferredId !== undefined
               ? allRuns.filter((r) => r.workflow_id !== inferredId)
