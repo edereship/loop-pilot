@@ -286,6 +286,7 @@ function countRelevantBotComments(
   return comments.filter((comment) => {
     if (comment.user.login !== botLogin) return false;
     if (lastReceivedAt !== null && !(comment.createdAt > lastReceivedAt)) return false;
+    if (comment.inReplyToId != null) return false;
     const parsed = parseSeverity(comment.body);
     return parsed.severity !== null && isAtLeastSeverity(parsed.severity, threshold);
   }).length;

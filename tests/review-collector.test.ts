@@ -299,6 +299,18 @@ describe("shouldStabilizeReviewComments", () => {
     ).toBe(true);
   });
 
+  it("does not count thread replies as existing comments — enters stabilization (ES-422)", () => {
+    expect(
+      shouldStabilizeReviewComments(
+        [makeComment({ id: 1, body: "P1 Reply with badge", inReplyToId: 999 })],
+        BOT_LOGIN,
+        null,
+        "Codex Review found P1 issues.",
+        "P2"
+      )
+    ).toBe(true);
+  });
+
   it("skips stabilization when comments already exist", () => {
     expect(
       shouldStabilizeReviewComments(

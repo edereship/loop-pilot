@@ -103,4 +103,12 @@ describe("isCodexUsageLimitMessage", () => {
       ),
     ).toBe(true);
   });
+
+  it("ES-425: does not match a review finding that mentions rate limiting in code context", () => {
+    expect(
+      isCodexUsageLimitMessage(
+        "P1 The Codex rate limit handler does not back off exponentially",
+      ),
+    ).toBe(false);
+  });
 });
