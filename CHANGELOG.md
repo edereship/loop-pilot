@@ -10,6 +10,35 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-06-19
+
+### Fixed
+- `/restart-review` Case A passed already-fixed (isOutdated) Codex findings to
+  claude-code-action, causing `action_no_op` loops. Now
+  `fetchUnresolvedCodexFindings` skips `isOutdated` threads and tracks
+  `latestOutdatedAt` so the REST timestamp baseline advances past them
+  (ES-420 / #58).
+- Crash recovery (`demoteFixingOnCrash`) left stale
+  `currentIterationFindingCommentIds` from the crashed iteration, causing
+  `resolveFindingThreads` to incorrectly resolve un-fixed threads on the next
+  `/restart-review` (ES-421 / #58).
+- REST review-collector double-counted Codex thread replies as separate
+  findings when they contained a severity badge. Now filters by
+  `in_reply_to_id` in both `filterAndParseComments` and
+  `countRelevantBotComments` (ES-422 / #58).
+- `pr-merger` self-exclusion treated workflow runs with `path === undefined` as
+  self-runs (fail-open), potentially hiding CI failures. Now treats undefined
+  path as non-match (fail-closed) (ES-423 / #58).
+- `state-comment-locker` `onConflict` callback exceptions masked the conflict
+  signal (`return false`), routing the workflow into crash recovery instead of
+  conflict handling. Now catches handler errors and preserves the signal
+  (ES-424 / #58).
+- `codex-status` usage-limit detection patterns were too narrow; Codex wording
+  changes (rate limit, usage cap, limit exceeded) caused quota-exhaustion
+  messages to be misclassified as `no_findings`. Broadened patterns and added a
+  severity-badge guard to prevent false positives on review text. Updated
+  workflow YAML trigger filter to admit the new substrings (ES-425 / #58).
+
 ## [1.8.1] - 2026-06-19
 
 ### Fixed
