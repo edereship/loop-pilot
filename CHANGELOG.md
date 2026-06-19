@@ -10,6 +10,15 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-06-19
+
+### Added
+- `show-full-output` input (default `"true"`) wired through `loop.yml` →
+  `loop/action.yml` → `claude-code-action@v1`'s `show_full_output`. Operators
+  see the full Claude Code session log in Actions output by default, making
+  authentication and runtime errors visible. Set
+  `LOOPPILOT_SHOW_FULL_OUTPUT=false` to suppress (ES-428 / #61).
+
 ## [1.8.2] - 2026-06-19
 
 ### Fixed
