@@ -161,6 +161,22 @@ describe("createLockedStateUpdater", () => {
     expect(defaultOnConflict).toHaveBeenCalledWith("terminal write detail");
   });
 
+  it("ES-424: returns false (conflict signal) even when onConflict handler throws", async () => {
+    const conflict = new StateUpdateConflictError("412 Precondition Failed");
+    const args = makeArgs({
+      updateStateComment: vi.fn().mockRejectedValue(conflict),
+      onConflict: vi.fn().mockRejectedValue(new Error("notification API down")),
+    });
+    const tryUpdate = createLockedStateUpdater(args);
+
+    const ok = await tryUpdate(makeFixingState(), "detail");
+
+    expect(ok).toBe(false);
+    expect(args.warning).toHaveBeenCalledWith(
+      expect.stringContaining("onConflict handler failed"),
+    );
+  });
+
   it("does not advance expectedUpdatedAt after a conflict so the next attempt re-uses the previous value", async () => {
     const update = vi
       .fn()
