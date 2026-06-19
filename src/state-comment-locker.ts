@@ -88,13 +88,7 @@ export function createLockedStateUpdater(
       const message = error instanceof Error ? error.message : String(error);
       args.warning(`[${args.label}] Hidden comment state conflict. ${message}`);
       const handler = options?.onConflict ?? args.onConflict;
-      try {
-        await handler(detail);
-      } catch (handlerError) {
-        args.warning(
-          `[${args.label}] onConflict handler failed: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}. Continuing with conflict signal.`,
-        );
-      }
+      await handler(detail);
       return false;
     }
   };

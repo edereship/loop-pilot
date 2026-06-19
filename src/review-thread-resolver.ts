@@ -47,7 +47,6 @@ const REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$c
         nodes{
           id
           isResolved
-          isOutdated
           comments(first:50){pageInfo{hasNextPage} nodes{databaseId fullDatabaseId}}
         }
       }

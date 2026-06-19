@@ -726,11 +726,6 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       `[review-collector] Skipped ${skipped.belowThreshold} findings below threshold (threshold=${config.severityThreshold}).`,
     );
   }
-  if (skipped.threadReplies > 0) {
-    deps.info(
-      `[review-collector] Skipped ${skipped.threadReplies} thread reply comment(s) (not root findings).`,
-    );
-  }
 
   deps.info(
     `[pre-fix] Found ${findings.length} findings at or above threshold ${config.severityThreshold}.`,
