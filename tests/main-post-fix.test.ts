@@ -42,8 +42,8 @@ const baseConfig: Config = {
   autoReviewLabel: "loop-pilot",
   autoReviewFullAuto: false,
   autoReviewRestartRoles: "author,write,maintain,admin",
-  claudeCodeModelBase: "claude-sonnet-4-6[1m]",
-  claudeCodeModelEscalated: "claude-opus-4-6[1m]",
+  claudeCodeModelBase: "claude-sonnet-4-6",
+  claudeCodeModelEscalated: "claude-opus-4-6",
   autoMergeOnClean: false,
   autoMergePollSeconds: 15,
   autoMergeTimeoutMinutes: 10,
@@ -1213,7 +1213,7 @@ describe("runPostFix", () => {
     // messages terminated by a `type: "result"` message whose `subtype` is the
     // authoritative stop reason.
     const executionFile = JSON.stringify([
-      { type: "system", subtype: "init", session_id: "sess-b", model: "claude-opus-4-6[1m]" },
+      { type: "system", subtype: "init", session_id: "sess-b", model: "claude-opus-4-6" },
       { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "working" }] } },
       { type: "result", subtype: "error_max_turns", is_error: true, num_turns: 40, duration_ms: 120000 },
     ]);
@@ -1257,7 +1257,7 @@ describe("runPostFix", () => {
         type: "system",
         subtype: "init",
         session_id: "sess-a",
-        model: "claude-opus-4-6[1m]",
+        model: "claude-opus-4-6",
         max_turns: 40,
       },
       { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "boom" }] } },

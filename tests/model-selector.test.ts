@@ -12,8 +12,8 @@ const finding = (severity: "P0" | "P1" | "P2"): Finding => ({
 });
 
 const defaultInput = {
-  baseModel: "claude-sonnet-4-6[1m]",
-  escalatedModel: "claude-opus-4-6[1m]",
+  baseModel: "claude-sonnet-4-6",
+  escalatedModel: "claude-opus-4-6",
   findings: [],
   previousCheckFailure: null,
   repeatedFinding: false,
@@ -27,7 +27,7 @@ describe("selectModel", () => {
       findings: [finding("P1"), finding("P2")],
     });
     expect(result).toEqual({
-      model: "claude-sonnet-4-6[1m]",
+      model: "claude-sonnet-4-6",
       tier: "base",
       escalationReasons: [],
     });
@@ -39,7 +39,7 @@ describe("selectModel", () => {
       findings: [finding("P1"), finding("P0")],
     });
     expect(result).toEqual({
-      model: "claude-opus-4-6[1m]",
+      model: "claude-opus-4-6",
       tier: "escalated",
       escalationReasons: ["p0_finding"],
     });
@@ -52,7 +52,7 @@ describe("selectModel", () => {
       previousCheckFailure: "tsc failed",
     });
     expect(result).toEqual({
-      model: "claude-opus-4-6[1m]",
+      model: "claude-opus-4-6",
       tier: "escalated",
       escalationReasons: ["previous_check_failure"],
     });
@@ -73,7 +73,7 @@ describe("selectModel", () => {
       previousCheckFailure: "boom",
     });
     expect(result).toEqual({
-      model: "claude-opus-4-6[1m]",
+      model: "claude-opus-4-6",
       tier: "escalated",
       escalationReasons: ["p0_finding", "previous_check_failure"],
     });
@@ -85,7 +85,7 @@ describe("selectModel", () => {
       findings: [finding("P1"), finding("P1"), finding("P2")],
     });
     expect(result.tier).toBe("base");
-    expect(result.model).toBe("claude-sonnet-4-6[1m]");
+    expect(result.model).toBe("claude-sonnet-4-6");
   });
 
   it("escalates with repeated_finding when repeatedFinding is true", () => {
@@ -95,7 +95,7 @@ describe("selectModel", () => {
       repeatedFinding: true,
     });
     expect(result).toEqual({
-      model: "claude-opus-4-6[1m]",
+      model: "claude-opus-4-6",
       tier: "escalated",
       escalationReasons: ["repeated_finding"],
     });
@@ -108,7 +108,7 @@ describe("selectModel", () => {
       previousMaxTurnsExceeded: true,
     });
     expect(result).toEqual({
-      model: "claude-opus-4-6[1m]",
+      model: "claude-opus-4-6",
       tier: "escalated",
       escalationReasons: ["previous_max_turns_exceeded"],
     });
@@ -133,7 +133,7 @@ describe("selectModel", () => {
       previousMaxTurnsExceeded: true,
     });
     expect(result).toEqual({
-      model: "claude-opus-4-6[1m]",
+      model: "claude-opus-4-6",
       tier: "escalated",
       escalationReasons: [
         "p0_finding",
@@ -147,11 +147,11 @@ describe("selectModel", () => {
   it("BASE === ESCALATED yields a fixed model even at the escalated tier", () => {
     const result = selectModel({
       ...defaultInput,
-      baseModel: "claude-opus-4-6[1m]",
-      escalatedModel: "claude-opus-4-6[1m]",
+      baseModel: "claude-opus-4-6",
+      escalatedModel: "claude-opus-4-6",
       findings: [finding("P0")],
     });
     expect(result.tier).toBe("escalated");
-    expect(result.model).toBe("claude-opus-4-6[1m]");
+    expect(result.model).toBe("claude-opus-4-6");
   });
 });
