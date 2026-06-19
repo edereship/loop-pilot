@@ -174,18 +174,6 @@ function parsePage(
       skippedResolved += 1;
       continue;
     }
-    if (node.isOutdated === true) {
-      skippedOutdated += 1;
-      const outdatedComment = Array.isArray(node.comments?.nodes)
-        ? node.comments!.nodes[0]
-        : undefined;
-      if (outdatedComment && typeof outdatedComment.createdAt === "string") {
-        if (latestOutdatedAt === null || outdatedComment.createdAt > latestOutdatedAt) {
-          latestOutdatedAt = outdatedComment.createdAt;
-        }
-      }
-      continue;
-    }
     const firstComment = Array.isArray(node.comments?.nodes)
       ? node.comments!.nodes[0]
       : undefined;
@@ -199,6 +187,16 @@ function parsePage(
       : "";
     if (authorLogin !== codexBotLogin && authorLogin !== codexLoginBase) {
       skippedNonCodex += 1;
+      continue;
+    }
+
+    if (node.isOutdated === true) {
+      skippedOutdated += 1;
+      if (typeof firstComment.createdAt === "string") {
+        if (latestOutdatedAt === null || firstComment.createdAt > latestOutdatedAt) {
+          latestOutdatedAt = firstComment.createdAt;
+        }
+      }
       continue;
     }
 

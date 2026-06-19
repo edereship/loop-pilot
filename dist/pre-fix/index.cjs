@@ -22039,22 +22039,21 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       skippedResolved += 1;
       continue;
     }
-    if (node.isOutdated === true) {
-      skippedOutdated += 1;
-      const outdatedComment = Array.isArray(node.comments?.nodes) ? node.comments.nodes[0] : void 0;
-      if (outdatedComment && typeof outdatedComment.createdAt === "string") {
-        if (latestOutdatedAt === null || outdatedComment.createdAt > latestOutdatedAt) {
-          latestOutdatedAt = outdatedComment.createdAt;
-        }
-      }
-      continue;
-    }
     const firstComment = Array.isArray(node.comments?.nodes) ? node.comments.nodes[0] : void 0;
     if (!firstComment)
       continue;
     const authorLogin = typeof firstComment.author?.login === "string" ? firstComment.author.login : "";
     if (authorLogin !== codexBotLogin && authorLogin !== codexLoginBase) {
       skippedNonCodex += 1;
+      continue;
+    }
+    if (node.isOutdated === true) {
+      skippedOutdated += 1;
+      if (typeof firstComment.createdAt === "string") {
+        if (latestOutdatedAt === null || firstComment.createdAt > latestOutdatedAt) {
+          latestOutdatedAt = firstComment.createdAt;
+        }
+      }
       continue;
     }
     const body = typeof firstComment.body === "string" ? firstComment.body : "";
@@ -22400,13 +22399,10 @@ async function runPreFix(config, deps = defaultDeps3) {
         token: config.githubToken
       }, { warning: deps.warning });
       const unresolvedFindings = unresolvedResult.findings;
-      if (unresolvedResult.latestOutdatedAt !== null && unresolvedFindings.length > 0) {
-        const latestFindingAt = unresolvedFindings.reduce((max, f) => f.createdAt && f.createdAt > max ? f.createdAt : max, "");
-        if (unresolvedResult.latestOutdatedAt > latestFindingAt) {
-          unresolvedFindings[0] = {
-            ...unresolvedFindings[0],
-            createdAt: unresolvedResult.latestOutdatedAt
-          };
+      if (unresolvedResult.latestOutdatedAt !== null) {
+        const currentBaseline = validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt ?? "";
+        if (unresolvedResult.latestOutdatedAt > currentBaseline) {
+          validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt = unresolvedResult.latestOutdatedAt;
         }
       }
       if (unresolvedFindings.length > 0) {
@@ -22429,12 +22425,6 @@ async function runPreFix(config, deps = defaultDeps3) {
         deps.info(`[pre-fix] /restart-review Case A: ${unresolvedFindings.length} unresolved finding(s) \u2014 repairing first.`);
         return handleRestartCaseA(config, restartContext, validationResult.validation, unresolvedFindings, deps);
       } else {
-        if (unresolvedResult.latestOutdatedAt !== null) {
-          const currentBaseline = validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt ?? "";
-          if (unresolvedResult.latestOutdatedAt > currentBaseline) {
-            validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt = unresolvedResult.latestOutdatedAt;
-          }
-        }
         deps.info("[pre-fix] /restart-review Case B: no unresolved findings \u2014 requesting fresh Codex review.");
         await deps.executeRestartWithCodexReview(restartContext, validationResult.validation);
         return;

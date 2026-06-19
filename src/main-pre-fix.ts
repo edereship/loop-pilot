@@ -362,19 +362,15 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       );
       const unresolvedFindings = unresolvedResult.findings;
 
-      // ES-420: if outdated threads were skipped, ensure the repair baseline
-      // covers their timestamps so the REST path (which lacks isOutdated)
-      // does not re-ingest them as fresh findings on the next iteration.
-      if (unresolvedResult.latestOutdatedAt !== null && unresolvedFindings.length > 0) {
-        const latestFindingAt = unresolvedFindings.reduce(
-          (max, f) => (f.createdAt && f.createdAt > max ? f.createdAt : max),
-          "",
-        );
-        if (unresolvedResult.latestOutdatedAt > latestFindingAt) {
-          unresolvedFindings[0] = {
-            ...unresolvedFindings[0],
-            createdAt: unresolvedResult.latestOutdatedAt,
-          };
+      // ES-420: advance the baseline past skipped Codex outdated threads so
+      // the REST path (which lacks isOutdated) does not re-ingest them.
+      // Applied directly to the preflight state before Case A/B branching
+      // so it survives regardless of finding truncation or selection.
+      if (unresolvedResult.latestOutdatedAt !== null) {
+        const currentBaseline = validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt ?? "";
+        if (unresolvedResult.latestOutdatedAt > currentBaseline) {
+          validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt =
+            unresolvedResult.latestOutdatedAt;
         }
       }
 
@@ -431,15 +427,6 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
         );
       } else {
         // ─── Case B: no unresolved findings — existing @codex review flow ─
-        // ES-420: advance the baseline past skipped outdated threads so the
-        // REST path (which has no isOutdated) does not re-ingest them.
-        if (unresolvedResult.latestOutdatedAt !== null) {
-          const currentBaseline = validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt ?? "";
-          if (unresolvedResult.latestOutdatedAt > currentBaseline) {
-            validationResult.validation.preflight.nextState.lastCodexReviewReceivedAt =
-              unresolvedResult.latestOutdatedAt;
-          }
-        }
         deps.info(
           "[pre-fix] /restart-review Case B: no unresolved findings — requesting fresh Codex review.",
         );
