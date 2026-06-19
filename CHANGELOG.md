@@ -10,6 +10,16 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-06-19
+
+### Fixed
+- Default model names changed from `claude-sonnet-4-6[1m]` /
+  `claude-opus-4-6[1m]` to `claude-sonnet-4-6` / `claude-opus-4-6`. OAuth
+  tokens without usage credits fail immediately with 1M-context models;
+  standard context works out-of-the-box. Operators who want 1M context can
+  set `CLAUDE_CODE_MODEL_BASE` / `CLAUDE_CODE_MODEL_ESCALATED` explicitly
+  (#63).
+
 ## [1.9.0] - 2026-06-19
 
 ### Added
