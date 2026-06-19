@@ -20235,7 +20235,8 @@ async function demoteFixingOnCrash(label, deps = defaultDeps2) {
       // TY-273 #B4 / TY-282: the fixing attempt did not complete so the
       // timestamp is no longer meaningful and must not survive into the next
       // pre-fix stale check.
-      fixingStartedAt: null
+      fixingStartedAt: null,
+      currentIterationFindingCommentIds: []
     };
     let stateWriteSucceeded = false;
     try {
@@ -20274,7 +20275,11 @@ function createLockedStateUpdater(args) {
       const message = error2 instanceof Error ? error2.message : String(error2);
       args.warning(`[${args.label}] Hidden comment state conflict. ${message}`);
       const handler = options?.onConflict ?? args.onConflict;
-      await handler(detail);
+      try {
+        await handler(detail);
+      } catch (handlerError) {
+        args.warning(`[${args.label}] onConflict handler failed: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}. Continuing with conflict signal.`);
+      }
       return false;
     }
   };
@@ -21139,6 +21144,7 @@ var REVIEW_THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cur
         nodes{
           id
           isResolved
+          isOutdated
           comments(first:50){pageInfo{hasNextPage} nodes{databaseId fullDatabaseId}}
         }
       }
