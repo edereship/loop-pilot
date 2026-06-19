@@ -75,7 +75,7 @@ function makeDeps(
     validateRestartCommand: vi.fn().mockResolvedValue({ valid: false, handled: false }),
     executeRestartWithCodexReview: vi.fn().mockResolvedValue(undefined),
     handleRestartWithRepair: vi.fn().mockResolvedValue(null),
-    fetchUnresolvedCodexFindings: vi.fn().mockResolvedValue([]),
+    fetchUnresolvedCodexFindings: vi.fn().mockResolvedValue({ findings: [], latestOutdatedAt: null }),
     setSecret: vi.fn(),
     setOutput: (name: PreFixOutputName, value: string) => {
       outputs[name] = value;
@@ -2086,7 +2086,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue({ findings: sampleFindings, latestOutdatedAt: null });
       vi.mocked(deps.handleRestartWithRepair).mockResolvedValue({
         fixingState: {
           ...waitingState,
@@ -2139,7 +2139,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue([]);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue({ findings: [], latestOutdatedAt: null });
 
       await runPreFix(restartConfig, deps);
 
@@ -2181,7 +2181,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue({ findings: sampleFindings, latestOutdatedAt: null });
       vi.mocked(deps.handleRestartWithRepair).mockResolvedValue({
         fixingState: {
           ...stoppedState,
@@ -2227,7 +2227,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue({ findings: sampleFindings, latestOutdatedAt: null });
       vi.mocked(deps.handleRestartWithRepair).mockResolvedValue(null);
 
       await runPreFix(restartConfig, deps);
@@ -2270,7 +2270,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue({ findings: sampleFindings, latestOutdatedAt: null });
 
       await runPreFix(restartConfig, deps);
 
@@ -2339,7 +2339,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue({ findings: sampleFindings, latestOutdatedAt: null });
       vi.mocked(deps.handleRestartWithRepair).mockResolvedValue({
         fixingState: {
           ...stoppedState,
@@ -2392,7 +2392,7 @@ describe("runPreFix", () => {
           },
         },
       });
-      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue(sampleFindings);
+      vi.mocked(deps.fetchUnresolvedCodexFindings).mockResolvedValue({ findings: sampleFindings, latestOutdatedAt: null });
 
       await runPreFix(cappedConfig, deps);
 

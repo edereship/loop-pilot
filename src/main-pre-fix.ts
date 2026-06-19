@@ -349,7 +349,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
       // Not a restart command — fall through to normal processing.
     } else {
       // ES-413: check for unresolved Codex findings before choosing Case A or B.
-      const unresolvedFindings = await deps.fetchUnresolvedCodexFindings(
+      const unresolvedResult = await deps.fetchUnresolvedCodexFindings(
         {
           owner: config.repoOwner,
           repo: config.repoName,
@@ -360,6 +360,7 @@ export async function runPreFix(config: Config, deps: PreFixDeps = defaultDeps):
         },
         { warning: deps.warning },
       );
+      const unresolvedFindings = unresolvedResult.findings;
 
       if (unresolvedFindings.length > 0) {
         const capState = validationResult.validation.preflight.nextState;

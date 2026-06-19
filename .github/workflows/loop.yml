@@ -147,7 +147,7 @@ jobs:
               contains(github.event.comment.body, 'Codex rate limit') ||
               contains(github.event.comment.body, 'Codex limit') ||
               contains(github.event.comment.body, 'Codex usage cap') ||
-              contains(github.event.comment.body, 'Codex is currently rate limited')
+              contains(github.event.comment.body, 'Codex is rate limited')
             )
           ) ||
           (
@@ -165,7 +165,7 @@ jobs:
               contains(github.event.review.body, 'Codex rate limit') ||
               contains(github.event.review.body, 'Codex limit') ||
               contains(github.event.review.body, 'Codex usage cap') ||
-              contains(github.event.review.body, 'Codex is currently rate limited')
+              contains(github.event.review.body, 'Codex is rate limited')
             )
           )
         )

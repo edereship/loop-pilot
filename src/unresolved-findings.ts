@@ -86,6 +86,7 @@ interface ParsedPage {
   skippedNonCodex: number;
   skippedResolved: number;
   skippedOutdated: number;
+  latestOutdatedAt: string | null;
   skippedUnparseable: number;
   skippedBelowThreshold: number;
   skippedMalformedId: number;
@@ -109,6 +110,7 @@ function parsePage(
       skippedNonCodex: 0,
       skippedResolved: 0,
       skippedOutdated: 0,
+      latestOutdatedAt: null,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -137,6 +139,7 @@ function parsePage(
       skippedNonCodex: 0,
       skippedResolved: 0,
       skippedOutdated: 0,
+      latestOutdatedAt: null,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -150,6 +153,7 @@ function parsePage(
   let skippedNonCodex = 0;
   let skippedResolved = 0;
   let skippedOutdated = 0;
+  let latestOutdatedAt: string | null = null;
   let skippedUnparseable = 0;
   let skippedBelowThreshold = 0;
   let skippedMalformedId = 0;
@@ -172,6 +176,14 @@ function parsePage(
     }
     if (node.isOutdated === true) {
       skippedOutdated += 1;
+      const outdatedComment = Array.isArray(node.comments?.nodes)
+        ? node.comments!.nodes[0]
+        : undefined;
+      if (outdatedComment && typeof outdatedComment.createdAt === "string") {
+        if (latestOutdatedAt === null || outdatedComment.createdAt > latestOutdatedAt) {
+          latestOutdatedAt = outdatedComment.createdAt;
+        }
+      }
       continue;
     }
     const firstComment = Array.isArray(node.comments?.nodes)
@@ -236,6 +248,7 @@ function parsePage(
     skippedNonCodex,
     skippedResolved,
     skippedOutdated,
+    latestOutdatedAt,
     skippedUnparseable,
     skippedBelowThreshold,
     skippedMalformedId,
@@ -249,13 +262,19 @@ function parsePage(
  * severity threshold. Pagination follows the same strategy as
  * `review-thread-resolver.ts` (100 threads/page, max 50 pages).
  */
+export interface FetchUnresolvedCodexFindingsResult {
+  findings: Finding[];
+  latestOutdatedAt: string | null;
+}
+
 export async function fetchUnresolvedCodexFindings(
   params: FetchUnresolvedCodexFindingsParams,
   deps: FetchUnresolvedCodexFindingsDeps = { warning: () => {} },
-): Promise<Finding[]> {
+): Promise<FetchUnresolvedCodexFindingsResult> {
   const all: Finding[] = [];
   let cursor: string | null = null;
   let totalSkippedOutdated = 0;
+  let overallLatestOutdatedAt: string | null = null;
   let totalSkippedUnparseable = 0;
   let totalSkippedBelowThreshold = 0;
   let totalSkippedMalformedId = 0;
@@ -310,6 +329,10 @@ export async function fetchUnresolvedCodexFindings(
 
     all.push(...pageResult.findings);
     totalSkippedOutdated += pageResult.skippedOutdated;
+    if (pageResult.latestOutdatedAt !== null &&
+        (overallLatestOutdatedAt === null || pageResult.latestOutdatedAt > overallLatestOutdatedAt)) {
+      overallLatestOutdatedAt = pageResult.latestOutdatedAt;
+    }
     totalSkippedUnparseable += pageResult.skippedUnparseable;
     totalSkippedBelowThreshold += pageResult.skippedBelowThreshold;
     totalSkippedMalformedId += pageResult.skippedMalformedId;
@@ -358,5 +381,5 @@ export async function fetchUnresolvedCodexFindings(
     );
   }
 
-  return all;
+  return { findings: all, latestOutdatedAt: overallLatestOutdatedAt };
 }

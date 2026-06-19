@@ -21993,6 +21993,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       skippedNonCodex: 0,
       skippedResolved: 0,
       skippedOutdated: 0,
+      latestOutdatedAt: null,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -22010,6 +22011,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
       skippedNonCodex: 0,
       skippedResolved: 0,
       skippedOutdated: 0,
+      latestOutdatedAt: null,
       skippedUnparseable: 0,
       skippedBelowThreshold: 0,
       skippedMalformedId: 0,
@@ -22022,6 +22024,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
   let skippedNonCodex = 0;
   let skippedResolved = 0;
   let skippedOutdated = 0;
+  let latestOutdatedAt = null;
   let skippedUnparseable = 0;
   let skippedBelowThreshold = 0;
   let skippedMalformedId = 0;
@@ -22038,6 +22041,12 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
     }
     if (node.isOutdated === true) {
       skippedOutdated += 1;
+      const outdatedComment = Array.isArray(node.comments?.nodes) ? node.comments.nodes[0] : void 0;
+      if (outdatedComment && typeof outdatedComment.createdAt === "string") {
+        if (latestOutdatedAt === null || outdatedComment.createdAt > latestOutdatedAt) {
+          latestOutdatedAt = outdatedComment.createdAt;
+        }
+      }
       continue;
     }
     const firstComment = Array.isArray(node.comments?.nodes) ? node.comments.nodes[0] : void 0;
@@ -22081,6 +22090,7 @@ function parsePage(stdout, codexBotLogin, severityThreshold) {
     skippedNonCodex,
     skippedResolved,
     skippedOutdated,
+    latestOutdatedAt,
     skippedUnparseable,
     skippedBelowThreshold,
     skippedMalformedId,
@@ -22092,6 +22102,7 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
   const all = [];
   let cursor = null;
   let totalSkippedOutdated = 0;
+  let overallLatestOutdatedAt = null;
   let totalSkippedUnparseable = 0;
   let totalSkippedBelowThreshold = 0;
   let totalSkippedMalformedId = 0;
@@ -22124,6 +22135,9 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
     }
     all.push(...pageResult.findings);
     totalSkippedOutdated += pageResult.skippedOutdated;
+    if (pageResult.latestOutdatedAt !== null && (overallLatestOutdatedAt === null || pageResult.latestOutdatedAt > overallLatestOutdatedAt)) {
+      overallLatestOutdatedAt = pageResult.latestOutdatedAt;
+    }
     totalSkippedUnparseable += pageResult.skippedUnparseable;
     totalSkippedBelowThreshold += pageResult.skippedBelowThreshold;
     totalSkippedMalformedId += pageResult.skippedMalformedId;
@@ -22150,7 +22164,7 @@ async function fetchUnresolvedCodexFindings(params, deps = { warning: () => {
   if (totalSkippedMalformedNode > 0) {
     deps.warning(`[unresolved-findings] Dropped ${totalSkippedMalformedNode} null/malformed reviewThreads node(s); GitHub returned entries the token cannot resolve.`);
   }
-  return all;
+  return { findings: all, latestOutdatedAt: overallLatestOutdatedAt };
 }
 
 // dist/scope-checker.js
@@ -22374,7 +22388,7 @@ async function runPreFix(config, deps = defaultDeps3) {
       if (validationResult.handled)
         return;
     } else {
-      const unresolvedFindings = await deps.fetchUnresolvedCodexFindings({
+      const unresolvedResult = await deps.fetchUnresolvedCodexFindings({
         owner: config.repoOwner,
         repo: config.repoName,
         prNumber: config.prNumber,
@@ -22382,6 +22396,7 @@ async function runPreFix(config, deps = defaultDeps3) {
         severityThreshold: config.severityThreshold,
         token: config.githubToken
       }, { warning: deps.warning });
+      const unresolvedFindings = unresolvedResult.findings;
       if (unresolvedFindings.length > 0) {
         const capState = validationResult.validation.preflight.nextState;
         if (capState.iterationCount >= config.maxReviewIterations) {

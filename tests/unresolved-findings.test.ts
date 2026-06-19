@@ -84,7 +84,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(2);
     expect(findings[0]).toMatchObject({
@@ -111,7 +111,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].commentId).toBe(202);
@@ -125,7 +125,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].commentId).toBe(302);
@@ -142,7 +142,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings({
+    const { findings } = await fetchUnresolvedCodexFindings({
       ...defaultParams,
       codexBotLogin: "chatgpt-codex-connector[bot]",
     });
@@ -159,7 +159,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].commentId).toBe(401);
@@ -174,7 +174,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams, {
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams, {
       warning: warn,
     });
 
@@ -200,7 +200,7 @@ describe("fetchUnresolvedCodexFindings", () => {
         ]),
       );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(2);
     expect(findings[0].commentId).toBe(601);
@@ -211,7 +211,7 @@ describe("fetchUnresolvedCodexFindings", () => {
   it("returns empty array when no threads exist", async () => {
     mockGhApi.mockResolvedValueOnce(makeGraphQLResponse([]));
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(0);
   });
@@ -243,7 +243,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams, {
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams, {
       warning: warn,
     });
 
@@ -265,7 +265,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].commentId).toBe(9007199254740000);
@@ -282,7 +282,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].commentId).toBe(222);
@@ -300,7 +300,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams, {
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams, {
       warning: warn,
     });
 
@@ -321,7 +321,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].createdAt).toBe("2026-05-12T03:04:05Z");
@@ -335,7 +335,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].commentId).toBe(902);
@@ -351,7 +351,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams, {
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams, {
       warning: warn,
     });
 
@@ -359,6 +359,34 @@ describe("fetchUnresolvedCodexFindings", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("outdated"),
     );
+  });
+
+  it("returns latestOutdatedAt from skipped outdated threads", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({ databaseId: 1201, body: "P1 Older outdated", isOutdated: true, createdAt: "2026-05-01T00:00:00Z" }),
+        makeThread({ databaseId: 1202, body: "P1 Newer outdated", isOutdated: true, createdAt: "2026-05-05T00:00:00Z" }),
+        makeThread({ databaseId: 1203, body: "P1 Current", isOutdated: false }),
+      ]),
+    );
+
+    const result = await fetchUnresolvedCodexFindings(defaultParams);
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.latestOutdatedAt).toBe("2026-05-05T00:00:00Z");
+  });
+
+  it("returns null latestOutdatedAt when no outdated threads exist", async () => {
+    mockGhApi.mockResolvedValueOnce(
+      makeGraphQLResponse([
+        makeThread({ databaseId: 1301, body: "P1 Current" }),
+      ]),
+    );
+
+    const result = await fetchUnresolvedCodexFindings(defaultParams);
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.latestOutdatedAt).toBeNull();
   });
 
   it("skips outdated threads even when isResolved is false", async () => {
@@ -373,7 +401,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(0);
   });
@@ -385,7 +413,7 @@ describe("fetchUnresolvedCodexFindings", () => {
       ]),
     );
 
-    const findings = await fetchUnresolvedCodexFindings(defaultParams);
+    const { findings } = await fetchUnresolvedCodexFindings(defaultParams);
 
     expect(findings).toHaveLength(1);
     expect(findings[0].line).toBeNull();
