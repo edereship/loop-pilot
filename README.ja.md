@@ -156,7 +156,7 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>
 | `CODEX_ACK_TIMEOUT_SECONDS` | `90` | Codex の `@codex review` 承認（👀）待ち時間を調整したい。`0` で ACK ウォッチドッグを無効化。 |
 | `CODEX_ACK_MAX_REPOSTS` | `2` | Codex が応答しないときに `@codex review` を再依頼する回数を調整したい（超過で `codex_request_failed` 停止）。 |
 | `CLAUDE_CODE_MAX_TURNS` | `40` | 1 回の修正あたりの最大エージェントターン数を調整したい（claude-code-action の `--max-turns`）。 |
-| `LOOPPILOT_SHOW_FULL_OUTPUT` | `true` | Claude Code のフルセッションログを Actions 出力に表示しない場合は `'false'` に設定。デフォルト true は認証・ランタイムエラーの可視化のため（ES-428）。公開リポではログが公開されるため、機密性の高いリポでは `'false'` を推奨。 |
+| `LOOPPILOT_SHOW_FULL_OUTPUT` | `false` | Claude Code のフルセッションログを Actions 出力に表示する場合は `'true'` に設定。認証・ランタイムエラーのデバッグに有用。公開リポではログが公開される点に注意（ES-429）。 |
 
 すべての input は [loop/action.yml](loop/action.yml) と [init/action.yml](init/action.yml) にまとまっています。
 

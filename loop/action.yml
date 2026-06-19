@@ -158,9 +158,9 @@ inputs:
     required: false
     default: ""
   show-full-output:
-    description: "Forward to claude-code-action's show_full_output. When true, the full Claude Code session log is printed to the Actions run log. Defaults to true (ES-428)."
+    description: "Forward to claude-code-action's show_full_output. When 'true', the full Claude Code session log is printed to the Actions run log. Defaults to false; set to 'true' when debugging (ES-429)."
     required: false
-    default: "true"
+    default: "false"
 
 runs:
   using: "composite"
