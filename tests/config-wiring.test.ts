@@ -62,7 +62,7 @@ describe("config-wiring: no dead config field (L2 loaded → L1 consumed)", () =
 
 describe("config-wiring: composite forwards every operator input (TY-335 / TY-337 / TY-350)", () => {
   it("each input loop.yml passes to loop@v1 is declared AND referenced by loop/action.yml", () => {
-    const stepIdx = loopReusable.indexOf("uses: team-yubune/loop-pilot/loop@v1");
+    const stepIdx = loopReusable.indexOf("uses: edereship/loop-pilot/loop@v1");
     expect(stepIdx).toBeGreaterThan(-1);
     const after = loopReusable.slice(stepIdx);
     const withIdx = after.indexOf("\n        with:");

@@ -1,5 +1,5 @@
 /**
- * Verify that every reference to a `team-yubune/loop-pilot/*` action inside a
+ * Verify that every reference to a `edereship/loop-pilot/*` action inside a
  * workflow / composite-action YAML pins the SAME major as the release tag.
  *
  * TY-342: each release re-points the moving `v1` tag, so the composite action's
@@ -7,8 +7,8 @@
  * being released. A drift here ships an action that loads a sibling sub-action
  * from a different (possibly nonexistent) tag, silently breaking adopters.
  */
-const OWNER = "team-yubune/loop-pilot";
-// Matches `uses: team-yubune/loop-pilot[/subpath]@<ref>` (quotes optional).
+const OWNER = "edereship/loop-pilot";
+// Matches `uses: edereship/loop-pilot[/subpath]@<ref>` (quotes optional).
 const USES_RE = new RegExp(
   String.raw`uses:\s*["']?(${OWNER}(?:/[^@"'\s]+)?)@([^\s"']+)`,
   "g",

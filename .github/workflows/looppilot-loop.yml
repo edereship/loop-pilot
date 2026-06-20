@@ -3,7 +3,7 @@
 # This repo dogfoods LoopPilot through the same reusable workflow external
 # adopters consume. Because the caller lives in the SAME repo, it references the
 # reusable workflow by local path and forwards secrets with `secrets: inherit`.
-# (This means dogfooding exercises the published `team-yubune/loop-pilot/loop@v1`
+# (This means dogfooding exercises the published `edereship/loop-pilot/loop@v1`
 # composite action — the realistic adopter path. Source/action regressions are
 # gated by the `check` CI job, not by the live loop.)
 #

@@ -169,11 +169,11 @@ runs:
       id: pre
       # External-consumption fix: in a composite action a `./` local ref resolves
       # against the CONSUMER's GITHUB_WORKSPACE, not this action's own checkout, so
-      # `./loop/pre-fix` breaks for adopters using `team-yubune/loop-pilot/loop@v1`
+      # `./loop/pre-fix` breaks for adopters using `edereship/loop-pilot/loop@v1`
       # ("Can't find action.yml under <consumer>/loop/pre-fix"). Pin to the
       # published path@ref so the sub-action always loads from THIS repo. Keep the
       # tag in sync with releases (currently v1). Do NOT revert to `./loop/pre-fix`.
-      uses: team-yubune/loop-pilot/loop/pre-fix@v1
+      uses: edereship/loop-pilot/loop/pre-fix@v1
       with:
         github-token: ${{ inputs.github-token }}
         codex-review-request-token: ${{ inputs.codex-review-request-token }}
@@ -341,7 +341,7 @@ runs:
       if: always() && steps.pre.outputs.should_run == 'true'
       # See the pre-fix step above: pinned path@ref so adopters can consume this
       # composite action (a `./` local ref would resolve to the consumer repo).
-      uses: team-yubune/loop-pilot/loop/post-fix@v1
+      uses: edereship/loop-pilot/loop/post-fix@v1
       with:
         github-token: ${{ inputs.github-token }}
         codex-review-request-token: ${{ inputs.codex-review-request-token }}

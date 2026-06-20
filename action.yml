@@ -2,7 +2,7 @@
 #
 # This is NOT how you run LoopPilot. LoopPilot is event-driven: a PR label (or an
 # `@codex review` comment) drives the reusable workflows
-#   team-yubune/loop-pilot/.github/workflows/{init,loop}.yml@v1
+#   edereship/loop-pilot/.github/workflows/{init,loop}.yml@v1
 # which the `gh looppilot` CLI wires up for you. There is no useful "add this as a
 # step in a job" surface, so this root action exists purely so LoopPilot is
 # listable + discoverable on the GitHub Marketplace (Marketplace lists Actions and
@@ -13,8 +13,8 @@
 # guard locks it that way (no `exit 1`, no sub-action / `./` refs).
 #
 # It does NOT affect the canonical subpath actions: GitHub resolves
-#   team-yubune/loop-pilot/loop@v1  -> loop/action.yml
-#   team-yubune/loop-pilot/init@v1  -> init/action.yml
+#   edereship/loop-pilot/loop@v1  -> loop/action.yml
+#   edereship/loop-pilot/init@v1  -> init/action.yml
 # directly from those subdirectories and never consults this root file, so those
 # refs keep working unchanged.
 #
@@ -29,7 +29,7 @@
 # the run: banner, not here. The test guards the 125-char limit.
 name: "LoopPilot PR Review-Fix Loop"
 description: "AI review-fix loop for GitHub PRs: Codex reviews, Claude fixes, repeat. Install via the gh looppilot CLI."
-author: "team-yubune"
+author: "edereship"
 branding:
   icon: "refresh-cw"
   color: "blue"
@@ -50,15 +50,15 @@ runs:
         `@codex review` comment, and runs as GitHub Actions REUSABLE
         WORKFLOWS:
 
-            team-yubune/loop-pilot/.github/workflows/init.yml@v1
-            team-yubune/loop-pilot/.github/workflows/loop.yml@v1
+            edereship/loop-pilot/.github/workflows/init.yml@v1
+            edereship/loop-pilot/.github/workflows/loop.yml@v1
 
         It is NOT something you add as a step inside a job, so running this
         root action in a job does nothing useful.
 
         ---> Recommended setup (one command):
 
-            gh extension install team-yubune/gh-looppilot
+            gh extension install edereship/gh-looppilot
             cd your-repo
             gh looppilot init
             gh looppilot doctor
@@ -67,6 +67,6 @@ runs:
         creates the gate label, and prints the manual secret / Codex steps.
 
         Docs / manual install:
-            https://github.com/team-yubune/loop-pilot#readme
+            https://github.com/edereship/loop-pilot#readme
         ============================================================
         EOF

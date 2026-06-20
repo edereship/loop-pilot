@@ -21,7 +21,7 @@ const baseConfig: Config = {
   anthropicApiKey: "anthropic-key",
   claudeCodeOauthToken: "",
   githubToken: "github-token",
-  repoOwner: "team-yubune",
+  repoOwner: "edereship",
   repoName: "loop-pilot",
   prNumber: 99,
   triggerCommentId: 1234,
@@ -89,7 +89,7 @@ function makeDeps(
     checkoutBranch: vi.fn(),
     fetchPrHeadRepoFullName: vi
       .fn()
-      .mockResolvedValue("team-yubune/loop-pilot"),
+      .mockResolvedValue("edereship/loop-pilot"),
     outputs,
   };
 }
@@ -134,7 +134,7 @@ describe("runPreFix", () => {
     });
     deps.fetchPrHeadRepoFullName = vi
       .fn()
-      .mockResolvedValue("Team-Yubune/Loop-Pilot");
+      .mockResolvedValue("Edereship/Loop-Pilot");
 
     await runPreFix(baseConfig, deps);
 
@@ -211,7 +211,7 @@ describe("runPreFix", () => {
     // applyRestartToState rejects. Switched to workflow_crashed so the
     // operator can /restart-review without manual hidden-comment surgery.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -261,7 +261,7 @@ describe("runPreFix", () => {
 
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -333,7 +333,7 @@ describe("runPreFix", () => {
     await runPreFix(baseConfig, deps);
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -352,7 +352,7 @@ describe("runPreFix", () => {
     // the multi-minute claude-code-action run.
     expect(deps.postFixingStartComment).toHaveBeenCalledTimes(1);
     expect(deps.postFixingStartComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       99,
       2,
@@ -448,7 +448,7 @@ describe("runPreFix", () => {
 
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "done", stopReason: "no_findings" }),
@@ -500,7 +500,7 @@ describe("runPreFix", () => {
 
     expect(deps.postCompletionComment).toHaveBeenCalled();
     expect(deps.mergeIfChecksPass).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       99,
       "github-token",
@@ -541,7 +541,7 @@ describe("runPreFix", () => {
 
     // State transition is unchanged — still done/no_findings.
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "done", stopReason: "no_findings" }),
@@ -584,7 +584,7 @@ describe("runPreFix", () => {
 
     expect(deps.postAutoMergeSkipNotification).toHaveBeenCalledTimes(1);
     const notifyCall = vi.mocked(deps.postAutoMergeSkipNotification).mock.calls[0]!;
-    expect(notifyCall[0]).toBe("team-yubune");
+    expect(notifyCall[0]).toBe("edereship");
     expect(notifyCall[1]).toBe("loop-pilot");
     expect(notifyCall[2]).toBe(99);
     expect(notifyCall[3]).toEqual({
@@ -594,7 +594,7 @@ describe("runPreFix", () => {
     // runUrl must point at an Actions URL so the operator can jump straight
     // from the PR notification to the workflow log without grepping.
     expect(notifyCall[4]).toMatch(
-      /^https:\/\/[^/]+\/team-yubune\/loop-pilot\/actions/,
+      /^https:\/\/[^/]+\/edereship\/loop-pilot\/actions/,
     );
     expect(notifyCall[5]).toBe("github-token");
   });
@@ -626,7 +626,7 @@ describe("runPreFix", () => {
 
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "max_iterations" }),
@@ -781,7 +781,7 @@ describe("runPreFix", () => {
       expect(deps.outputs.should_run).toBe("true");
       expect(deps.outputs.pr_head_ref).toBe(goodRef);
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({ status: "fixing" }),
@@ -838,7 +838,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.model).toBe("claude-opus-4-6");
 
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "fixing", iterationCount: 2 }),
@@ -1087,7 +1087,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.model).toBe("claude-opus-4-6");
     expect(deps.postStopComment).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -1146,7 +1146,7 @@ describe("runPreFix", () => {
 
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "loop_detected" }),
@@ -1197,7 +1197,7 @@ describe("runPreFix", () => {
 
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({ status: "stopped", stopReason: "loop_detected" }),
@@ -1336,7 +1336,7 @@ describe("runPreFix", () => {
     expect(deps.outputs.should_run).toBe("false");
     expect(deps.fetchReviewComments).not.toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -1347,7 +1347,7 @@ describe("runPreFix", () => {
       expect.any(Object),
     );
     expect(deps.postStopComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       99,
       "codex_usage_limit",
@@ -1383,7 +1383,7 @@ describe("runPreFix", () => {
     // no_findings here because no mock comments are supplied).
     expect(deps.fetchReviewComments).toHaveBeenCalled();
     expect(deps.updateStateComment).toHaveBeenCalledWith(
-      "team-yubune",
+      "edereship",
       "loop-pilot",
       100,
       expect.objectContaining({
@@ -1519,7 +1519,7 @@ describe("runPreFix", () => {
       await runPreFix(baseConfig, deps);
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1566,7 +1566,7 @@ describe("runPreFix", () => {
       await runPreFix(baseConfig, deps);
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1624,7 +1624,7 @@ describe("runPreFix", () => {
       await runPreFix(baseConfig, deps);
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1665,7 +1665,7 @@ describe("runPreFix", () => {
       );
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1821,7 +1821,7 @@ describe("runPreFix", () => {
       );
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1883,7 +1883,7 @@ describe("runPreFix", () => {
       );
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1933,7 +1933,7 @@ describe("runPreFix", () => {
       );
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -1973,7 +1973,7 @@ describe("runPreFix", () => {
       );
 
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -2027,7 +2027,7 @@ describe("runPreFix", () => {
       // at 888 — source must remain null (no synthetic "comment" / "review"
       // injected) so the id-only fallback dedup behavior is preserved.
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -2277,7 +2277,7 @@ describe("runPreFix", () => {
       expect(deps.outputs.should_run).toBe("false");
       expect(deps.handleRestartWithRepair).not.toHaveBeenCalled();
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -2289,7 +2289,7 @@ describe("runPreFix", () => {
         expect.any(Object),
       );
       expect(deps.postStopComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         expect.anything(),
         "loop_detected",
@@ -2400,7 +2400,7 @@ describe("runPreFix", () => {
       expect(deps.executeRestartWithCodexReview).not.toHaveBeenCalled();
       expect(deps.handleRestartWithRepair).not.toHaveBeenCalled();
       expect(deps.updateStateComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         100,
         expect.objectContaining({
@@ -2412,7 +2412,7 @@ describe("runPreFix", () => {
         expect.any(Object),
       );
       expect(deps.postStopComment).toHaveBeenCalledWith(
-        "team-yubune",
+        "edereship",
         "loop-pilot",
         expect.anything(),
         "max_iterations",

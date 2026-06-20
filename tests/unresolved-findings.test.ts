@@ -63,7 +63,7 @@ function makeThread(opts: {
 }
 
 const defaultParams = {
-  owner: "team-yubune",
+  owner: "edereship",
   repo: "loop-pilot",
   prNumber: 99,
   codexBotLogin: "codex-bot",

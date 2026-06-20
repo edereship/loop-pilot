@@ -20,7 +20,7 @@ describe("Codex review request token config", () => {
       delete process.env[key];
     }
 
-    process.env.GITHUB_REPOSITORY = "team-yubune/loop-pilot";
+    process.env.GITHUB_REPOSITORY = "edereship/loop-pilot";
     process.env.GITHUB_TOKEN = "github-token";
     process.env.PR_NUMBER = "123";
   });

@@ -9,7 +9,7 @@
 #         contents: read
 #         pull-requests: write
 #         issues: write
-#       uses: team-yubune/loop-pilot/.github/workflows/init.yml@v1
+#       uses: edereship/loop-pilot/.github/workflows/init.yml@v1
 #       secrets:
 #         CODEX_REVIEW_REQUEST_TOKEN: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
 #
@@ -18,7 +18,7 @@
 # fail-safe are centralized here. `vars.*` and the `github` context resolve to
 # the CALLER repository, so the operator's Repository variables keep working.
 #
-# Sub-action ref MUST be `team-yubune/loop-pilot/init@v1` (NOT `./init`): a `./`
+# Sub-action ref MUST be `edereship/loop-pilot/init@v1` (NOT `./init`): a `./`
 # ref inside a reusable workflow resolves against the CALLER's checkout.
 name: LoopPilot Init (reusable)
 
@@ -76,7 +76,7 @@ jobs:
       - name: Run init
         # Pinned path@ref (NOT `./init`): inside a reusable workflow a `./` ref
         # resolves against the caller's checkout. Kept in sync by release.yml.
-        uses: team-yubune/loop-pilot/init@v1
+        uses: edereship/loop-pilot/init@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           codex-review-request-token: ${{ secrets.CODEX_REVIEW_REQUEST_TOKEN }}
