@@ -10,6 +10,11 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-06-20
+
+### Changed
+- Rename all org references from `team-yubune` to `edereship` (ES-386).
+
 ## [1.10.0] - 2026-06-20
 
 ### Changed
