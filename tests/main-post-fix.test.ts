@@ -44,6 +44,7 @@ const baseConfig: Config = {
   autoReviewRestartRoles: "author,write,maintain,admin",
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-6",
+  autoRetryEscalateMaxTurns: false,
   autoMergeOnClean: false,
   autoMergePollSeconds: 15,
   autoMergeTimeoutMinutes: 10,
@@ -108,6 +109,7 @@ function makeDeps(
     runBuildCommand: vi.fn().mockResolvedValue({ success: true, output: "" }),
     postClaudeCodeActionFixSummary: vi.fn().mockResolvedValue(11),
     postCodexReviewRequest: vi.fn().mockResolvedValue(22),
+    postComment: vi.fn().mockResolvedValue(55),
     ensureCodexAck: vi.fn().mockResolvedValue({
       acked: true,
       reason: "eyes",
@@ -1290,6 +1292,221 @@ describe("runPostFix", () => {
       "github-token",
       expect.any(Object),
     );
+  });
+
+  describe("TY-370: max_turns_exceeded one-shot auto-retry at the escalated tier", () => {
+    const maxTurnsInputs = {
+      ...baseInputs,
+      actionOutcome: "failure",
+      actionExecutionFile: "/tmp/execution.json",
+    };
+    const maxTurnsReadResult = (state: ReviewState): ReadStateResult => ({
+      found: true,
+      corrupted: false,
+      commentId: 100,
+      commentUpdatedAt: "2026-05-14T12:00:00Z",
+      state,
+    });
+    const baseTierState = () =>
+      makeState({
+        findingsHashHistory: [
+          { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+          { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "base" },
+        ],
+      });
+
+    it("resumes at waiting_codex (stopReason preserved) and re-posts @codex review when enabled and the failing iteration ran at the base tier", async () => {
+      const deps = makeDeps(maxTurnsReadResult(baseTierState()), {
+        readActionExecutionFile: () => "Error: Reached max_turns limit",
+      });
+
+      await runPostFix(
+        { ...baseConfig, autoRetryEscalateMaxTurns: true },
+        deps,
+        maxTurnsInputs,
+      );
+
+      // First write returns to waiting_codex while PRESERVING max_turns_exceeded
+      // so the next pre-fix's selectModel escalates the tier.
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "edereship",
+        "loop-pilot",
+        100,
+        expect.objectContaining({
+          status: "waiting_codex",
+          stopReason: "max_turns_exceeded",
+          // failureExit-style rollback so the retry is a fresh iteration.
+          iterationCount: 1,
+        }),
+        "github-token",
+        expect.any(Object),
+      );
+      // It actually re-requested Codex review and never recorded a stop.
+      expect(deps.postCodexReviewRequest).toHaveBeenCalledTimes(1);
+      expect(deps.postStopComment).not.toHaveBeenCalled();
+      // An audit comment explains the unprompted @codex review.
+      expect(deps.postComment).toHaveBeenCalledTimes(1);
+      const auditBody = (deps.postComment as ReturnType<typeof vi.fn>).mock
+        .calls[0][3] as string;
+      expect(auditBody).toContain("auto-retry");
+    });
+
+    it("does NOT auto-retry when the failing iteration already ran at the escalated tier (one-shot guard)", async () => {
+      const deps = makeDeps(
+        maxTurnsReadResult(
+          makeState({
+            findingsHashHistory: [
+              { iteration: 1, hash: "aaaaaaaaaaaaaaaa", modelTier: "base" },
+              { iteration: 2, hash: "bbbbbbbbbbbbbbbb", modelTier: "escalated" },
+            ],
+          }),
+        ),
+        { readActionExecutionFile: () => "Error: Reached max_turns limit" },
+      );
+
+      await runPostFix(
+        { ...baseConfig, autoRetryEscalateMaxTurns: true },
+        deps,
+        maxTurnsInputs,
+      );
+
+      expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "edereship",
+        "loop-pilot",
+        100,
+        expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("does NOT auto-retry when the toggle is disabled (default behavior)", async () => {
+      const deps = makeDeps(maxTurnsReadResult(baseTierState()), {
+        readActionExecutionFile: () => "Error: Reached max_turns limit",
+      });
+
+      await runPostFix(baseConfig, deps, maxTurnsInputs);
+
+      expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "edereship",
+        "loop-pilot",
+        100,
+        expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("does NOT auto-retry when BASE and ESCALATED models are identical (no higher tier)", async () => {
+      const deps = makeDeps(maxTurnsReadResult(baseTierState()), {
+        readActionExecutionFile: () => "Error: Reached max_turns limit",
+      });
+
+      await runPostFix(
+        {
+          ...baseConfig,
+          autoRetryEscalateMaxTurns: true,
+          claudeCodeModelBase: "claude-opus-4-6",
+          claudeCodeModelEscalated: "claude-opus-4-6",
+        },
+        deps,
+        maxTurnsInputs,
+      );
+
+      expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "edereship",
+        "loop-pilot",
+        100,
+        expect.objectContaining({ status: "stopped", stopReason: "max_turns_exceeded" }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("does NOT auto-retry a non-max_turns failure even when enabled", async () => {
+      // A generic action_failure (execution file absent) must still stop.
+      const deps = makeDeps(maxTurnsReadResult(baseTierState()));
+
+      await runPostFix(
+        { ...baseConfig, autoRetryEscalateMaxTurns: true },
+        deps,
+        { ...baseInputs, actionOutcome: "failure" },
+      );
+
+      expect(deps.postCodexReviewRequest).not.toHaveBeenCalled();
+      expect(deps.updateStateComment).toHaveBeenCalledWith(
+        "edereship",
+        "loop-pilot",
+        100,
+        expect.objectContaining({ status: "stopped", stopReason: "action_failure" }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("downgrades to stopped/codex_request_failed when the auto-retry @codex review post fails", async () => {
+      const deps = makeDeps(maxTurnsReadResult(baseTierState()), {
+        readActionExecutionFile: () => "Error: Reached max_turns limit",
+        postCodexReviewRequest: vi.fn().mockRejectedValue(new Error("network down")),
+      });
+
+      await runPostFix(
+        { ...baseConfig, autoRetryEscalateMaxTurns: true },
+        deps,
+        maxTurnsInputs,
+      );
+
+      expect(deps.updateStateComment).toHaveBeenLastCalledWith(
+        "edereship",
+        "loop-pilot",
+        100,
+        expect.objectContaining({ status: "stopped", stopReason: "codex_request_failed" }),
+        "github-token",
+        expect.any(Object),
+      );
+      expect(deps.postStopComment).toHaveBeenCalledWith(
+        "edereship",
+        "loop-pilot",
+        99,
+        "codex_request_failed",
+        expect.anything(),
+        expect.anything(),
+        expect.stringContaining("max_turns_exceeded"),
+        "github-token",
+        expect.any(Object),
+      );
+    });
+
+    it("downgrades to stopped/codex_request_failed when Codex never ACKs the auto-retry", async () => {
+      const deps = makeDeps(maxTurnsReadResult(baseTierState()), {
+        readActionExecutionFile: () => "Error: Reached max_turns limit",
+        ensureCodexAck: vi.fn().mockResolvedValue({
+          acked: false,
+          reason: "timeout",
+          reposts: 2,
+          lastCommentId: 22,
+        }),
+      });
+
+      await runPostFix(
+        { ...baseConfig, autoRetryEscalateMaxTurns: true },
+        deps,
+        maxTurnsInputs,
+      );
+
+      expect(deps.postCodexReviewRequest).toHaveBeenCalledTimes(1);
+      expect(deps.updateStateComment).toHaveBeenLastCalledWith(
+        "edereship",
+        "loop-pilot",
+        100,
+        expect.objectContaining({ status: "stopped", stopReason: "codex_request_failed" }),
+        "github-token",
+        expect.any(Object),
+      );
+    });
   });
 
   it("stops with action_no_op when claude-code-action made no changes (TY-284)", async () => {

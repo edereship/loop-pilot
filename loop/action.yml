@@ -121,6 +121,10 @@ inputs:
     description: "Value forwarded to claude-code-action's --max-turns argument."
     required: false
     default: "40"
+  auto-retry-escalate:
+    description: "TY-370: when 'true', a max_turns_exceeded stop whose failing iteration ran at the base tier auto-retries once at the escalated (Opus) tier — post-fix re-posts @codex review itself instead of waiting for /restart-review. One-shot (only base→escalated; if the escalated tier also runs out of turns the loop stops). Default 'false' keeps the established stop-and-wait behavior."
+    required: false
+    default: "false"
   github-repository:
     description: "Repository in owner/name format (auto-detected in GitHub Actions)"
     required: false
@@ -372,3 +376,5 @@ runs:
         codex-ack-timeout-seconds: ${{ inputs.codex-ack-timeout-seconds }}
         codex-ack-poll-interval-seconds: ${{ inputs.codex-ack-poll-interval-seconds }}
         codex-ack-max-reposts: ${{ inputs.codex-ack-max-reposts }}
+        # TY-370: opt-in one-shot escalated-tier retry on max_turns_exceeded.
+        auto-retry-escalate: ${{ inputs.auto-retry-escalate }}

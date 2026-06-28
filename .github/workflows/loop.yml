@@ -316,6 +316,8 @@ jobs:
           claude-code-model-base: ${{ vars.CLAUDE_CODE_MODEL_BASE || 'claude-sonnet-4-6' }}
           claude-code-model-escalated: ${{ vars.CLAUDE_CODE_MODEL_ESCALATED || 'claude-opus-4-6' }}
           claude-code-max-turns: ${{ vars.CLAUDE_CODE_MAX_TURNS || '40' }}
+          # TY-370: opt-in one-shot escalated-tier retry on max_turns_exceeded.
+          auto-retry-escalate: ${{ vars.LOOPPILOT_AUTO_RETRY_ESCALATE || 'false' }}
           auto-merge-on-clean: ${{ vars.LOOPPILOT_AUTO_MERGE || 'false' }}
           auto-merge-poll-seconds: ${{ vars.LOOPPILOT_AUTO_MERGE_POLL_SECONDS || '15' }}
           auto-merge-timeout-minutes: ${{ vars.LOOPPILOT_AUTO_MERGE_TIMEOUT_MINUTES || '10' }}

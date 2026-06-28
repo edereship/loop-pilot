@@ -75,6 +75,19 @@ export interface BaseConfig {
   //   variables to the same value to operate without tiering.
   claudeCodeModelBase: string;
   claudeCodeModelEscalated: string;
+  /**
+   * Opt-in one-shot automatic escalated-tier retry on `max_turns_exceeded`
+   * (TY-370). When true, a `max_turns_exceeded` stop whose failing iteration
+   * ran at the *base* tier does not stop and wait for `/restart-review`:
+   * post-fix re-posts `@codex review` itself (preserving the
+   * `max_turns_exceeded` stop reason) so the next pre-fix escalates to the
+   * Opus tier via `previousMaxTurnsExceeded`. The "base tier only" gate makes
+   * it strictly one-shot — once the escalated tier has run and still hit the
+   * turn budget, there is no higher model to retry with, so the loop stops as
+   * before. Default `false` preserves the established "any error stops; resume
+   * only via /restart-review" behavior.
+   */
+  autoRetryEscalateMaxTurns: boolean;
   // Opt-in PR auto-merge (TY-245, hardened in TY-277). When true, the loop
   // calls `mergeIfChecksPass` after a `done / no_findings` transition: it
   // polls HEAD's workflow runs (excluding the loop's own run) and merges
@@ -389,6 +402,11 @@ function loadBaseConfig(): BaseConfig {
     ),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
+    autoRetryEscalateMaxTurns: boolInput(
+      "auto-retry-escalate",
+      "LOOPPILOT_AUTO_RETRY_ESCALATE",
+      false,
+    ),
     autoMergeOnClean,
     // TY-333 #3: cap so an oversized auto-merge wait cannot push the
     // `done`-branch poll loop (mergeIfChecksPass, run from main-pre-fix) past

@@ -131,6 +131,25 @@ Codex が `@codex review` 要求に対して通常のレビュー結果ではな
 
 ---
 
+### `max_turns_exceeded` の自動リトライ (opt-in, `LOOPPILOT_AUTO_RETRY_ESCALATE`)
+
+通常 `max_turns_exceeded` は他の異常停止と同じく停止し、`/restart-review` を待つ。`/restart-review` (soft) を打つと次 iteration が自動で escalated tier (default Opus) に上がる (`previous_max_turns_exceeded`) ため、「base tier では turn が足りなかった修正を、上位モデルで 1 回だけ再試行する」という復旧パスは元々存在する。
+
+`LOOPPILOT_AUTO_RETRY_ESCALATE=true`（default `false`）を設定すると、この **escalated tier 再試行を `/restart-review` 不要で自動化** する。post-fix が `max_turns_exceeded` を検出し、かつ **直前 iteration が base tier で走っていた** 場合に限り、停止せず自分で `@codex review` を再投稿し、`stopReason: "max_turns_exceeded"` を保持したまま `waiting_codex` に戻す。次 trigger の pre-fix が `selectModel` で escalated tier に上げ、Opus で再修正を試みる。
+
+仕様の前提:
+
+- **one-shot**: 「直前 iteration が base tier」のときだけ発火する。escalated tier で走った iteration が再び `max_turns_exceeded` になった場合は「もう上位モデルが無い」ため自動リトライせず、従来通り停止して `/restart-review` を待つ。tier 判定は `findingsHashHistory` 末尾エントリの `modelTier`（legacy entry は `escalated` 扱い）で行う
+- **対象は `max_turns_exceeded` のみ**。`action_failure` / `action_no_op` / `scope_violation` / `test_failure` 等の他の停止理由は対象外で、従来通り即停止する（`action_no_op` を意図的に停止扱いにした TY-284 の判断と整合）
+- **`BASE === ESCALATED` のときは無効**。上位 tier が存在しないため、自動リトライしても同じモデルを再呼びするだけになるので skip する
+- **iteration 消費は失敗時 rollback される**: `failureExit` と同じ `rollbackFixingClaim` で `iterationCount` / `findingsHashHistory` を巻き戻してから `waiting_codex` に戻すので、自動リトライは「同じ findings を新しい iteration として escalated tier で評価」する（base tier の空振り分を二重計上しない）
+- **可観測性**: 自動リトライ時は `🔁 LoopPilot auto-retry` で始まる top-level コメントを投稿し、`/restart-review` を打っていないのに `@codex review` が出た理由を operator に明示する
+- **失敗時の挙動**: 自動リトライの `@codex review` 投稿失敗 / Codex 無 ACK は、通常経路と同じく `stopped / codex_request_failed` に降格する（Codex 認証・接続を直して `/restart-review`）
+
+検知ロジック: `src/main-post-fix.ts` の `attemptMaxTurnsAutoRetry`（claude-code-action outcome handling の `max_turns_exceeded` 分岐から呼ばれる）。トグルは `src/config.ts` の `autoRetryEscalateMaxTurns`。
+
+---
+
 ### Workflow crash (`workflow_crashed`)
 
 pre-fix / post-fix が `failureExit` を呼ぶ前に例外で死んだ場合 (state-comment-locker の予期せぬ throw / Claude API error / Node unhandled rejection / network 障害など) は、`runIfNotVitest` の `onError` から `demoteFixingOnCrash` (`src/crash-recovery.ts`) が走り、`fixing` だった hidden state を `stopped / workflow_crashed` に降格させた上で `postStopComment` で top-level ⚠️ 通知を投稿する。
@@ -328,7 +347,7 @@ hard restart。soft restart の操作に加えて、`iterationCount` を `0`、`
 - `done(no_findings)` 後に同じ PR を再度レビュー・修正ループにかけたい場合: `/restart-review`
 - `fixing` のまま停止している場合: 実行中の Workflow B がないことを確認してから `/restart-review --hard`
 - `codex_usage_limit` で停止した場合: Codex 側の quota がリセットされたタイミングで `/restart-review` (soft)。`iterationCount` は保持される
-- `max_turns_exceeded` で停止した場合: `/restart-review` (soft) で再開する。次 iteration は自動で escalated tier (default Opus) に上がる (`previous_max_turns_exceeded`)。1 回 clean commit に到達すると `stopReason` がクリアされ通常 tiering に戻る (one-shot)
+- `max_turns_exceeded` で停止した場合: `/restart-review` (soft) で再開する。次 iteration は自動で escalated tier (default Opus) に上がる (`previous_max_turns_exceeded`)。1 回 clean commit に到達すると `stopReason` がクリアされ通常 tiering に戻る (one-shot)。`LOOPPILOT_AUTO_RETRY_ESCALATE=true` を設定している場合、base tier の停止はこの soft restart を自動化する（上記「`max_turns_exceeded` の自動リトライ」を参照）ので手動操作は不要
 - `workflow_crashed` で停止した場合: `/restart-review` (soft) で再開する。workflow crash 時には `iterationCount` が消費済みなので、connector / runner 側の不安定さが継続する場合は `/restart-review --hard` を検討
 
 ### `state_corrupted` の復旧

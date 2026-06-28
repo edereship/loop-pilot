@@ -35,6 +35,7 @@ const baseConfig: Config = {
   autoReviewRestartRoles: "author,write,maintain,admin",
   claudeCodeModelBase: "claude-sonnet-4-6",
   claudeCodeModelEscalated: "claude-opus-4-6",
+  autoRetryEscalateMaxTurns: false,
   autoMergeOnClean: false,
   autoMergePollSeconds: 15,
   autoMergeTimeoutMinutes: 10,

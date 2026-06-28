@@ -19247,6 +19247,7 @@ function loadBaseConfig() {
     autoReviewRestartRoles: input("looppilot-restart-roles", "LOOPPILOT_RESTART_ROLES", "author,write,maintain,admin"),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
+    autoRetryEscalateMaxTurns: boolInput("auto-retry-escalate", "LOOPPILOT_AUTO_RETRY_ESCALATE", false),
     autoMergeOnClean,
     // TY-333 #3: cap so an oversized auto-merge wait cannot push the
     // `done`-branch poll loop (mergeIfChecksPass, run from main-pre-fix) past
@@ -21452,6 +21453,7 @@ var defaultDeps4 = {
   runBuildCommand,
   postClaudeCodeActionFixSummary,
   postCodexReviewRequest,
+  postComment,
   ensureCodexAck: (params) => ensureCodexAck(params),
   resolveFindingThreads,
   postStopComment,
@@ -21716,6 +21718,124 @@ async function runPostFix(config, deps = defaultDeps4, inputs = readPostFixInput
       await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, opts.stopReason, inputs.triggerCommentId, opts.remainingFindings ?? 0, opts.detail, config.githubToken, progress);
     }
   }
+  async function attemptMaxTurnsAutoRetry() {
+    if (!config.autoRetryEscalateMaxTurns)
+      return false;
+    if (config.claudeCodeModelBase === config.claudeCodeModelEscalated) {
+      deps.info("[post-fix] max_turns auto-retry skipped: CLAUDE_CODE_MODEL_BASE and CLAUDE_CODE_MODEL_ESCALATED are identical, so there is no higher tier to retry with.");
+      return false;
+    }
+    const lastTier = state.findingsHashHistory.at(-1)?.modelTier ?? "escalated";
+    if (lastTier !== "base") {
+      deps.info(`[post-fix] max_turns auto-retry skipped: the failing iteration already ran at the ${lastTier} tier (no higher model to retry with). Stopping for /restart-review.`);
+      return false;
+    }
+    deps.info("[post-fix] max_turns_exceeded on a base-tier iteration: auto-retrying once at the escalated tier (LOOPPILOT_AUTO_RETRY_ESCALATE).");
+    const retryState = {
+      ...state,
+      ...rollbackFixingClaim(state),
+      status: "waiting_codex",
+      stopReason: "max_turns_exceeded",
+      // Match the soft /restart-review semantics so the next Codex review is not
+      // deduped against the iteration being retried.
+      lastProcessedReviewId: null,
+      fixingStartedAt: null,
+      currentIterationFindingCommentIds: []
+    };
+    if (!await updateStateCommentLocked(retryState, "Could not persist waiting_codex for the max_turns auto-retry.")) {
+      return true;
+    }
+    const codexRequestedAt2 = (/* @__PURE__ */ new Date()).toISOString();
+    let reviewRequestId;
+    try {
+      reviewRequestId = await deps.postCodexReviewRequest(config.repoOwner, config.repoName, config.prNumber, config.codexReviewRequestToken);
+    } catch (error2) {
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      deps.error(`[post-fix] max_turns auto-retry failed to post @codex review: ${message}. Downgrading to stopped/codex_request_failed.`);
+      const stoppedState = {
+        ...retryState,
+        status: "stopped",
+        stopReason: "codex_request_failed"
+      };
+      if (await updateStateCommentLocked(stoppedState, "Could not record codex_request_failed after the auto-retry @codex review post failure.")) {
+        await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Auto-retry after max_turns_exceeded failed to post @codex review: ${message}`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
+      }
+      return true;
+    }
+    const requestedState = {
+      ...retryState,
+      lastCodexRequestCommentId: reviewRequestId
+    };
+    let requestIdPersisted;
+    try {
+      requestIdPersisted = await updateStateCommentLocked(requestedState, "Could not persist the auto-retry Codex review request comment id.", {
+        onConflict: async (detail) => {
+          deps.warning(`[post-fix] ${detail} LoopPilot state remains waiting_codex; the next Codex review trigger will reconcile.`);
+        }
+      });
+    } catch (recordError) {
+      const message = recordError instanceof Error ? recordError.message : String(recordError);
+      deps.warning(`[post-fix] Failed to persist the auto-retry Codex review request id (non-conflict error): ${message}. @codex review was posted and the state is waiting_codex; the next Codex review trigger will reconcile.`);
+      return true;
+    }
+    if (!requestIdPersisted)
+      return true;
+    const ack = await deps.ensureCodexAck({
+      owner: config.repoOwner,
+      repo: config.repoName,
+      pr: config.prNumber,
+      commentId: reviewRequestId,
+      requestedAt: codexRequestedAt2,
+      codexBotLogin: config.codexBotLogin,
+      readToken: config.githubToken,
+      token: config.codexReviewRequestToken,
+      timeoutSeconds: config.codexAckTimeoutSeconds,
+      pollIntervalSeconds: config.codexAckPollIntervalSeconds,
+      maxReposts: config.codexAckMaxReposts
+    });
+    if (!ack.acked) {
+      const stoppedState = {
+        ...requestedState,
+        lastCodexRequestCommentId: ack.lastCommentId,
+        status: "stopped",
+        stopReason: "codex_request_failed"
+      };
+      if (await updateStateCommentLocked(stoppedState, "Could not record codex_request_failed after no Codex ACK on the auto-retry.", {
+        onConflict: async (detail) => {
+          deps.warning(`[post-fix] ${detail} State was advanced by a concurrent run; ACK-demotion write skipped.`);
+        }
+      })) {
+        try {
+          await deps.postStopComment(config.repoOwner, config.repoName, config.prNumber, "codex_request_failed", inputs.triggerCommentId, 0, `Auto-retry posted @codex review but Codex did not acknowledge it after ${config.codexAckMaxReposts} repost(s). The PR is unchanged; run /restart-review once Codex is reachable to resume.`, config.githubToken, deriveIterationProgress(stoppedState, config.maxReviewIterations));
+        } catch (notifyError) {
+          deps.warning(`[post-fix] Demoted to stopped/codex_request_failed after no ACK on the auto-retry but failed to post the stop notification: ${notifyError instanceof Error ? notifyError.message : String(notifyError)}.`);
+        }
+      }
+      return true;
+    }
+    if (ack.reposts > 0 && ack.lastCommentId !== reviewRequestId) {
+      try {
+        await updateStateCommentLocked({ ...requestedState, lastCodexRequestCommentId: ack.lastCommentId }, "Could not persist the reposted auto-retry Codex review request id.", {
+          onConflict: async (detail) => {
+            deps.warning(`[post-fix] ${detail} State remains waiting_codex; the next Codex review trigger will reconcile.`);
+          }
+        });
+      } catch (repostWriteError) {
+        deps.warning(`[post-fix] Failed to persist the reposted auto-retry review request id ${ack.lastCommentId}: ${repostWriteError instanceof Error ? repostWriteError.message : String(repostWriteError)}. State remains waiting_codex; the next Codex review trigger will reconcile.`);
+      }
+    }
+    try {
+      await deps.postComment(config.repoOwner, config.repoName, config.prNumber, [
+        "\u{1F501} **LoopPilot auto-retry** \u2014 the base-tier repair hit `--max-turns`, so LoopPilot re-requested `@codex review` to retry once at the escalated tier.",
+        "",
+        "This is a one-shot escalation (`LOOPPILOT_AUTO_RETRY_ESCALATE`). If the escalated tier also runs out of turns, the loop stops for `/restart-review`."
+      ].join("\n"), config.githubToken);
+    } catch (auditError) {
+      deps.warning(`[post-fix] max_turns auto-retry succeeded but the audit comment failed to post: ${auditError instanceof Error ? auditError.message : String(auditError)}.`);
+    }
+    deps.info(`[post-fix] max_turns auto-retry complete. Status: waiting_codex. Review request: ${ack.lastCommentId}`);
+    return true;
+  }
   const outcome = inputs.actionOutcome.toLowerCase();
   if (outcome !== "success") {
     deps.warning(`[post-fix] claude-code-action outcome=${inputs.actionOutcome}. Reverting working tree and stopping.`);
@@ -21735,6 +21855,9 @@ async function runPostFix(config, deps = defaultDeps4, inputs = readPostFixInput
         stopReason = "max_turns_exceeded";
         detail = "claude-code-action exhausted the configured --max-turns budget.";
       }
+    }
+    if (stopReason === "max_turns_exceeded" && await attemptMaxTurnsAutoRetry()) {
+      return;
     }
     await failureExit({
       config,

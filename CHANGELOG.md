@@ -10,7 +10,16 @@ freeze. See [docs/operations/releasing.md](docs/operations/releasing.md).
 
 ## [Unreleased]
 
-## [1.10.1] - 2026-06-20
+### Added
+- `LOOPPILOT_AUTO_RETRY_ESCALATE` (default `false`): opt-in one-shot automatic
+  escalated-tier retry on `max_turns_exceeded`. When enabled and the failing
+  iteration ran at the base tier, post-fix re-posts `@codex review` itself
+  (preserving the `max_turns_exceeded` stop reason) so the next iteration runs
+  at the escalated (Opus) tier — instead of stopping and waiting for
+  `/restart-review`. Strictly one-shot: once the escalated tier has run and
+  still hits the turn budget there is no higher model to retry with, so the
+  loop stops as before. Disabled by default, preserving the established
+  "any error stops; resume only via /restart-review" behavior (TY-370).
 
 ### Changed
 - Rename all org references from `team-yubune` to `edereship` (ES-386).

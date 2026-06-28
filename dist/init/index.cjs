@@ -19275,6 +19275,7 @@ function loadBaseConfig() {
     autoReviewRestartRoles: input("looppilot-restart-roles", "LOOPPILOT_RESTART_ROLES", "author,write,maintain,admin"),
     claudeCodeModelBase,
     claudeCodeModelEscalated,
+    autoRetryEscalateMaxTurns: boolInput("auto-retry-escalate", "LOOPPILOT_AUTO_RETRY_ESCALATE", false),
     autoMergeOnClean,
     // TY-333 #3: cap so an oversized auto-merge wait cannot push the
     // `done`-branch poll loop (mergeIfChecksPass, run from main-pre-fix) past

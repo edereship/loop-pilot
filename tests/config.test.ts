@@ -254,6 +254,36 @@ describe("loadInitConfig — integer input range validation (TY-267 #15)", () =>
   });
 });
 
+describe("loadInitConfig — autoRetryEscalateMaxTurns (TY-370)", () => {
+  let restore: (() => void) | null = null;
+
+  beforeEach(() => {
+    restore = withEnv({
+      ...REQUIRED_ENV,
+      LOOPPILOT_AUTO_RETRY_ESCALATE: undefined,
+    });
+  });
+
+  afterEach(() => {
+    restore?.();
+    restore = null;
+  });
+
+  it("defaults to false (preserves stop-and-wait behavior)", () => {
+    expect(loadInitConfig().autoRetryEscalateMaxTurns).toBe(false);
+  });
+
+  it("reads LOOPPILOT_AUTO_RETRY_ESCALATE=true", () => {
+    process.env.LOOPPILOT_AUTO_RETRY_ESCALATE = "true";
+    expect(loadInitConfig().autoRetryEscalateMaxTurns).toBe(true);
+  });
+
+  it("rejects a non-boolean value", () => {
+    process.env.LOOPPILOT_AUTO_RETRY_ESCALATE = "yes";
+    expect(() => loadInitConfig()).toThrow(/must be 'true' or 'false'/);
+  });
+});
+
 describe("loadBaseConfig — severityThreshold (TY-256 / TY-326 #1)", () => {
   let restore: (() => void) | null = null;
 
